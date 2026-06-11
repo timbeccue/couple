@@ -87,3 +87,55 @@ a pure sine burst leaves the 24-spb envelope NCC profile flat over ±5 ms (no
 sub-ms timing information; observed: noise shifted the argmax 1.7 ms), which
 made the §9.3 tolerances untestable. Broadband attacks restore a sharp peak
 (errors 0.08–0.15 ms). Decay τ 80–400 ms, ~0.5/s Poisson placement unchanged.
+
+## 2026-06-11 — Session C, Phase 3 complete (drift, full auto-sync, real-data freeze)
+
+Implemented: measure_local (§5.4: 96-spb coarse scan + 24-spb fine + parabolic,
+variance/degenerate-peak gates), drift pass + least-squares fit + high-ppm refit
+iteration (§5.5, F6 span scaling), status/suggestion heuristics (§5.6), session
+integration (§4.4 write-on-success semantics), full `couple sync` +
+`--write-state`, `couple measure|fit|state validate`, C ABI for the Phases-1–3
+inventory + committed cbindgen `couple.h` (36 cpl_ symbols).
+
+Robustness fixes found by the synthetic ladder (both principled, §5.4/§5.5
+conformant): (1) drift-window centers clamped so the 18 s window stays inside
+both tracks for *every scanned lag* — a window hugging the overlap edge had its
+scan truncated mid-peak at the file edge and locked a confident wrong lag
+(+5–7 ms at ncc 0.92); (2) measure_local treats winners adjacent to
+out-of-track lags as degenerate edges → None, per "None rather than a junk
+number".
+
+SPEC-CHANGE (2026-06-11, Session C, minor): §9.1 transient rate ~0.5/s → 2/s.
+At 0.5/s an 18 s window can be tone-only, and a sustained 200 Hz tone's
+bin-span envelope is periodic at its 5 ms pitch period — windows locked a whole
+period off with ncc > 0.9, blowing the §9.3 drift ladder (which assumes
+0.15–0.3 ms window sigma, i.e. continuous performance content). The
+periodic-content hazard (vibrato tones) remains present for anchor realism.
+
+§9.3 gates (synthetic), all green:
+- Drift ladder: 1800 s → err 0.006 ppm (±0.2); 600 s → ±0.5 ✓; 180 s → ±2 ✓;
+  60 s → ±5 ✓; 100 ppm @300 s ✓. Midpoint mapping error ≤ 1 ms everywhere.
+- Local lag (ncc ≥ 0.6 windows): RMS ≤ 0.3 ms ✓; corrected residual ≤ 2 ms at
+  every accepted window ✓; short-overlap drift honesty ✓.
+- measure_local: median ≪ 5 ms budget; accuracy RMS ≤ 0.3 ms ✓.
+- Determinism: bit-identical SyncResult across runs ✓.
+- 2 h budgets: full auto-sync 0.37 s (≤ 10 s); import 2.5/3.2 s (≤ 90 s);
+  stage 1 0.004 s (≤ 3 s); band() 8 µs (≤ 50 µs) ✓.
+
+§9.4 real-data validation (full pipeline, 137 ms compute), all green:
+- drift **3.570 ppm** (window 3.07 ± 0.75 ✓); fit RMS **0.277 ms** (≤ 0.7;
+  mockup: 0.276) ✓; **9/12** windows accepted (≥ 8) ✓; status **synced** ✓;
+  suggestion **resample** (end-to-end 5.1 ms) ✓; overlap fraction **0.9961**
+  (≥ 0.99; mockup: 99.6 %) ✓; coarse z **74.2** / ncc **0.877** (mockup: 75 /
+  0.88) ✓; onset zone property 2/3 attacks-from-quiet ✓.
+- **Offset frozen (F2): −5536.639 ms** container time, inside the §1.3 sanity
+  window (−5535.5 ± 25; −1.14 ms from the prediction). Written to
+  `example_data/expected.json` with `ownerVerified: false`; ±1 ms regression
+  active and passing. **Owner: verify by ear/loupe once the shell exists, then
+  flip ownerVerified to true.**
+
+Headless workflow proven: `couple sync … --write-state s.json` →
+`couple state validate s.json` → (render/export are Phase 4).
+
+Session C complete. Next: Phase 4 (export) as a short follow-up session, then
+Session D (SwiftUI shell, prompt in SPEC §16).

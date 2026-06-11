@@ -153,7 +153,12 @@ struct Plan {
 
 fn plan(seed: u64, u_min: f64, u_max: f64) -> Plan {
     let mut rt = ChaCha8Rng::seed_from_u64(seed.wrapping_add(0x7261_6e74)); // transients
-    let transients = poisson_times(&mut rt, u_min, u_max, 0.5)
+    // SPEC-CHANGE (2026-06-11): §9.1 said ~0.5/s; at that density 18 s windows can be
+    // tone-only, and a sustained 200 Hz tone's bin-span envelope is periodic at its
+    // 5 ms pitch period — windows then lock a whole period off with ncc > 0.9, blowing
+    // the §9.3 drift ladder. 2/s models the continuous performance content this
+    // product targets while keeping the periodic-content hazard present.
+    let transients = poisson_times(&mut rt, u_min, u_max, 2.0)
         .into_iter()
         .map(|t0| {
             let mut freqs = [0f64; 8];

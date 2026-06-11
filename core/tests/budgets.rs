@@ -83,6 +83,28 @@ fn budgets_2h_pair() {
     // 12 ppm over ~2 h skews a single global offset; just sanity-check the ballpark.
     assert!((r.offset_ms - spec.offset_ms).abs() <= 100.0);
 
+    // Full auto-sync budget (§9.6): ≤ 10 s at 2 h × 2 h including the drift pass.
+    let mut prog = ProgressEmitter::new(0, noop_progress());
+    let t = Instant::now();
+    let r = couple_core::sync::auto_sync_tracks(
+        &cam.pyramid,
+        &ext.pyramid,
+        &couple_core::sync::SyncParams::default(),
+        &mut prog,
+        &CancelToken::new(),
+    )
+    .unwrap();
+    let full_s = t.elapsed().as_secs_f64();
+    eprintln!(
+        "full auto-sync: {full_s:.2} s (budget 10 s) — drift {:.2} ppm (truth 12), rms {:?}",
+        r.drift_ppm, r.fit_rms_ms
+    );
+    assert!(full_s <= 10.0);
+    assert!(r.drift_measurable && (r.drift_ppm - 12.0).abs() <= 0.5);
+    let l_meas = r.offset_ms + 3600.0 * r.drift_ppm * 1e-3;
+    let l_true = -300_000.0 + 3600.0 * 12.0 * 1e-3;
+    assert!((l_meas - l_true).abs() <= 1.0, "midpoint mapping err {:.3} ms", l_meas - l_true);
+
     // band() budget: ≤ 50 µs typical (median over 1000 random calls).
     use rand::{Rng, SeedableRng};
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(9);
@@ -100,4 +122,42 @@ fn budgets_2h_pair() {
     let median = times[times.len() / 2];
     eprintln!("band(): median {median:.1} µs over 1000 calls (budget 50 µs typical)");
     assert!(median <= 50.0);
+}
+
+/// §9.3 drift ladder, 1800 s row: ≤ ±0.2 ppm. Slow (fixture gen ~1 min), hence ignored.
+#[test]
+#[ignore]
+fn drift_ladder_1800s_slow() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/pair1800");
+    let ffmpeg = couple_core::ffmpeg::resolve_tool("ffmpeg", None).unwrap();
+    let spec = FixtureSpec {
+        offset_ms: -4000.0,
+        ppm: 30.0,
+        dur_cam_s: 1800.0,
+        dur_ext_s: 1810.0,
+        snr_db: Some(15.0),
+        gain_db: -6.0,
+        seed: 1800,
+        ..Default::default()
+    };
+    if !root.join("truth.json").is_file() {
+        generate(&root, &spec, &ffmpeg).unwrap();
+    }
+    let ctx = common::test_ctx(&root.join("cache"));
+    let cam_id = common::import(&ctx, &root.join("camera.wav"), TrackRole::Camera).unwrap();
+    let ext_id = common::import(&ctx, &root.join("external.wav"), TrackRole::External).unwrap();
+    let cam = ctx.track(cam_id).unwrap();
+    let ext = ctx.track(ext_id).unwrap();
+    let mut prog = ProgressEmitter::new(0, noop_progress());
+    let r = couple_core::sync::auto_sync_tracks(
+        &cam.pyramid,
+        &ext.pyramid,
+        &couple_core::sync::SyncParams::default(),
+        &mut prog,
+        &CancelToken::new(),
+    )
+    .unwrap();
+    eprintln!("1800 s row: drift {:.4} ppm (truth 30), rms {:?}", r.drift_ppm, r.fit_rms_ms);
+    assert!(r.drift_measurable);
+    assert!((r.drift_ppm - 30.0).abs() <= 0.2, "ppm err {:.4}", r.drift_ppm - 30.0);
 }

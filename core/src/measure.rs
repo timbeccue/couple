@@ -105,9 +105,15 @@ fn scan_level(
     if !nccs[bi].is_finite() {
         return None;
     }
-    // §5.4 "degenerate peak": a winner at the span edge means the true lag is likely
-    // outside the searched span — junk for the fit, so refuse.
-    if reject_edges && (bi == 0 || bi == nccs.len() - 1) {
+    // §5.4 "degenerate peak": a winner at the span edge — or hugging the region where
+    // the external window would leave the track (−∞ neighbors) — means the true peak's
+    // support is truncated; the measured lag would be junk, so refuse.
+    if reject_edges
+        && (bi == 0
+            || bi == nccs.len() - 1
+            || !nccs[bi - 1].is_finite()
+            || !nccs[bi + 1].is_finite())
+    {
         return None;
     }
     let lag_bins = l_min + bi as i64;

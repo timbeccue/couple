@@ -86,11 +86,45 @@ enum Cmd {
         #[arg(long)]
         write_state: Option<PathBuf>,
     },
+    /// Measure the local lag at a video time (§5.4)
+    Measure {
+        video: PathBuf,
+        audio: PathBuf,
+        /// Window center, video time seconds
+        #[arg(long)]
+        at: f64,
+        /// Lag search center in ms (default: 0)
+        #[arg(long, default_value_t = 0.0, allow_negative_numbers = true)]
+        center: f64,
+        /// Lag search half-span in ms
+        #[arg(long, default_value_t = 80.0)]
+        span: f64,
+        /// Window half-width in seconds
+        #[arg(long, default_value_t = 9.0)]
+        halfwin: f64,
+    },
+    /// Least-squares fit over (t, lagMs) points (§4.4)
+    Fit {
+        /// JSON file: [[t_s, lag_ms], ...]
+        #[arg(long)]
+        points: PathBuf,
+    },
+    /// Session state tooling
+    State {
+        #[command(subcommand)]
+        cmd: StateCmd,
+    },
     /// Dev tools
     Fixture {
         #[command(subcommand)]
         cmd: FixtureCmd,
     },
+}
+
+#[derive(Subcommand)]
+enum StateCmd {
+    /// Validate a session file (§4.5 wrapper + invariants)
+    Validate { file: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -223,6 +257,52 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
             params,
             write_state,
         } => run_sync(cli, ctx, video, audio, *offset_only, params, write_state.as_deref(), cancel),
+        Cmd::Measure {
+            video,
+            audio,
+            at,
+            center,
+            span,
+            halfwin,
+        } => {
+            let cam_id = import_one(cli, ctx, video, "camera", cancel)?;
+            let ext_id = import_one(cli, ctx, audio, "external", cancel)?;
+            let cam = ctx.track(cam_id)?;
+            let ext = ctx.track(ext_id)?;
+            let m = couple_core::measure::measure_local(
+                &cam.pyramid,
+                &ext.pyramid,
+                *at,
+                *halfwin,
+                *center,
+                *span,
+            );
+            emit(cli, &m)
+        }
+        Cmd::Fit { points } => {
+            let raw = std::fs::read(points)
+                .map_err(|e| couple_core::CoupleError::invalid(format!("read points: {e}")))?;
+            let pts: Vec<(f64, f64)> = serde_json::from_slice(&raw)
+                .map_err(|e| couple_core::CoupleError::invalid(format!("points JSON: {e}")))?;
+            let fit = couple_core::fit::fit_ls(&pts);
+            emit(cli, &fit)
+        }
+        Cmd::State { cmd } => match cmd {
+            StateCmd::Validate { file } => {
+                let raw = std::fs::read(file)
+                    .map_err(|e| couple_core::CoupleError::invalid(format!("read state: {e}")))?;
+                let parsed: couple_core::session::SessionFile = serde_json::from_slice(&raw)
+                    .map_err(|e| couple_core::CoupleError::invalid(format!("state JSON: {e}")))?;
+                if parsed.schema != couple_core::session::SESSION_SCHEMA {
+                    return Err(couple_core::CoupleError::invalid(format!(
+                        "unknown schema {}",
+                        parsed.schema
+                    )));
+                }
+                couple_core::session::validate_state(&parsed.alignment)?;
+                emit(cli, &serde_json::json!({ "valid": true }))
+            }
+        },
         Cmd::Fixture { cmd } => match cmd {
             FixtureCmd::Gen {
                 out,
@@ -310,7 +390,7 @@ fn run_sync(
     let result = if offset_only {
         couple_core::sync::offset_only_sync(&cam.pyramid, &ext.pyramid, &sp, &mut prog, cancel)?
     } else {
-        couple_core::sync::offset_only_sync(&cam.pyramid, &ext.pyramid, &sp, &mut prog, cancel)?
+        couple_core::sync::auto_sync_tracks(&cam.pyramid, &ext.pyramid, &sp, &mut prog, cancel)?
     };
     reporter.finish();
 

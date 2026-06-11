@@ -488,13 +488,22 @@ fn drift_pass(
     let k_n = params.drift_windows;
     let t_mid = (t0 + t1) / 2.0;
 
-    // Clamp centers so the 18 s window stays inside both tracks; when the tracks are
-    // too short for that, leave centers as-is and let measure_local's gates refuse.
-    let lo = hw.max(hw - off_s);
-    let hi = (dur_cam - hw).min(dur_ext - off_s - hw);
+    // §5.5 span scaling [SPEC F6]: ±(base + 150 ppm of distance from overlap midpoint).
+    let base = params.drift_base_span_ms;
+    let scale = params.drift_span_scale_ppm;
+    let cap = params.drift_span_cap_ms;
+    let span_at = move |tc: f64| (base + scale * 1e-3 * (tc - t_mid).abs()).min(cap);
+
+    // Clamp centers so the 18 s window stays inside both tracks for EVERY scanned lag
+    // (otherwise the scan truncates mid-peak at the file edge and locks a confident
+    // wrong lag). When the tracks are too short, leave centers and let the §5.4 gates
+    // refuse individual windows.
     let centers: Vec<f64> = (0..k_n)
         .map(|k| {
             let t = t0 + (k as f64 + 0.5) / k_n as f64 * (t1 - t0);
+            let margin = span_at(t) / 1000.0;
+            let lo = hw.max(hw - off_s + margin);
+            let hi = (dur_cam - hw).min(dur_ext - off_s - hw - margin);
             if lo < hi {
                 t.clamp(lo, hi)
             } else {
@@ -533,15 +542,7 @@ fn drift_pass(
 
     // First pass: centers on the stage offset, spans scaled by distance from overlap
     // midpoint (F6: covers ±150 ppm true drift at long range), cap ±2 s.
-    let base = params.drift_base_span_ms;
-    let scale = params.drift_span_scale_ppm;
-    let cap = params.drift_span_cap_ms;
-    let mut windows = measure_all(
-        &|_tc| offset_stage_ms,
-        &|tc: f64| (base + scale * 1e-3 * (tc - t_mid).abs()).min(cap),
-        prog,
-        cancel,
-    )?;
+    let mut windows = measure_all(&|_tc| offset_stage_ms, &span_at, prog, cancel)?;
     let mut accepted_pts: Vec<(f64, f64)> = windows
         .iter()
         .filter(|w| w.accepted)
