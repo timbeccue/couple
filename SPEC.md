@@ -905,6 +905,78 @@ to example_data/:
   - Report the full SyncResult JSON in your final summary.
 ```
 
+### Session C2 (export, Phase 4) — added 2026-06-11 after Session C completed Phases 1–3
+
+```
+You are implementing the export pipeline of Couple — Phase 4 of SPEC.md §15.
+Phases 1–3 are complete: couple-core + the `couple` CLI probe/import/sync end
+to end, all §9.2/§9.3 gates are green, and §9.4 real-data validation froze the
+container-time offset (example_data/expected.json, ownerVerified=false).
+
+Read first, in this order, before writing any code:
+  1. PROGRESS.md — Session C entries: what exists, the SPEC-CHANGE records
+     (Z_MIN 8.5, fixture transients 2/s broadband), and the frozen offset.
+  2. SPEC.md §8 (export pipeline — the whole section is your charter), §4.5
+     (session file consumed via --state), §9.7 (gates), §9.6 (budgets), §10
+     (CLI render/export), §15 Phase 4, §3.3 (ffmpeg subprocess rules).
+  3. UX-DECISIONS.md §2.8 + §4.8 (export behavior, "audio untouched" promise).
+
+Scope, Phase 4 ONLY:
+  - Aligned-audio render (§8.2): source = the ORIGINAL external file (full
+    fidelity, channels/bit depth preserved) — never the 48 kHz mono analysis
+    cache. driftMode "none" = integer-sample shift, bit-exact samples.
+    driftMode "resample" = single-pass polyphase at constant ratio with the
+    fractional offset in the initial phase; quality bar THD+N ≤ −110 dBFS,
+    linear phase — benchmark rubato sinc against it, soxr behind a feature
+    flag only if rubato misses the bar (record the measurement either way).
+  - Muxed export (§8.3): video stream-copy untouched, rendered audio piped at
+    source rate/depth, container/codec matrix §8.4 (mov→PCM, mp4→AAC 256k
+    aac_at on macOS), keepCameraAudio as stream-copied track 2 non-default,
+    -map_metadata 0, temp file + atomic rename, disk preflight, progress
+    (ExportRender from frames, ExportMux from -progress out_time) + cancel.
+  - Standalone WAV/RF64 export (§8.5) at source rate/depth/channels.
+  - Edge cases §8.2 (1)–(6), each with a fixture test, including the
+    no-overlap refusal (ExportFailed unless --allow-silence).
+  - CLI: `couple render <video> <audio> --state s.json --out out.wav` and
+    `couple export <video> <audio> --state s.json --out out.mov
+    [--keep-camera-audio] [--container auto|mov|mp4] [--faststart]
+    [--allow-silence] [-f]` (§10.2), exit code 7 for export failures.
+Out of scope — do not start: audition (cpl_audition_*), anything Swift/shell,
+v2 features. Extend couple.h only with cpl_export_start.
+
+Setup: cargo/rustc at ~/.cargo/bin (Rust 1.96); system ffmpeg 8.0.1 on $PATH
+honoring COUPLE_FFMPEG; realdata tests gate on COUPLE_REALDATA_DIR (set it to
+example_data/). Local commits only; account timbeccue if asked to push.
+
+Hard rules:
+  - §7.2/§1.2 canonical-timeline discipline carries into export: output
+    timeline = video container time, duration exactly the video duration.
+  - Mid-stream silence is never synthesized inside the external's span (§8.2.6).
+  - ffmpeg as child process only; no timestamp-resynthesizing options.
+  - Work the gates back-to-back; SPEC-CHANGE protocol (§0) for any conflict —
+    never silently diverge.
+
+Gates (§9.7 + §15 Phase 4) — all must be green, with a git commit and a dated
+PROGRESS.md entry at the end:
+  - Round-trip keystone: export a drifted fixture (resample mode), re-import
+    the result against the original external, auto-sync → offset ≤ 0.25 ms,
+    drift ≤ 0.3 ppm.
+  - Bit-exactness: None-mode mux of a PCM-in-MOV fixture → extracted samples
+    byte-identical over the overlap.
+  - Edge-case fixtures 1–6; second-track presence + disposition via ffprobe;
+    ffprobe conformance of every output; RF64 kicks in past 4 GiB (a synthetic
+    header-level check is acceptable).
+  - Cancellation at random progress points: no temp litter, Cancelled surfaced.
+  - Budget: 2 h export ≤ 90 s + stream-copy I/O (§9.6) on the fixtures/pair2h
+    pair (regenerate via the budgets test if absent).
+  - Real pair: `couple sync … --write-state` then `couple export` → plays in
+    QuickTime (owner will check), ffprobe shows stream-copied video + aligned
+    audio; record the output file's BLAKE3/SHA-256 hash in PROGRESS.md — §15
+    Phase 6 asserts the shell's export matches it.
+Finish line: "Core complete: the manual iMovie workflow is fully replaced
+headlessly" (§15) — demonstrate it with the real pair end to end.
+```
+
 ### Session D (SwiftUI shell, Phase 5)
 
 ```
