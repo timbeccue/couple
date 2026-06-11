@@ -42,7 +42,7 @@ enum Cmd {
     /// Dump band() columns over a range; optional PNG for eyeballing
     Peaks {
         file: PathBuf,
-        #[arg(long, default_value_t = 0.0)]
+        #[arg(long, default_value_t = 0.0, allow_negative_numbers = true)]
         t0: f64,
         /// Defaults to track end
         #[arg(long)]
@@ -71,6 +71,67 @@ enum Cmd {
     Cache {
         #[command(subcommand)]
         cmd: CacheCmd,
+    },
+    /// Auto-sync a camera/external pair (§5). Roles: first arg = camera, second = external.
+    Sync {
+        video: PathBuf,
+        audio: PathBuf,
+        /// Stages 1–5 only; skip the drift pass
+        #[arg(long)]
+        offset_only: bool,
+        /// Override SyncParams, e.g. --params z-min=25
+        #[arg(long = "params", value_name = "K=V")]
+        params: Vec<String>,
+        /// Write a session file consumable by render/export
+        #[arg(long)]
+        write_state: Option<PathBuf>,
+    },
+    /// Dev tools
+    Fixture {
+        #[command(subcommand)]
+        cmd: FixtureCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum FixtureCmd {
+    /// Generate a synthetic fixture pair with known ground truth (§9.1)
+    Gen {
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, default_value_t = 0.0, allow_negative_numbers = true)]
+        offset_ms: f64,
+        #[arg(long, default_value_t = 0.0, allow_negative_numbers = true)]
+        ppm: f64,
+        /// Derive offset so the overlap is this many seconds (external entering at the camera tail)
+        #[arg(long, conflicts_with = "offset_ms")]
+        overlap_s: Option<f64>,
+        #[arg(long, default_value_t = 60.0)]
+        dur_cam: f64,
+        #[arg(long, default_value_t = 75.0)]
+        dur_ext: f64,
+        #[arg(long, default_value_t = 48000)]
+        rate_cam: u32,
+        #[arg(long, default_value_t = 48000)]
+        rate_ext: u32,
+        #[arg(long, default_value_t = 24)]
+        bits: u32,
+        /// Additive-noise SNR in dB (omit for no noise)
+        #[arg(long, allow_negative_numbers = true)]
+        snr_db: Option<f64>,
+        #[arg(long, default_value_t = 0.0, allow_negative_numbers = true)]
+        gain_db: f64,
+        #[arg(long)]
+        no_agc: bool,
+        #[arg(long)]
+        aac_roundtrip: bool,
+        #[arg(long)]
+        with_video: bool,
+        /// Author an audio start_time epoch via -itsoffset remux (seconds)
+        #[arg(long, default_value_t = 0.0)]
+        itsoffset: f64,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
     },
 }
 
@@ -155,6 +216,57 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
             };
             emit(cli, &list)
         }
+        Cmd::Sync {
+            video,
+            audio,
+            offset_only,
+            params,
+            write_state,
+        } => run_sync(cli, ctx, video, audio, *offset_only, params, write_state.as_deref(), cancel),
+        Cmd::Fixture { cmd } => match cmd {
+            FixtureCmd::Gen {
+                out,
+                offset_ms,
+                ppm,
+                overlap_s,
+                dur_cam,
+                dur_ext,
+                rate_cam,
+                rate_ext,
+                bits,
+                snr_db,
+                gain_db,
+                no_agc,
+                aac_roundtrip,
+                with_video,
+                itsoffset,
+                seed,
+            } => {
+                let delta = 1.0 + ppm * 1e-6;
+                let offset_ms = match overlap_s {
+                    Some(w) => -(dur_cam - w) * delta * 1000.0,
+                    None => *offset_ms,
+                };
+                let spec = couple_core::fixture::FixtureSpec {
+                    offset_ms,
+                    ppm: *ppm,
+                    dur_cam_s: *dur_cam,
+                    dur_ext_s: *dur_ext,
+                    rate_cam: *rate_cam,
+                    rate_ext: *rate_ext,
+                    bits_ext: *bits,
+                    snr_db: *snr_db,
+                    gain_db: *gain_db,
+                    agc: !no_agc,
+                    aac_roundtrip: *aac_roundtrip,
+                    with_video: *with_video,
+                    itsoffset_s: *itsoffset,
+                    seed: *seed,
+                };
+                let truth = couple_core::fixture::generate(out, &spec, &ctx.ffmpeg()?)?;
+                emit(cli, &truth)
+            }
+        },
         Cmd::Cache { cmd } => match cmd {
             CacheCmd::Ls => {
                 let entries = couple_core::cache::list_entries(ctx.cache_root());
@@ -166,6 +278,132 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
             }
         },
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_sync(
+    cli: &Cli,
+    ctx: &Arc<Ctx>,
+    video: &PathBuf,
+    audio: &PathBuf,
+    offset_only: bool,
+    params: &[String],
+    write_state: Option<&std::path::Path>,
+    cancel: &CancelToken,
+) -> couple_core::Result<()> {
+    let mut sp = couple_core::sync::SyncParams::default();
+    for kv in params {
+        let (k, v) = kv
+            .split_once('=')
+            .ok_or_else(|| couple_core::CoupleError::invalid("--params expects k=v"))?;
+        sp.set(k, v)?;
+    }
+    // Roles by position (§10.2): import implied, cache-hit fast.
+    let cam_id = import_one(cli, ctx, video, "camera", cancel)?;
+    let ext_id = import_one(cli, ctx, audio, "external", cancel)?;
+    let cam = ctx.track(cam_id)?;
+    let ext = ctx.track(ext_id)?;
+
+    let reporter = progress::Reporter::new(cli.quiet, cli.progress_json, video);
+    let pf = reporter.progress_fn();
+    let mut prog = couple_core::job::ProgressEmitter::new(ctx.next_id(), pf);
+    let result = if offset_only {
+        couple_core::sync::offset_only_sync(&cam.pyramid, &ext.pyramid, &sp, &mut prog, cancel)?
+    } else {
+        couple_core::sync::offset_only_sync(&cam.pyramid, &ext.pyramid, &sp, &mut prog, cancel)?
+    };
+    reporter.finish();
+
+    if let Some(state_path) = write_state {
+        write_session_file(&cam.meta, &ext.meta, &result, state_path)?;
+    }
+    emit(cli, &result)?;
+    // §10.3: 5 = sync failed (NoPlausiblePeak), 6 = insufficient overlap.
+    if let couple_core::sync::SyncStatus::Failed(reason) = &result.status {
+        let code = match reason {
+            couple_core::sync::FailReason::NoPlausiblePeak { .. } => 5,
+            couple_core::sync::FailReason::InsufficientOverlap { .. } => 6,
+        };
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
+fn write_session_file(
+    cam: &couple_core::TrackMeta,
+    ext: &couple_core::TrackMeta,
+    result: &couple_core::sync::SyncResult,
+    path: &std::path::Path,
+) -> couple_core::Result<()> {
+    use couple_core::session::*;
+    let mut alignment = AlignmentState::default();
+    if !matches!(result.status, couple_core::sync::SyncStatus::Failed(_)) {
+        alignment.offset_ms = result.offset_ms;
+        alignment.saved_drift_ppm = result.drift_ppm;
+        alignment.drift_mode = result.suggested_drift_mode;
+        alignment.drift_ppm = match result.suggested_drift_mode {
+            DriftMode::Resample => result.drift_ppm,
+            DriftMode::None => 0.0,
+        };
+        alignment.drift_windows = result
+            .windows
+            .iter()
+            .filter(|w| w.accepted)
+            .map(|w| DriftWindowState {
+                t: w.t,
+                lag_ms: w.lag_ms,
+                ncc: w.ncc,
+            })
+            .collect();
+    }
+    let file = SessionFile {
+        schema: SESSION_SCHEMA.into(),
+        saved_at: chrono_like_now(),
+        camera: SessionFileTrack {
+            path: cam.info.path.clone(),
+            content_key: cam.content_key.clone(),
+            duration_s: cam.duration_s,
+        },
+        external: SessionFileTrack {
+            path: ext.info.path.clone(),
+            content_key: ext.content_key.clone(),
+            duration_s: ext.duration_s,
+        },
+        alignment,
+    };
+    std::fs::write(path, serde_json::to_vec_pretty(&file).unwrap())
+        .map_err(|e| couple_core::CoupleError::internal(format!("write state: {e}")))?;
+    Ok(())
+}
+
+/// ISO 8601 UTC without a chrono dependency.
+fn chrono_like_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    // civil_from_days (Howard Hinnant)
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y,
+        m,
+        d,
+        tod / 3600,
+        (tod % 3600) / 60,
+        tod % 60
+    )
 }
 
 fn parse_role(role: &str, info: &couple_core::MediaInfo) -> couple_core::Result<TrackRole> {

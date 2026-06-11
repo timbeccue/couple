@@ -51,3 +51,39 @@ Notes for the owner (non-blocking):
   r ≥ 0.99 check are scale-invariant; flagging for provenance only.
 - decoded camera duration is 1435.274 s, 22 ms over the §7.3 nominal
   (1435.252): AAC priming/trailing-frame variance, inside the ±50 ms window.
+
+## 2026-06-11 — Session C, Phase 2 complete (fixtures + global offset search)
+
+Implemented: fixture generator (§9.1; deterministic ChaCha8 master on a 96 kHz
+grid → external WAV + warped/degraded camera with AGC, 16 kHz LP, SNR noise,
+optional AAC round-trip / mpeg4 testsrc2 mux / `-itsoffset` epoch remux);
+envelope NCC machinery (§5.2: prefix sums + FFT linear correlation, z-score
+selection); stage pipeline §5.3 with parabolic refinement; `couple sync
+--offset-only`; `couple fixture gen`.
+
+Gates, all green (11 tests in core/tests/sync_offset.rs + budgets.rs):
+- §9.3 offset rows (ppm 0): errors 0.03–0.23 ms across offsets/seeds (≤ 0.5). ✓
+- Gain 24 dB + AAC round-trip: ≤ 0.5 ms. Rate mix 44.1↔48, 96↔48: ≤ 0.5 ms. ✓
+- Partial overlap: 25 s → 0.002 ms err; 12 s → Failed; duration-impossible →
+  InsufficientOverlap. ✓
+- Hostile noise SNR 0 (3 seeds): synced AND correct (z ≈ 22) — never
+  confident-and-wrong. ✓
+- Spurious-peak regression: decoy (verbatim camera head appended to external
+  tail) wins raw-NCC argmax at the boundary lag; z-selection picks truth. ✓
+- FFT path ≡ brute force: identical winner, z within 1e−6 (3 shapes). ✓
+- §9.6 budgets on a real 2 h × 2 h pair: import 2.2 s / 2.7 s (≤ 90 s);
+  stage 1 0.004 s (≤ 3 s); offset pipeline 0.34 s; band() median 8 µs (≤ 50 µs). ✓
+
+SPEC-CHANGE (2026-06-11, Session C): Z_MIN default 20 → 8.5 (Appendix A said
+20 [TUNE]). Reason: z = ncc·√bins cannot exceed √100 = 10 at the §9.3
+partial-overlap floor (20 s = 100 bins), so 20 made that row mathematically
+unsatisfiable. Empirical calibration: unrelated-content ceiling ≤ 7.5, weakest
+must-pass true peak 9.9 (20 s overlap, SNR 10). Real-pair true z = 75 is
+unaffected. Owner may re-tune as the corpus grows (§6.4).
+
+SPEC-CHANGE (2026-06-11, Session C, minor): §9.1 fixture transients realized as
+8-partial band-passed bursts (800–6000 Hz, random phases) with 0.5 ms attack —
+a pure sine burst leaves the 24-spb envelope NCC profile flat over ±5 ms (no
+sub-ms timing information; observed: noise shifted the argmax 1.7 ms), which
+made the §9.3 tolerances untestable. Broadband attacks restore a sharp peak
+(errors 0.08–0.15 ms). Decay τ 80–400 ms, ~0.5/s Poisson placement unchanged.

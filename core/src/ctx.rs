@@ -189,4 +189,65 @@ impl Ctx {
     pub fn session_free(&self, id: SessionId) {
         self.sessions.write().unwrap().remove(&id);
     }
+
+    /// §4.4 measure_local on a session. Synchronous, ≤ 5 ms budget; the caller (shell)
+    /// owns debounce policy and writes results into state.
+    pub fn measure_local(
+        &self,
+        session: SessionId,
+        tc: f64,
+        half_win_s: f64,
+        center_ms: f64,
+        span_ms: f64,
+    ) -> Result<Option<crate::session::LocalMeasurement>> {
+        let s = self.session(session)?;
+        let cam = self.track(s.camera)?;
+        let ext = self.track(s.external)?;
+        Ok(crate::measure::measure_local(
+            &cam.pyramid,
+            &ext.pyramid,
+            tc,
+            half_win_s,
+            center_ms,
+            span_ms,
+        ))
+    }
+
+    /// Blocking full auto-sync on a session (§4.4 semantics): on Synced/LowConfidence
+    /// core writes offset/drift/windows + suggested mode into the session state and
+    /// leaves verified = false; on Failed the state is untouched (UX §3).
+    pub fn auto_sync_blocking(
+        &self,
+        session: SessionId,
+        params: &crate::sync::SyncParams,
+        progress: ProgressFn,
+        cancel: &CancelToken,
+        job_id: JobId,
+    ) -> Result<crate::sync::SyncResult> {
+        let s = self.session(session)?;
+        let cam = self.track(s.camera)?;
+        let ext = self.track(s.external)?;
+        let mut prog = ProgressEmitter::new(job_id, progress);
+        let result =
+            crate::sync::auto_sync_tracks(&cam.pyramid, &ext.pyramid, params, &mut prog, cancel)?;
+        if !matches!(result.status, crate::sync::SyncStatus::Failed(_)) {
+            let windows = result
+                .windows
+                .iter()
+                .filter(|w| w.accepted)
+                .map(|w| crate::session::DriftWindowState {
+                    t: w.t,
+                    lag_ms: w.lag_ms,
+                    ncc: w.ncc,
+                })
+                .collect();
+            s.apply_sync(
+                result.offset_ms,
+                result.drift_ppm,
+                windows,
+                result.suggested_drift_mode,
+            );
+        }
+        Ok(result)
+    }
 }

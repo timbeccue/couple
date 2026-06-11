@@ -323,6 +323,25 @@ impl Session {
     }
 }
 
+/// Standalone invariant check (§4.5) — used by `couple state validate`.
+pub fn validate_state(s: &AlignmentState) -> Result<()> {
+    if s.version != 1 {
+        return Err(CoupleError::invalid(format!("unsupported state version {}", s.version)));
+    }
+    validate_anchors(&s.anchors)?;
+    if s.frames.len() != s.anchors.len() || s.per_anchor_measurements.len() != s.anchors.len() {
+        return Err(CoupleError::invalid(
+            "frames/perAnchorMeasurements must parallel anchors",
+        ));
+    }
+    if s.drift_mode == DriftMode::None && s.drift_ppm != 0.0 {
+        return Err(CoupleError::invalid(
+            "driftMode none implies driftPpm 0 (savedDriftPpm retains the measurement)",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_anchors(anchors: &[f64]) -> Result<()> {
     if anchors.len() == 1 || anchors.len() > 4 {
         return Err(CoupleError::invalid("anchors: 2–4 required (or none)"));

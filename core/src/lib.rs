@@ -13,6 +13,7 @@ pub mod fit;
 pub mod fixture;
 pub mod import;
 pub mod job;
+pub mod measure;
 pub mod media;
 pub mod onsets;
 pub mod pyramid;
