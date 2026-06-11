@@ -1,0 +1,17 @@
+[package]
+name = "couple-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "couple"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+couple-core = { path = "../core" }
+serde_json.workspace = true
+libc.workspace = true
+
+[build-dependencies]
+cbindgen = "0.27"

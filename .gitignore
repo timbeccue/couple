@@ -1,0 +1,27 @@
+# Rust
+target/
+
+# Media + mockup artifacts: not in git (3.6 GB). SCHEMA.md and expected.json ARE tracked.
+example_data/*
+!example_data/expected.json
+!example_data/peaks/
+example_data/peaks/*
+!example_data/peaks/SCHEMA.md
+!example_data/handsync/
+example_data/handsync/*
+!example_data/handsync/.gitkeep
+
+# Synthetic fixture output (regenerable, large)
+fixtures/
+
+# Caches
+.couple-cache/
+*.cpk
+*.raw
+
+# Secrets / env
+.env
+.env.local
+
+# macOS
+.DS_Store

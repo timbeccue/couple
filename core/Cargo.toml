@@ -1,0 +1,23 @@
+[package]
+name = "couple-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+rayon.workspace = true
+rustfft.workspace = true
+realfft.workspace = true
+blake3.workspace = true
+memmap2.workspace = true
+tempfile.workspace = true
+crossbeam-channel.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+hound.workspace = true
