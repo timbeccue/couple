@@ -109,6 +109,45 @@ enum Cmd {
         #[arg(long)]
         points: PathBuf,
     },
+    /// Render the aligned external audio to a WAV on the video timeline (§8.5)
+    Render {
+        video: PathBuf,
+        audio: PathBuf,
+        /// Session file from `couple sync --write-state`
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        /// Overwrite an existing output
+        #[arg(short = 'f', long)]
+        force: bool,
+        #[arg(long)]
+        allow_silence: bool,
+    },
+    /// Export the muxed video with aligned audio (§8.3)
+    Export {
+        video: PathBuf,
+        audio: PathBuf,
+        /// Session file from `couple sync --write-state`
+        #[arg(long)]
+        state: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        /// Keep the original camera audio as a second, non-default track
+        #[arg(long)]
+        keep_camera_audio: bool,
+        /// auto | mov | mp4 (§8.4 matrix)
+        #[arg(long, default_value = "auto")]
+        container: String,
+        /// +faststart (rewrites the file; off by default)
+        #[arg(long)]
+        faststart: bool,
+        #[arg(long)]
+        allow_silence: bool,
+        /// Overwrite an existing output
+        #[arg(short = 'f', long)]
+        force: bool,
+    },
     /// Session state tooling
     State {
         #[command(subcommand)]
@@ -287,6 +326,57 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
             let fit = couple_core::fit::fit_ls(&pts);
             emit(cli, &fit)
         }
+        Cmd::Render {
+            video,
+            audio,
+            state,
+            out,
+            force,
+            allow_silence,
+        } => {
+            let opts = couple_core::export::ExportOptions {
+                kind: couple_core::export::ExportKind::Wav,
+                output_path: out.clone(),
+                keep_camera_audio: false,
+                container: couple_core::export::Container::Auto,
+                faststart: false,
+                overwrite: *force,
+                allow_silence: *allow_silence,
+            };
+            run_export(cli, ctx, video, audio, state, opts, cancel)
+        }
+        Cmd::Export {
+            video,
+            audio,
+            state,
+            out,
+            keep_camera_audio,
+            container,
+            faststart,
+            allow_silence,
+            force,
+        } => {
+            let container = match container.as_str() {
+                "auto" => couple_core::export::Container::Auto,
+                "mov" => couple_core::export::Container::Mov,
+                "mp4" => couple_core::export::Container::Mp4,
+                other => {
+                    return Err(couple_core::CoupleError::invalid(format!(
+                        "--container must be auto|mov|mp4, got {other}"
+                    )))
+                }
+            };
+            let opts = couple_core::export::ExportOptions {
+                kind: couple_core::export::ExportKind::Mux,
+                output_path: out.clone(),
+                keep_camera_audio: *keep_camera_audio,
+                container,
+                faststart: *faststart,
+                overwrite: *force,
+                allow_silence: *allow_silence,
+            };
+            run_export(cli, ctx, video, audio, state, opts, cancel)
+        }
         Cmd::State { cmd } => match cmd {
             StateCmd::Validate { file } => {
                 let raw = std::fs::read(file)
@@ -407,6 +497,43 @@ fn run_sync(
         std::process::exit(code);
     }
     Ok(())
+}
+
+fn run_export(
+    cli: &Cli,
+    ctx: &Arc<Ctx>,
+    video: &PathBuf,
+    audio: &PathBuf,
+    state: &PathBuf,
+    opts: couple_core::export::ExportOptions,
+    cancel: &CancelToken,
+) -> couple_core::Result<()> {
+    let raw = std::fs::read(state)
+        .map_err(|e| couple_core::CoupleError::invalid(format!("read state: {e}")))?;
+    let session: couple_core::session::SessionFile = serde_json::from_slice(&raw)
+        .map_err(|e| couple_core::CoupleError::invalid(format!("state JSON: {e}")))?;
+    couple_core::session::validate_state(&session.alignment)?;
+    let a = &session.alignment;
+    let mapping = couple_core::export::ExportMapping {
+        offset_ms: a.offset_ms,
+        drift_ppm: a.drift_ppm,
+        resample: a.drift_mode == couple_core::session::DriftMode::Resample,
+    };
+    let reporter = progress::Reporter::new(cli.quiet, cli.progress_json, &opts.output_path);
+    let pf = reporter.progress_fn();
+    let mut prog = couple_core::job::ProgressEmitter::new(ctx.next_id(), pf);
+    let report = couple_core::export::export(
+        &ctx.ffmpeg()?,
+        &ctx.ffprobe()?,
+        video,
+        audio,
+        &mapping,
+        &opts,
+        &mut prog,
+        cancel,
+    )?;
+    reporter.finish();
+    emit(cli, &report)
 }
 
 fn write_session_file(

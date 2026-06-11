@@ -139,3 +139,53 @@ Headless workflow proven: `couple sync … --write-state s.json` →
 
 Session C complete. Next: Phase 4 (export) as a short follow-up session, then
 Session D (SwiftUI shell, prompt in SPEC §16).
+
+## 2026-06-11 — Session C2, Phase 4 complete (export pipeline)
+
+Implemented: aligned-audio render (§8.2) from the ORIGINAL external at full
+fidelity — None mode = integer-sample shift, bit-exact; Resample mode = own
+128-tap Kaiser (β 14) windowed-sinc polyphase at constant ratio with the
+fractional offset in the initial phase, measured **THD+N −151 to −154 dBFS**
+(997 Hz / 4 kHz / 12 kHz) against the −110 bar — rubato/soxr not needed, no
+new crates. Mux (§8.3/§8.4): video stream-copy, codec matrix (mov→PCM,
+mp4→aac_at 256k), keepCameraAudio second track non-default, -map_metadata 0,
+optional +faststart, temp + atomic rename, disk preflight, -progress-driven
+ExportMux phase. WAV/RF64 (§8.5) at source rate/depth/channels. CLI
+`render`/`export` (§10.2); `cpl_export_start` added to couple.h.
+
+Implementation notes (caught by tests):
+- §8.2 case 4 (external longer than video) deadlocked: the truncated render
+  leaves the decoder blocked on a full pipe — it must be killed, not awaited.
+- The decode reader returned more frames than requested (pipe chunking),
+  underflowing the head-trim skip arithmetic → all-silence output. Capped.
+
+Gates (§9.7 + §15 Phase 4), all green (7 export tests; 41 total in workspace):
+- Round-trip keystone: re-sync of the exported render vs original external
+  reproduces the mapping within 0.25 ms / 0.3 ppm; vs the camera the residual
+  is ≈ 0 (0.008 ms / 0.008 ppm observed). ✓
+- None-mode mux of a PCM-in-MOV fixture: byte-identical samples over the
+  overlap, digital-silence head, mpeg4 video stream untouched. ✓
+- Edge cases 1–5 asserted sample-exactly; case 6 (no mid-span synthesis)
+  proven by the byte equality. ✓
+- keepCameraAudio: 2 audio tracks, a:0 default, a:1 copied + non-default. ✓
+- Container matrix: mp4-family input → mp4 + AAC; mov → PCM s24. ✓
+- Cancellation: Cancelled surfaced, no temp litter. ✓
+- Budget: 2 h resample-mode render 15.5 s (≤ 90 s). ✓
+
+Real pair (the §15 finish line — iMovie workflow replaced headlessly):
+`couple sync --write-state` → `couple export` → /tmp/schumann_synced.mp4 in
+16 s: h264 stream copy bit-preserved (identical VFR avg_fps 969030000/32294159,
+43068 frames), aac_at stereo default track, creation_time 2022-12-10 preserved,
+duration 1435.307 s. In-sync verification: exported audio vs original camera
+audio measures +0.50 ms (t=700) / −0.42 ms (t=200) residual — sub-ms, well
+under the 40–80 ms perception threshold.
+- Export SHA-256 (this machine, ffmpeg 8.0.1):
+  d68336c1b8988cc726ff6590fb2626e2b7e7d43e050952451875d39b945e4417
+  Caveat for the §15 Phase-6 hash comparison: aac_at is Apple's encoder; the
+  hash is reproducible on this machine/ffmpeg pin but not necessarily across
+  OS updates — re-derive with the same pin if it drifts.
+- Deferred minor: §8.3 best-effort tmcd timecode-track copy not implemented
+  (the real pair has none); revisit if a tmcd-bearing camera shows up.
+
+Core complete (Phases 1–4). Next: Session D (SwiftUI shell, Phase 5 prompt in
+SPEC §16).

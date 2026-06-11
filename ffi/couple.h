@@ -197,6 +197,20 @@ char *cpl_measure_local_json(uint64_t ctx,
  char *cpl_fit_ls_json(const char *points_json);
 
 /*
+ Start an export job on a session (§4.9). opts_json: ExportOptions wire form
+ (`{"kind":"mux"|"wav","outputPath":…,"keepCameraAudio":…,"container":…,
+ "faststart":…,"overwrite":…}`). The session's current mapping is applied
+ (driftMode none ⇒ offset-only). Terminal "done" payload: ExportReport JSON.
+ Returns the job id, 0 on error.
+ */
+
+uint64_t cpl_export_start(uint64_t ctx,
+                          uint64_t session,
+                          const char *opts_json,
+                          CplProgressCb cb,
+                          void *user);
+
+/*
  LRU-GC the cache down to max_bytes; returns bytes freed.
  */
  uint64_t cpl_cache_gc(uint64_t ctx, uint64_t max_bytes);

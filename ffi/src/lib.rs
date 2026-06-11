@@ -616,6 +616,61 @@ pub unsafe extern "C" fn cpl_fit_ls_json(points_json: *const c_char) -> *mut c_c
     to_cstring(serde_json::to_string(&couple_core::fit::fit_ls(&pts)).unwrap())
 }
 
+// ---------- export (§8, Phase 4) ----------
+
+/// Start an export job on a session (§4.9). opts_json: ExportOptions wire form
+/// (`{"kind":"mux"|"wav","outputPath":…,"keepCameraAudio":…,"container":…,
+/// "faststart":…,"overwrite":…}`). The session's current mapping is applied
+/// (driftMode none ⇒ offset-only). Terminal "done" payload: ExportReport JSON.
+/// Returns the job id, 0 on error.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_export_start(
+    ctx: u64,
+    session: u64,
+    opts_json: *const c_char,
+    cb: CplProgressCb,
+    user: *mut c_void,
+) -> u64 {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return 0;
+    };
+    if opts_json.is_null() {
+        set_error(&couple_core::CoupleError::invalid("null export options"));
+        return 0;
+    }
+    let opts: couple_core::export::ExportOptions =
+        match serde_json::from_str(&CStr::from_ptr(opts_json).to_string_lossy()) {
+            Ok(o) => o,
+            Err(e) => {
+                set_error(&couple_core::CoupleError::invalid(format!("export options: {e}")));
+                return 0;
+            }
+        };
+    spawn_job(ctx, cb, user, move |ctx, progress, cancel| {
+        let s = ctx.session(session)?;
+        let cam = ctx.track(s.camera)?;
+        let ext = ctx.track(s.external)?;
+        let mapping = couple_core::export::ExportMapping {
+            offset_ms: s.offset_ms(),
+            drift_ppm: s.drift_ppm(),
+            resample: s.drift_mode() == couple_core::session::DriftMode::Resample,
+        };
+        let mut prog = couple_core::job::ProgressEmitter::new(0, progress);
+        let report = couple_core::export::export(
+            &ctx.ffmpeg()?,
+            &ctx.ffprobe()?,
+            std::path::Path::new(&cam.meta.info.path),
+            std::path::Path::new(&ext.meta.info.path),
+            &mapping,
+            &opts,
+            &mut prog,
+            cancel,
+        )?;
+        Ok(serde_json::to_string(&report).unwrap())
+    })
+}
+
 // ---------- cache ----------
 
 /// LRU-GC the cache down to max_bytes; returns bytes freed.

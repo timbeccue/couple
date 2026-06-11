@@ -8,6 +8,7 @@ pub mod cache;
 pub mod ctx;
 pub mod envelope;
 pub mod error;
+pub mod export;
 pub mod ffmpeg;
 pub mod fit;
 pub mod fixture;
@@ -19,6 +20,7 @@ pub mod onsets;
 pub mod pyramid;
 pub mod session;
 pub mod sync;
+pub mod resample;
 pub mod track;
 
 pub use ctx::{Ctx, CtxConfig};

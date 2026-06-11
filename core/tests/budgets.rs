@@ -124,6 +124,53 @@ fn budgets_2h_pair() {
     assert!(median <= 50.0);
 }
 
+/// §9.6 export budget: 2 h render ≤ 90 s (+ stream-copy I/O, absent for WAV).
+/// Resample mode = the CPU-worst path. Uses the pair2h fixture.
+#[test]
+#[ignore]
+fn export_budget_2h() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/pair2h");
+    assert!(
+        root.join("truth.json").is_file(),
+        "run budgets_2h_pair first to generate fixtures/pair2h"
+    );
+    let out = root.join("aligned_2h.wav");
+    let _ = std::fs::remove_file(&out);
+    let mapping = couple_core::export::ExportMapping {
+        offset_ms: -300_000.0,
+        drift_ppm: 12.0,
+        resample: true,
+    };
+    let opts = couple_core::export::ExportOptions {
+        kind: couple_core::export::ExportKind::Wav,
+        output_path: out.clone(),
+        keep_camera_audio: false,
+        container: couple_core::export::Container::Auto,
+        faststart: false,
+        overwrite: true,
+        allow_silence: false,
+    };
+    let ffmpeg = couple_core::ffmpeg::resolve_tool("ffmpeg", None).unwrap();
+    let ffprobe = couple_core::ffmpeg::resolve_tool("ffprobe", None).unwrap();
+    let mut prog = ProgressEmitter::new(0, noop_progress());
+    let t = Instant::now();
+    let report = couple_core::export::export(
+        &ffmpeg,
+        &ffprobe,
+        &root.join("camera.wav"),
+        &root.join("external.wav"),
+        &mapping,
+        &opts,
+        &mut prog,
+        &CancelToken::new(),
+    )
+    .unwrap();
+    let secs = t.elapsed().as_secs_f64();
+    eprintln!("2 h resample-mode WAV export: {secs:.1} s (budget 90 s), {} frames", report.frames);
+    assert!(secs <= 90.0);
+    let _ = std::fs::remove_file(&out);
+}
+
 /// §9.3 drift ladder, 1800 s row: ≤ ±0.2 ppm. Slow (fixture gen ~1 min), hence ignored.
 #[test]
 #[ignore]
