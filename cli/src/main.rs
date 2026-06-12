@@ -1,5 +1,6 @@
 //! couple — CLI over couple-core (§10). The portable artifact and test harness.
 
+mod pair;
 mod progress;
 
 use clap::{Parser, Subcommand};
@@ -148,6 +149,13 @@ enum Cmd {
         #[arg(short = 'f', long)]
         force: bool,
     },
+    /// Probe/import/classify a directory and resolve the v2 pairing rows (SPEC-V2 §3)
+    Pair {
+        dir: PathBuf,
+        /// Override PairParams, e.g. --params z-margin=8
+        #[arg(long = "params", value_name = "K=V")]
+        params: Vec<String>,
+    },
     /// Session state tooling
     State {
         #[command(subcommand)]
@@ -205,6 +213,14 @@ enum FixtureCmd {
         itsoffset: f64,
         #[arg(long, default_value_t = 1)]
         seed: u64,
+    },
+    /// Generate a session folder from a SessionSpec JSON (SPEC-V2 §7)
+    Session {
+        #[arg(long)]
+        out: PathBuf,
+        /// SessionSpec JSON file ({"seed", "cameras":[…], "externals":[…], "junkFiles":[…]})
+        #[arg(long)]
+        spec: PathBuf,
     },
 }
 
@@ -377,6 +393,16 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
             };
             run_export(cli, ctx, video, audio, state, opts, cancel)
         }
+        Cmd::Pair { dir, params } => {
+            let mut pp = pair::PairParams::default();
+            for kv in params {
+                let (k, v) = kv
+                    .split_once('=')
+                    .ok_or_else(|| couple_core::CoupleError::invalid("--params expects k=v"))?;
+                pp.set(k, v)?;
+            }
+            pair::run_pair(cli.json, cli.quiet, cli.progress_json, ctx, dir, &pp, cancel)
+        }
         Cmd::State { cmd } => match cmd {
             StateCmd::Validate { file } => {
                 let raw = std::fs::read(file)
@@ -434,6 +460,14 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
                     seed: *seed,
                 };
                 let truth = couple_core::fixture::generate(out, &spec, &ctx.ffmpeg()?)?;
+                emit(cli, &truth)
+            }
+            FixtureCmd::Session { out, spec } => {
+                let raw = std::fs::read(spec)
+                    .map_err(|e| couple_core::CoupleError::invalid(format!("read spec: {e}")))?;
+                let spec: couple_core::fixture::SessionSpec = serde_json::from_slice(&raw)
+                    .map_err(|e| couple_core::CoupleError::invalid(format!("spec JSON: {e}")))?;
+                let truth = couple_core::fixture::generate_session(out, &spec, &ctx.ffmpeg()?)?;
                 emit(cli, &truth)
             }
         },

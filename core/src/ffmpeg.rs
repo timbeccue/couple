@@ -79,7 +79,22 @@ fn parse_fps(s: Option<&serde_json::Value>) -> f64 {
 }
 
 /// `ffprobe -v error -print_format json -show_format -show_streams` → MediaInfo (§7.1).
+/// Rejects files without an audio stream (v1 contract: nothing downstream of import
+/// can use them).
 pub fn probe(ffprobe: &Path, path: &Path) -> Result<MediaInfo> {
+    let info = probe_lenient(ffprobe, path)?;
+    if info.audio.is_empty() {
+        return Err(CoupleError::NoAudioStream {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(info)
+}
+
+/// Probe WITHOUT the audio-stream gate (SPEC-V2 §2 pool classification: a video file
+/// with a stripped audio stream is still a video — it gets an honest `no match` row,
+/// not a silent rejection). Rust-side only; not part of the C ABI.
+pub fn probe_lenient(ffprobe: &Path, path: &Path) -> Result<MediaInfo> {
     if !path.is_file() {
         return Err(CoupleError::FileNotFound {
             path: path.to_path_buf(),
@@ -181,12 +196,6 @@ pub fn probe(ffprobe: &Path, path: &Path) -> Result<MediaInfo> {
             }),
             _ => {}
         }
-    }
-
-    if audio.is_empty() {
-        return Err(CoupleError::NoAudioStream {
-            path: path.to_path_buf(),
-        });
     }
 
     Ok(MediaInfo {

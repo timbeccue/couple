@@ -770,6 +770,58 @@ pub unsafe extern "C" fn cpl_export_start(
     })
 }
 
+// ---------- pairing (SPEC-V2 §4, Phase 7) ----------
+
+/// Role-agnostic stage-1 correlation between any two imported tracks (SPEC-V2 §3.2).
+/// Returns PairCorrelation JSON (`{"z","lagMs","ncc","fineNcc","overlapBins",
+/// "runnerUpZ","refined","insufficientOverlap"}`); lag convention: content at time t
+/// in track_a occurs at t + lagMs/1000 in track_b. Default SyncParams (Z_MIN 8.5).
+/// Null on error; free with cpl_string_free.
+#[no_mangle]
+pub extern "C" fn cpl_pair_correlate(ctx: u64, track_a: u64, track_b: u64) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    match ctx.pair_correlate(track_a, track_b, &Default::default()) {
+        Ok(r) => to_cstring(serde_json::to_string(&r).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Batch candidate matrix (SPEC-V2 §3.2): rows = videos, columns = audios. Returns a
+/// JSON array of arrays of PairCorrelation (same wire form as cpl_pair_correlate).
+/// Null on error; free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_pair_candidates(
+    ctx: u64,
+    videos: *const u64,
+    n_videos: usize,
+    audios: *const u64,
+    n_audios: usize,
+) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    if (videos.is_null() && n_videos > 0) || (audios.is_null() && n_audios > 0) {
+        set_error(&couple_core::CoupleError::invalid("null track id array"));
+        return std::ptr::null_mut();
+    }
+    let vs = std::slice::from_raw_parts(videos, n_videos);
+    let aus = std::slice::from_raw_parts(audios, n_audios);
+    match ctx.pair_candidates(vs, aus, &Default::default()) {
+        Ok(m) => to_cstring(serde_json::to_string(&m).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 // ---------- cache ----------
 
 /// LRU-GC the cache down to max_bytes; returns bytes freed.

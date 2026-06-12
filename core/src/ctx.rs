@@ -107,6 +107,11 @@ impl Ctx {
         ffmpeg::probe(&self.ffprobe()?, path)
     }
 
+    /// Probe without the audio-stream gate (SPEC-V2 §2 pool classification).
+    pub fn probe_lenient(&self, path: &Path) -> Result<MediaInfo> {
+        ffmpeg::probe_lenient(&self.ffprobe()?, path)
+    }
+
     /// Blocking import; the `import_start` job wrapper runs this on a worker thread.
     pub fn import_blocking(
         &self,
@@ -196,8 +201,54 @@ impl Ctx {
         self.tracks.write().unwrap().remove(&id);
     }
 
+    /// LRU cache GC with session pinning (SPEC-V2 §4, V2-F3). Mechanism: liveness via
+    /// open handles — every loaded track's content key is exempt from eviction, so
+    /// the `cpl_cache_gc` ABI signature stays v1-identical.
     pub fn cache_gc(&self, max_bytes: u64) -> u64 {
-        cache::gc(&self.cache_root, max_bytes)
+        let pinned: std::collections::HashSet<String> = self
+            .tracks
+            .read()
+            .unwrap()
+            .values()
+            .map(|t| t.meta.content_key.clone())
+            .collect();
+        cache::gc(&self.cache_root, max_bytes, &pinned)
+    }
+
+    // ---- pairing (SPEC-V2 §4) ----
+
+    /// Role-agnostic stage-1 correlation between any two imported tracks.
+    pub fn pair_correlate(
+        &self,
+        a: TrackId,
+        b: TrackId,
+        params: &crate::sync::SyncParams,
+    ) -> Result<crate::pair::PairCorrelation> {
+        let ta = self.track(a)?;
+        let tb = self.track(b)?;
+        Ok(crate::pair::pair_correlate(&ta.pyramid, &tb.pyramid, params))
+    }
+
+    /// Batch candidate matrix: rows = `videos`, columns = `audios`. Cells run in
+    /// parallel; each cell is independent and deterministic (§5.8), so the matrix is
+    /// bit-stable across runs on the same machine.
+    pub fn pair_candidates(
+        &self,
+        videos: &[TrackId],
+        audios: &[TrackId],
+        params: &crate::sync::SyncParams,
+    ) -> Result<Vec<Vec<crate::pair::PairCorrelation>>> {
+        let vs: Vec<Arc<TrackData>> = videos.iter().map(|&id| self.track(id)).collect::<Result<_>>()?;
+        let aus: Vec<Arc<TrackData>> = audios.iter().map(|&id| self.track(id)).collect::<Result<_>>()?;
+        use rayon::prelude::*;
+        Ok(vs
+            .par_iter()
+            .map(|v| {
+                aus.iter()
+                    .map(|a| crate::pair::pair_correlate(&v.pyramid, &a.pyramid, params))
+                    .collect()
+            })
+            .collect())
     }
 
     // ---- sessions (§4.5) ----

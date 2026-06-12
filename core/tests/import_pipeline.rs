@@ -89,6 +89,41 @@ fn plain_wav_has_zero_epoch_and_roundtrips_cache() {
     }
 }
 
+/// SPEC-V2 §4 / V2-F3: cache GC must never evict a track the open session still
+/// references. Mechanism (Session F): liveness via open handles — every loaded
+/// track's content key is pinned; freed tracks become evictable again.
+#[test]
+fn cache_gc_pins_open_track_handles() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut rng = ChaCha8Rng::seed_from_u64(7);
+    let mk = |name: &str, rng: &mut ChaCha8Rng| {
+        let samples: Vec<f32> = (0..48_000 * 2).map(|_| rng.gen_range(-0.9f32..0.9)).collect();
+        let wav = dir.path().join(name);
+        common::write_wav_mono_48k(&wav, &samples);
+        wav
+    };
+    let wav_open = mk("open.wav", &mut rng);
+    let wav_freed = mk("freed.wav", &mut rng);
+
+    let cache = dir.path().join("cache");
+    let ctx = common::test_ctx(&cache);
+    let id_open = common::import(&ctx, &wav_open, TrackRole::External).unwrap();
+    let id_freed = common::import(&ctx, &wav_freed, TrackRole::External).unwrap();
+    let key_open = ctx.track(id_open).unwrap().meta.content_key.clone();
+    let key_freed = ctx.track(id_freed).unwrap().meta.content_key.clone();
+    ctx.track_free(id_freed);
+
+    // GC to zero: the freed track's entry goes, the open handle's entry survives.
+    ctx.cache_gc(0);
+    assert!(cache.join(&key_open).is_dir(), "pinned entry evicted");
+    assert!(!cache.join(&key_freed).is_dir(), "unpinned entry survived gc to 0");
+
+    // Once the handle is freed the entry is evictable.
+    ctx.track_free(id_open);
+    ctx.cache_gc(0);
+    assert!(!cache.join(&key_open).is_dir(), "entry survived gc after free");
+}
+
 /// §9.7 cancellation: no temp/cache litter, `Cancelled` surfaced.
 #[test]
 fn cancel_mid_import_leaves_no_litter() {

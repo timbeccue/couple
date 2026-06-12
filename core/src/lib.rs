@@ -18,6 +18,7 @@ pub mod job;
 pub mod measure;
 pub mod media;
 pub mod onsets;
+pub mod pair;
 pub mod pyramid;
 pub mod session;
 pub mod sync;

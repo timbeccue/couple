@@ -193,14 +193,21 @@ pub fn list_entries(cache_root: &Path) -> Vec<CacheEntryInfo> {
     out
 }
 
-/// LRU GC down to `max_bytes` (§6.3). Returns bytes freed.
-pub fn gc(cache_root: &Path, max_bytes: u64) -> u64 {
+/// LRU GC down to `max_bytes` (§6.3). Keys in `pinned` are never evicted
+/// (SPEC-V2 §4 / V2-F3: tracks referenced by the open session are exempt; the
+/// caller — `Ctx::cache_gc` — derives the set from open track handles). Pinned
+/// bytes still count toward the cap, so unpinned entries make room first.
+/// Returns bytes freed.
+pub fn gc(cache_root: &Path, max_bytes: u64, pinned: &std::collections::HashSet<String>) -> u64 {
     let entries = list_entries(cache_root);
     let mut total: u64 = entries.iter().map(|e| e.bytes).sum();
     let mut freed = 0;
     for e in &entries {
         if total <= max_bytes {
             break;
+        }
+        if pinned.contains(&e.key) {
+            continue;
         }
         let _ = fs::remove_dir_all(cache_root.join(&e.key));
         total -= e.bytes;

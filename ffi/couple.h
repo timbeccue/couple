@@ -246,6 +246,27 @@ uint64_t cpl_export_start(uint64_t ctx,
                           void *user);
 
 /*
+ Role-agnostic stage-1 correlation between any two imported tracks (SPEC-V2 §3.2).
+ Returns PairCorrelation JSON (`{"z","lagMs","ncc","fineNcc","overlapBins",
+ "runnerUpZ","refined","insufficientOverlap"}`); lag convention: content at time t
+ in track_a occurs at t + lagMs/1000 in track_b. Default SyncParams (Z_MIN 8.5).
+ Null on error; free with cpl_string_free.
+ */
+ char *cpl_pair_correlate(uint64_t ctx, uint64_t track_a, uint64_t track_b);
+
+/*
+ Batch candidate matrix (SPEC-V2 §3.2): rows = videos, columns = audios. Returns a
+ JSON array of arrays of PairCorrelation (same wire form as cpl_pair_correlate).
+ Null on error; free with cpl_string_free.
+ */
+
+char *cpl_pair_candidates(uint64_t ctx,
+                          const uint64_t *videos,
+                          uintptr_t n_videos,
+                          const uint64_t *audios,
+                          uintptr_t n_audios);
+
+/*
  LRU-GC the cache down to max_bytes; returns bytes freed.
  */
  uint64_t cpl_cache_gc(uint64_t ctx, uint64_t max_bytes);

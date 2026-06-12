@@ -223,9 +223,36 @@ struct Master {
 
 impl Master {
     fn new(seed: u64, u_min: f64, u_max: f64) -> Self {
-        let start = (u_min * GRID_RATE).floor() as i64 - 2 * SINC_HALF_TAPS;
+        Self::with_plan_domain(seed, u_min, u_max, u_min, 0.0, 0)
+    }
+
+    /// Session-folder variant (SPEC-V2 §7): the event plan is generated over the FULL
+    /// master domain [plan_lo, plan_hi] (Poisson event times depend on the domain
+    /// start, so files cut from one master must share it) while the sample buffer
+    /// starts at this file's own span. The pink bed restarts per span — different
+    /// mics hearing different room noise; transients/tones are absolute-time exact.
+    /// `jitter_ms > 0` perturbs each transient onset by ±jitter (the synthetic
+    /// "different take of the same piece" proxy, gate §7.8 — micro-timing diverges,
+    /// macro structure kept).
+    fn with_plan_domain(
+        seed: u64,
+        plan_lo: f64,
+        plan_hi: f64,
+        span_lo: f64,
+        jitter_ms: f64,
+        jitter_seed: u64,
+    ) -> Self {
+        let start = (span_lo * GRID_RATE).floor() as i64 - 2 * SINC_HALF_TAPS;
+        let mut p = plan(seed, plan_lo - 1.0, plan_hi + 1.0);
+        if jitter_ms > 0.0 {
+            let mut rj = ChaCha8Rng::seed_from_u64(jitter_seed.wrapping_add(0x6a69_7474));
+            for t in &mut p.transients {
+                t.t0 += rj.gen_range(-jitter_ms..jitter_ms) / 1000.0;
+            }
+            p.transients.sort_by(|a, b| a.t0.total_cmp(&b.t0));
+        }
         Self {
-            plan: plan(seed, u_min - 1.0, u_max + 1.0),
+            plan: p,
             pink: Pink::new(seed.wrapping_add(0x70_696e_6b)),
             base: start,
             next: start,
@@ -673,5 +700,344 @@ pub fn generate(out_dir: &Path, spec: &FixtureSpec, ffmpeg: &Path) -> Result<Fix
         serde_json::to_vec_pretty(&truth).unwrap(),
     )
     .map_err(|e| CoupleError::internal(format!("truth.json: {e}")))?;
+    Ok(truth)
+}
+
+// ---------- session-folder mode (SPEC-V2 §7) ----------
+//
+// One master timeline; camera files cut from regions of it; external file(s)
+// covering chosen spans; per-file independent degradation. Truth = the mechanical
+// same-master pair table (lags + coverage); expected resolution STATES are owned
+// by the gate tests, which know the resolver.
+
+/// A camera file cut from `[master_t0, master_t0 + dur_s)` of the master, encoded
+/// as `<name>.mp4` (mpeg4 testsrc2 video + AAC audio, F12). `strip_audio` authors
+/// a video-only file (gate §7.5).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionCam {
+    pub name: String,
+    pub master_t0: f64,
+    pub dur_s: f64,
+    pub gain_db: f64,
+    pub snr_db: Option<f64>,
+    pub agc: bool,
+    pub strip_audio: bool,
+}
+
+impl Default for SessionCam {
+    fn default() -> Self {
+        Self {
+            name: "video".into(),
+            master_t0: 0.0,
+            dur_s: 60.0,
+            gain_db: 0.0,
+            snr_db: Some(20.0),
+            agc: true,
+            strip_audio: false,
+        }
+    }
+}
+
+/// An external recorder file covering `[master_t0, master_t0 + dur_s)`, written as
+/// `<name>.wav`. `master_seed` swaps in a different master entirely (unrelated
+/// audio, gate §7.4). `plan_jitter_ms` perturbs transient onsets — the synthetic
+/// "different take" proxy (gate §7.8); jittered externals are excluded from the
+/// truth pair table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionExt {
+    pub name: String,
+    pub master_t0: f64,
+    pub dur_s: f64,
+    pub gain_db: f64,
+    pub snr_db: Option<f64>,
+    pub agc: bool,
+    pub rate: u32,
+    pub bits: u32,
+    pub master_seed: Option<u64>,
+    pub plan_jitter_ms: f64,
+    pub jitter_seed: u64,
+}
+
+impl Default for SessionExt {
+    fn default() -> Self {
+        Self {
+            name: "external".into(),
+            master_t0: 0.0,
+            dur_s: 120.0,
+            gain_db: 0.0,
+            snr_db: None,
+            agc: false,
+            rate: 48_000,
+            bits: 24,
+            master_seed: None,
+            plan_jitter_ms: 0.0,
+            jitter_seed: 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionSpec {
+    pub seed: u64,
+    pub cameras: Vec<SessionCam>,
+    pub externals: Vec<SessionExt>,
+    /// Non-media litter files to author (gate §7.5), e.g. "notes.txt".
+    pub junk_files: Vec<String>,
+}
+
+impl Default for SessionSpec {
+    fn default() -> Self {
+        Self {
+            seed: 1,
+            cameras: Vec::new(),
+            externals: Vec::new(),
+            junk_files: Vec::new(),
+        }
+    }
+}
+
+/// Ground truth for one same-master (camera, external) pair: expected stage lag and
+/// the coverage interval on the video timeline (ppm = 0 in session mode).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPairTruth {
+    pub camera: String,
+    pub external: String,
+    pub lag_ms: f64,
+    pub coverage_t0: f64,
+    pub coverage_t1: f64,
+    pub coverage_fraction: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionTruth {
+    pub spec: SessionSpec,
+    pub camera_files: Vec<String>,
+    pub external_files: Vec<String>,
+    pub junk_files: Vec<String>,
+    pub pairs: Vec<SessionPairTruth>,
+}
+
+/// Per-file degradation chain → temp f64le raw; returns the pre-noise signal RMS
+/// (two-pass exact-SNR, same approach as `generate`). Camera files get the 16 kHz
+/// low-pass (§9.1); externals are full-band.
+#[allow(clippy::too_many_arguments)]
+fn render_degraded_raw(
+    master: &mut Master,
+    span_t0: f64,
+    n: u64,
+    rate: f64,
+    gain_db: f64,
+    lowpass: bool,
+    agc: bool,
+    tmp: &Path,
+) -> Result<f64> {
+    let gain = 10f64.powf(gain_db / 20.0);
+    let mut lp = lowpass.then(|| Biquad::lowpass(16_000.0_f64.min(rate * 0.45), rate));
+    let mut agc = agc.then(|| Agc::new(rate));
+    let mut f = std::io::BufWriter::with_capacity(
+        1 << 20,
+        std::fs::File::create(tmp).map_err(|e| CoupleError::internal(format!("session tmp: {e}")))?,
+    );
+    let mut sum_sq = 0f64;
+    for k in 0..n {
+        let mut s = master.sample(span_t0 + k as f64 / rate) * gain;
+        if let Some(lp) = &mut lp {
+            s = lp.process(s);
+        }
+        if let Some(a) = &mut agc {
+            s = a.process(s);
+        }
+        sum_sq += s * s;
+        push_f64(&mut f, s)?;
+    }
+    f.flush().map_err(|e| CoupleError::internal(format!("session tmp flush: {e}")))?;
+    Ok((sum_sq / n.max(1) as f64).sqrt())
+}
+
+/// Stream a temp raw file into an encoder child, adding deterministic white noise
+/// to the target SNR.
+fn pipe_raw_with_noise(
+    tmp: &Path,
+    stdin: std::process::ChildStdin,
+    signal_rms: f64,
+    snr_db: Option<f64>,
+    noise_seed: u64,
+) -> Result<()> {
+    let noise_amp = snr_db.map(|snr| signal_rms / 10f64.powf(snr / 20.0)).unwrap_or(0.0);
+    let mut w = std::io::BufWriter::with_capacity(1 << 20, stdin);
+    let mut nrng = ChaCha8Rng::seed_from_u64(noise_seed.wrapping_add(0x6e6f_6973));
+    let raw =
+        std::fs::File::open(tmp).map_err(|e| CoupleError::internal(format!("session tmp open: {e}")))?;
+    let mut rdr = std::io::BufReader::with_capacity(1 << 20, raw);
+    let mut bytes = [0u8; 8];
+    use std::io::Read;
+    loop {
+        match rdr.read_exact(&mut bytes) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(CoupleError::internal(format!("session tmp read: {e}"))),
+        }
+        let mut v = f64::from_le_bytes(bytes);
+        if noise_amp > 0.0 {
+            v += nrng.gen_range(-1.0f64..1.0) * noise_amp * 1.732; // uniform → RMS≈amp
+        }
+        push_f64(&mut w, v.clamp(-0.999, 0.999))?;
+    }
+    w.flush().map_err(|e| CoupleError::internal(format!("session pipe flush: {e}")))?;
+    Ok(())
+}
+
+/// Generate a session folder (SPEC-V2 §7) + truth.json. Deterministic per spec.
+pub fn generate_session(out_dir: &Path, spec: &SessionSpec, ffmpeg: &Path) -> Result<SessionTruth> {
+    std::fs::create_dir_all(out_dir)
+        .map_err(|e| CoupleError::internal(format!("session out dir: {e}")))?;
+
+    // Shared plan domain per master seed: the full extent of every span on it.
+    let mut domain: std::collections::HashMap<u64, (f64, f64)> = std::collections::HashMap::new();
+    let mut widen = |seed: u64, t0: f64, t1: f64| {
+        let e = domain.entry(seed).or_insert((t0, t1));
+        e.0 = e.0.min(t0);
+        e.1 = e.1.max(t1);
+    };
+    for c in &spec.cameras {
+        if !c.strip_audio {
+            widen(spec.seed, c.master_t0, c.master_t0 + c.dur_s);
+        }
+    }
+    for x in &spec.externals {
+        let seed = x.master_seed.unwrap_or(spec.seed);
+        widen(seed, x.master_t0, x.master_t0 + x.dur_s);
+    }
+    let domain_of = |seed: u64| *domain.get(&seed).unwrap_or(&(0.0, 1.0));
+
+    const CAM_RATE: u32 = 48_000;
+    let mut camera_files = Vec::new();
+    for (ci, c) in spec.cameras.iter().enumerate() {
+        let file = format!("{}.mp4", c.name);
+        let path = out_dir.join(&file);
+        if c.strip_audio {
+            // Video-only mp4 (gate §7.5): classified as a video, but unanalyzable.
+            let st = Command::new(ffmpeg)
+                .args(["-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i"])
+                .arg(format!("testsrc2=size=320x240:rate=30:duration={}", c.dur_s))
+                .args(["-c:v", "mpeg4", "-q:v", "10", "-an"])
+                .arg(&path)
+                .status()
+                .map_err(|e| CoupleError::internal(format!("session video-only: {e}")))?;
+            if !st.success() {
+                return Err(CoupleError::FfmpegFailed {
+                    stage: "session video-only".into(),
+                    exit_code: st.code(),
+                    stderr_tail: String::new(),
+                });
+            }
+            camera_files.push(file);
+            continue;
+        }
+        let (lo, hi) = domain_of(spec.seed);
+        let mut master = Master::with_plan_domain(spec.seed, lo, hi, c.master_t0, 0.0, 0);
+        let n = (c.dur_s * CAM_RATE as f64).round() as u64;
+        let tmp = out_dir.join(format!(".{}.tmp.f64", c.name));
+        let rms = render_degraded_raw(
+            &mut master, c.master_t0, n, CAM_RATE as f64, c.gain_db, true, c.agc, &tmp,
+        )?;
+        let mut child = Command::new(ffmpeg)
+            .args(["-nostdin", "-v", "error", "-y", "-f", "f64le"])
+            .args(["-ar", &CAM_RATE.to_string(), "-ac", "1", "-i", "pipe:0"])
+            .args(["-f", "lavfi", "-i"])
+            .arg(format!("testsrc2=size=320x240:rate=30:duration={}", c.dur_s))
+            .args(["-map", "1:v:0", "-map", "0:a:0", "-c:v", "mpeg4", "-q:v", "10"])
+            .args(["-c:a", "aac", "-b:a", "256k", "-shortest"])
+            .arg(&path)
+            .stdin(Stdio::piped())
+            .spawn()
+            .map_err(|e| CoupleError::internal(format!("session camera mux: {e}")))?;
+        pipe_raw_with_noise(
+            &tmp,
+            child.stdin.take().unwrap(),
+            rms,
+            c.snr_db,
+            spec.seed.wrapping_add(ci as u64 * 7919),
+        )?;
+        finish_child(child, "session camera")?;
+        let _ = std::fs::remove_file(&tmp);
+        camera_files.push(file);
+    }
+
+    let mut external_files = Vec::new();
+    for (xi, x) in spec.externals.iter().enumerate() {
+        let file = format!("{}.wav", x.name);
+        let path = out_dir.join(&file);
+        let seed = x.master_seed.unwrap_or(spec.seed);
+        let (lo, hi) = domain_of(seed);
+        let mut master =
+            Master::with_plan_domain(seed, lo, hi, x.master_t0, x.plan_jitter_ms, x.jitter_seed);
+        let n = (x.dur_s * x.rate as f64).round() as u64;
+        let tmp = out_dir.join(format!(".{}.tmp.f64", x.name));
+        let rms = render_degraded_raw(
+            &mut master, x.master_t0, n, x.rate as f64, x.gain_db, false, x.agc, &tmp,
+        )?;
+        let codec = if x.bits <= 16 { "pcm_s16le" } else { "pcm_s24le" };
+        let mut child = spawn_wav_writer(ffmpeg, x.rate, codec, &path)?;
+        pipe_raw_with_noise(
+            &tmp,
+            child.stdin.take().unwrap(),
+            rms,
+            x.snr_db,
+            seed.wrapping_add(0x5858).wrapping_add(xi as u64 * 104_729),
+        )?;
+        finish_child(child, "session external")?;
+        let _ = std::fs::remove_file(&tmp);
+        external_files.push(file);
+    }
+
+    for j in &spec.junk_files {
+        std::fs::write(out_dir.join(j), b"not media\n")
+            .map_err(|e| CoupleError::internal(format!("session junk file: {e}")))?;
+    }
+
+    // Mechanical truth: same-master, un-jittered, overlapping pairs.
+    let mut pairs = Vec::new();
+    for (c, cf) in spec.cameras.iter().zip(&camera_files) {
+        if c.strip_audio {
+            continue;
+        }
+        for (x, xf) in spec.externals.iter().zip(&external_files) {
+            if x.master_seed.unwrap_or(spec.seed) != spec.seed || x.plan_jitter_ms > 0.0 {
+                continue;
+            }
+            let t0 = (x.master_t0 - c.master_t0).max(0.0);
+            let t1 = (x.master_t0 + x.dur_s - c.master_t0).min(c.dur_s);
+            if t1 - t0 <= 0.0 {
+                continue;
+            }
+            pairs.push(SessionPairTruth {
+                camera: cf.clone(),
+                external: xf.clone(),
+                lag_ms: (c.master_t0 - x.master_t0) * 1000.0,
+                coverage_t0: t0,
+                coverage_t1: t1,
+                coverage_fraction: (t1 - t0) / c.dur_s,
+            });
+        }
+    }
+
+    let truth = SessionTruth {
+        spec: spec.clone(),
+        camera_files,
+        external_files,
+        junk_files: spec.junk_files.clone(),
+        pairs,
+    };
+    std::fs::write(
+        out_dir.join("truth.json"),
+        serde_json::to_vec_pretty(&truth).unwrap(),
+    )
+    .map_err(|e| CoupleError::internal(format!("session truth.json: {e}")))?;
     Ok(truth)
 }

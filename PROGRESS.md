@@ -466,3 +466,107 @@ plan, and the Session F/G kickoff prompts). Key records:
   prompt written after G converges). UX-DECISIONS.md untouched per the
   append-only protocol; SPEC-V2 §0 defines precedence until the
   UX-DECISIONS-V2 section lands with the converged mockup.
+
+## 2026-06-12 — Session F, Phase 7 complete (headless pairing core)
+
+Implemented (SPEC-V2 §4, additive only; no v1 behavior, ABI symbol, or frozen
+regression value changed — full v1 suite re-run green, realdata included):
+
+- `core/src/pair.rs`: `pair_correlate` — role-agnostic stage-1 z-selection plus
+  the §5.3 refinement ladder between ANY two imported tracks; pure measurement,
+  never errors on a poor match (below-floor cells keep the coarse lag for
+  calibration, unrefined). `Ctx::pair_candidates` batch (rayon over cells; each
+  cell deterministic per §5.8, so the matrix is bit-stable). Lag convention =
+  `SyncResult.offset_ms` when (A, B) = (video, audio).
+- **Stage-1 role-freedom verified, no SPEC-CHANGE needed** (SPEC-V2 §4 asked):
+  the §5.2/§5.3 path consumes pyramid envelopes only; the epoch rule is baked
+  into the pyramid at import; `TrackRole` lives solely in `TrackMeta`.
+- C ABI: `couple.h` grew exactly two symbols — `cpl_pair_correlate`,
+  `cpl_pair_candidates` (JSON-returning, free via `cpl_string_free`).
+- SPEC-CHANGE (2026-06-12, Session F, V2-F3 disposition): cache-GC pinning
+  mechanism = **liveness via open handles** — `Ctx::cache_gc` exempts the
+  content keys of all loaded tracks; `cache::gc` gains an internal pinned set.
+  The alternative (a pinned-keys parameter on `cpl_cache_gc`) would have
+  changed an existing ABI signature, which Phase 7 forbids. Pinned bytes still
+  count toward the cap. Test: `cache_gc_pins_open_track_handles`.
+- Fixture session-folder mode (§9.1 extension, SPEC-V2 §7): `SessionSpec`
+  (cameras cut from master regions, span-covering externals, per-file
+  gain/AGC/SNR degradation, junk files) → `generate_session` + truth.json
+  (mechanical same-master pair table: lags + coverage; expected STATES are
+  owned by the gate tests, which know the resolver). Files cut from one master
+  share a single event-plan domain (Poisson times depend on the domain start);
+  the pink bed restarts per file span (different mics, different room noise —
+  transients/tones are absolute-time exact). `plan_jitter_ms` perturbs
+  transient onsets — the synthetic "different take" proxy for gate §7.8.
+  CLI: `couple fixture session --out dir --spec spec.json`.
+- `couple pair <dir> [--json]` (`cli/src/pair.rs`): probe → classify → import
+  → candidate matrix → FULL §3.3 resolution. Coverage intervals (§5.6 overlap
+  arithmetic, ppm 0); disjoint/overlapping discrimination generalized past two
+  candidates via interval clustering (connected components, intersection >
+  DISJOINT_TOL_S = 0.5 s [SPEC, TUNE]); §3.4 triangle closure per overlapping
+  pair (A×B z ≥ Z_MIN AND |lag(V→B) − lag(V→A) − lag(A→B)| ≤ TRIANGLE_TOL_MS,
+  memoized, antisymmetric); §3.5 margin rule; states confident / partial /
+  split / twoSources / ambiguous / noMatch with the §3.3 chip texts
+  ("audio covers 0:30–1:30 of 1:30"). `ambiguous` and `noMatch` rows have NO
+  selection (V2-F2: never a coin-flip). Unused-audio tray = audio no row
+  selects. Constants table (Z_MIN 8.5, Z_MARGIN 6.0 [TUNE], TRIANGLE_TOL_MS
+  250 [TUNE], COVERAGE_FULL 0.98 [TUNE]) overridable via `--params` and echoed
+  in `--json` with every raw z/lag/margin/residual — the corpus-calibration
+  feed. Timestamps surfaced as metadata only; all tie-breaks are by file name
+  (clock-free, SPEC §1.4 honored trivially).
+- §3.6 stability semantics in a stateless CLI: rows contain no run-varying
+  fields (no timings, no track ids, no absolute paths) and every ordering is
+  name/z-deterministic, so unchanged inputs re-serialize byte-identically
+  (gate 6 asserts it); user-pin persistence is Phase 9 shell state by design.
+- `ffmpeg::probe` split into `probe` (v1 contract unchanged: `NoAudioStream`
+  on audio-less files) + `probe_lenient` (Rust-only) so the pool can classify
+  a stripped-audio video as an honest `no match` row instead of rejecting it.
+
+Gates (SPEC-V2 §7, all headless via the real binary — cli/tests/pair_gates.rs,
+10 tests, green):
+1. Continuous recorder: 3 rows confident, same audio, lags ≤ 2 ms of truth. ✓
+2. Recorder restart: videos 1/3 confident; video 2 `split`, max-coverage
+   selected, other listed as alternate, clusters = 2. ✓
+3. Simultaneous recorders: `twoSources`, A×B above floor, triangle residual
+   ≤ 250 ms (measured ~53 ms), best-z default. ✓ (= gate 8's sanity direction)
+4. Unrelated audio: never a candidate, lands in unused tray; video with only
+   unrelated audio ⇒ `noMatch`. ✓
+5. Mixed bag: junk file skipped + surfaced once; stripped-audio video ⇒
+   `noMatch` ("no audio stream"); no crash, no litter. ✓
+6. Stability: +1 unrelated file ⇒ original rows byte-identical in --json. ✓
+7. Budget: 36-cell matrix in **46.6 ms** (≤ 5 s). ✓
+8. Honesty floor (best-effort, V2-F2 — raw numbers recorded below). ✓
+   Plus `margin_rule_prefers_ambiguous`: closure tolerance pinned ≈ 0 +
+   Z_MARGIN 1000 via --params forces the conflict path ⇒ `ambiguous`, no
+   selection, all candidates listed. ✓
+
+V2-F2 calibration data recorded for the future corpus (the reason [TUNE]
+values ride along in --json):
+- Same-master/different-span cells (no shared content, similar texture) reach
+  z 8.9–9.6 — ABOVE the 8.5 floor (Session C's ≤ 7.5 ceiling was fully
+  unrelated content). At 40 s takes the true peak is only z ≈ 14, margin 4.9
+  < 6 ⇒ the resolver honestly floated `ambiguous`; at ≥ 80 s takes true z ≈ 19
+  and the margin rule rejects the decoy decisively. Short takes thin the
+  margin — floor/margin re-calibration should include take length.
+- Jittered-take proxy (same event plan, onsets ±400 ms): decoy z 14.8 vs true
+  16.8 (margin 2.0), A×B z 19.6 / residual 53 ms ⇒ classified simultaneous,
+  best-z selects the TRUE take. At ±900 ms: decoy 12.8, A×B 16.3, residual
+  11 ms — STILL simultaneous (same-plan jitter shifts both lags together, and
+  200 ms stage-1 bins integrate over it). Recorded limit per gate §7.8:
+  synthetic takes cannot fail the simultaneity check the way real different
+  takes would, and a jittered decoy ALONE (true take absent) would pair
+  confidently (z 14.8 > floor, single candidate has no margin rule). Real
+  multi-take corpus calibration remains required before trusting same-piece
+  sessions — unchanged disposition of V2-F2.
+
+Finish line (§12 Session F): `couple pair` on the canonical real pair (1 video
++ 1 audio; example_data/ itself now also holds two synced exports, so the run
+uses just the pair) ⇒ exactly one row, `confident`, z 74.16 (mockup 75),
+coverage 0.9961, lag **−5535.543 ms** vs frozen −5536.639 — Δ 1.10 ms, the
+expected stage-ladder-vs-drift-fit-intercept difference at +3.57 ppm; inside
+the stage tolerance window. Asserted as `realdata_pair_confident_row`
+(COUPLE_REALDATA_DIR-gated, like §9.4). Matrix cell on the 2 h × 2 h pair:
+76 ms (release, cache-hit imports).
+
+Session F complete. Next: Session G (queue-centric mockup, Phase 8) per the
+SPEC-V2 §12 kickoff; Session H prompt written after G converges.

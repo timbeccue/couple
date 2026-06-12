@@ -15,3 +15,6 @@ serde_json.workspace = true
 clap.workspace = true
 indicatif.workspace = true
 libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

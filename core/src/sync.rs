@@ -351,7 +351,7 @@ fn parabolic(ym: f64, y0: f64, yp: f64, clamp: f64) -> f64 {
 
 /// One refinement stage (§5.3 stages 2–5): scan integer bin lags in `center ± span`,
 /// max NCC, parabolic sub-bin. Returns (refined lag in ms, winner NCC).
-fn refine_stage(
+pub(crate) fn refine_stage(
     p_cam: &PyramidReader,
     p_ext: &PyramidReader,
     spb: u32,
