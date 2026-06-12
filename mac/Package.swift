@@ -18,8 +18,11 @@ let package = Package(
         .target(
             name: "CCouple",
             linkerSettings: [
-                .unsafeFlags(["-L\(rustLibDir)"]),
-                .linkedLibrary("couple"),
+                // Link the archive by path: `-lcouple` prefers a stale
+                // libcouple.dylib if one exists in the build tree, and a
+                // dylib reference into the build tree crashes the signed
+                // app bundle at launch (library validation).
+                .unsafeFlags(["\(rustLibDir)/libcouple.a"]),
             ]
         ),
         .target(

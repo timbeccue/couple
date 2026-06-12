@@ -6,7 +6,7 @@ license.workspace = true
 
 [lib]
 name = "couple"
-crate-type = ["staticlib", "cdylib"]
+crate-type = ["staticlib"]
 
 [dependencies]
 couple-core = { path = "../core" }

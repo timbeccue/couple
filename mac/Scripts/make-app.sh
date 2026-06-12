@@ -53,8 +53,22 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --options runtime -s "$SIGN_ID" "$APP/Contents/Helpers/ffmpeg"
-codesign --force --options runtime -s "$SIGN_ID" "$APP/Contents/Helpers/ffprobe"
+# The helpers need library validation disabled: a dev (homebrew) ffmpeg loads
+# its own dylibs from /opt/homebrew, which hardened-runtime library validation
+# otherwise rejects ("different Team IDs"). Harmless for a static LGPL build.
+HELPER_ENTS="$(mktemp -t couple-helper-ents).plist"
+cat > "$HELPER_ENTS" <<ENTS
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.disable-library-validation</key><true/>
+</dict>
+</plist>
+ENTS
+codesign --force --options runtime --entitlements "$HELPER_ENTS" -s "$SIGN_ID" "$APP/Contents/Helpers/ffmpeg"
+codesign --force --options runtime --entitlements "$HELPER_ENTS" -s "$SIGN_ID" "$APP/Contents/Helpers/ffprobe"
+rm -f "$HELPER_ENTS"
 codesign --force --options runtime -s "$SIGN_ID" "$APP"
 codesign --verify --deep "$APP" && echo "codesign: ok ($SIGN_ID)"
 
