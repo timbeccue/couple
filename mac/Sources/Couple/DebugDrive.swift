@@ -143,12 +143,26 @@ final class DebugDrive {
         pair.commitTypedDrift(savedDrift)
         await settle()
 
-        // Deep zoom below 120 ms exercises the raw-sample loupe path (§14 6.5).
+        // Deep zoom exercises the raw-sample loupe paths (§14 6.5): per-pixel
+        // min/max bars at 60 ms, connected sample line at 10 ms.
         pair.manualZoom(loupe: 0, factor: 60.0 / (pair.frames.first?.winMs ?? 240))
         await settle()
         capture(to: "\(dir)/07-deep-zoom-raw-60ms.png")
+        pair.manualZoom(loupe: 0, factor: 10.0 / (pair.frames.first?.winMs ?? 60))
+        await settle()
+        capture(to: "\(dir)/08-deep-zoom-line-10ms.png")
         pair.armAuto(loupe: 0)
         await settle()
+
+        // Tall window: extra height should grow the strip / video preview.
+        if let win = NSApp.windows.first(where: { $0.isVisible }) {
+            let saved = win.frame
+            win.setContentSize(NSSize(width: 1280, height: 1000))
+            await settle()
+            capture(to: "\(dir)/09-tall-window.png")
+            win.setFrame(saved, display: true)
+            await settle()
+        }
 
         // Drift mode None (greyed drift group, uncorrected summary).
         pair.setDriftMode(.none)
@@ -189,14 +203,14 @@ final class DebugDrive {
         }
 
         var o = pair.offsetMs
-        await key(124) // →
-        check("arrow right +1 ms", abs(pair.offsetMs - (o + 1)) < 1e-9)
+        await key(124) // → moves external content right = −offset
+        check("arrow right −1 ms (content follows arrow)", abs(pair.offsetMs - (o - 1)) < 1e-9)
         o = pair.offsetMs
         await key(123, .maskShift) // ⇧←
-        check("shift-left −10 ms", abs(pair.offsetMs - (o - 10)) < 1e-9)
+        check("shift-left +10 ms", abs(pair.offsetMs - (o + 10)) < 1e-9)
         o = pair.offsetMs
         await key(124, .maskAlternate) // ⌥→
-        check("option-right +0.1 ms", abs(pair.offsetMs - (o + 0.1)) < 1e-9)
+        check("option-right −0.1 ms", abs(pair.offsetMs - (o - 0.1)) < 1e-9)
         var d = pair.driftPpm
         await key(30) // ]
         check("] drift +1 ppm", abs(pair.driftPpm - (d + 1)) < 1e-9)

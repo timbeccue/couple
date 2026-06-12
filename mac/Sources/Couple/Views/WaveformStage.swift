@@ -25,6 +25,11 @@ struct WaveformStage: View {
 
     var body: some View {
         let pair = model.pair
+        // Bounded stage: loupes ~2.4× the overview height; extra window height
+        // goes to the strip above (owner 2026-06-12, supersedes stage-greedy).
+        let loupeHeight: CGFloat = pair.loupeLayout == .grid
+            ? 230
+            : CGFloat(pair.anchors.count) * 116 + CGFloat(max(pair.anchors.count - 1, 0)) * 8
         VStack(spacing: 0) {
             OverviewStrip()
                 .frame(height: 96)
@@ -37,6 +42,7 @@ struct WaveformStage: View {
                 Spacer().frame(height: 8)
             }
             LoupeArea()
+                .frame(height: loupeHeight)
                 .padding(.horizontal, stagePad)
                 .padding(.bottom, 6)
         }
@@ -192,26 +198,29 @@ struct OverviewStrip: View {
         let waveH = size.height - 14
         return ForEach(pair.anchors.indices, id: \.self) { i in
             let x = CGFloat((pair.anchors[i] - domain.lowerBound) / span) * size.width
-            AnchorPin(index: i, color: Theme.anchorColors[i % 4], stemHeight: waveH)
+            AnchorPin(index: i,
+                      color: Theme.anchorColors[i % 4],
+                      stemHeight: waveH,
+                      secondsPerPoint: span / size.width)
                 .position(x: x, y: waveH / 2)
-                .gesture(
-                    DragGesture(minimumDistance: 1, coordinateSpace: .named("overview"))
-                        .onChanged { g in
-                            guard pair.inputsEnabled else { return }
-                            let t = domain.lowerBound + Double(g.location.x / size.width) * span
-                            pair.moveAnchor(i, to: t) // live; loupes follow
-                        }
-                        .onEnded { _ in
-                            pair.snapAnchor(i) // snap to strongest transient ±4 s
-                        }
-                )
         }
     }
 
     private var chips: some View {
         let pair = model.pair
         return HStack(spacing: 6) {
+            overlapChip
             Spacer()
+            Picker("", selection: Binding(
+                get: { pair.loupeLayout },
+                set: { pair.setLoupeLayout($0) }
+            )) {
+                Text("Side-by-side").tag(LoupeLayout.grid)
+                Text("Stacked").tag(LoupeLayout.stack)
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.mini)
+            .frame(width: 150)
             Button {
                 pair.toggleLockZoom()
             } label: {
@@ -239,6 +248,25 @@ struct OverviewStrip: View {
         .padding(6)
     }
 
+    @ViewBuilder
+    private var overlapChip: some View {
+        let chip = model.pair.overlapChip
+        let (text, color): (String, Color) = {
+            switch chip {
+            case .noAlignment: return ("no alignment", Theme.warn)
+            case .noOverlap: return ("no overlap", Theme.warn)
+            case .overlap(let f, let s):
+                return ("overlap \(Int((f * 100).rounded()))% · \(Fmt.hmmss(s))", Theme.good)
+            }
+        }()
+        Text(text)
+            .font(.system(size: 10, weight: .medium, design: .monospaced))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2.5)
+            .background(color.opacity(0.14), in: Capsule())
+    }
+
     private var laneLabels: some View {
         let waveH: CGFloat = 96 - 14
         return VStack(alignment: .leading, spacing: 0) {
@@ -258,11 +286,39 @@ struct OverviewStrip: View {
 }
 
 private struct AnchorPin: View {
+    @Environment(AppModel.self) private var model
     let index: Int
     let color: Color
     let stemHeight: CGFloat
+    let secondsPerPoint: Double
+
+    @State private var lastDragX: CGFloat = 0
 
     var body: some View {
+        pinBody
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { g in
+                        let pair = model.pair
+                        guard pair.inputsEnabled, pair.anchors.indices.contains(index) else { return }
+                        let dx = g.translation.width - lastDragX
+                        lastDragX = g.translation.width
+                        // Precision drag: slow pointer movement gets a finer
+                        // gain so the pin can land exactly where intended;
+                        // fast movement passes through 1:1.
+                        let gain = min(1.0, 0.25 + abs(dx) / 12.0)
+                        pair.moveAnchor(index, to: pair.anchors[index] + Double(dx) * gain * secondsPerPoint)
+                    }
+                    .onEnded { _ in
+                        lastDragX = 0
+                        // Stays exactly where placed (no transient snap —
+                        // owner 2026-06-12); ⌖ in the loupe header snaps.
+                        model.pair.releaseAnchor(index)
+                    }
+            )
+    }
+
+    private var pinBody: some View {
         ZStack {
             Rectangle()
                 .fill(color.opacity(0.8))

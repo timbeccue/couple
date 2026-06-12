@@ -9,9 +9,13 @@ import SwiftUI
 private final class LoupeBuffers {
     let cam = BandBuffer(capacity: 2048)
     let ext = BandBuffer(capacity: 2048)
-    var camRaw = [Float](repeating: 0, count: 8192)
-    var extRaw = [Float](repeating: 0, count: 8192)
+    var camRaw = [Float](repeating: 0, count: 32768)
+    var extRaw = [Float](repeating: 0, count: 32768)
 }
+
+/// Loupes leave the pyramid for raw samples below this window — early enough
+/// that band columns never get blocky (owner 2026-06-12: "never see blockiness").
+private let rawWindowThresholdS = 0.5
 
 struct LoupeView: View {
     @Environment(AppModel.self) private var model
@@ -173,7 +177,7 @@ struct LoupeView: View {
         var layer = ctx
         layer.blendMode = .screen // additive: overlap literally brightens (DECIDED)
 
-        if winS < 0.12 {
+        if winS < rawWindowThresholdS {
             // Deep zoom: raw-sample fetch (SPEC §14 item 6.5).
             drawRaw(&layer, track: cam, t0: t0, t1: t1, buf: &buffers.camRaw,
                     cols: cols, size: size, midY: midY, halfH: halfH, color: Theme.camera)
@@ -232,24 +236,49 @@ struct LoupeView: View {
         }
         guard peak > 0 else { return }
         let scale = 0.86 * halfH / CGFloat(peak)
-        let colW = size.width / CGFloat(cols)
-        var path = Path()
-        for c in 0..<cols {
-            let a = c * frames / cols
-            let b = max((c + 1) * frames / cols, a + 1)
-            var lo: Float = .greatestFiniteMagnitude
-            var hi: Float = -.greatestFiniteMagnitude
-            for i in a..<min(b, frames) {
-                lo = min(lo, buf[i])
-                hi = max(hi, buf[i])
+
+        if frames > cols * 3 {
+            // Dense: per-pixel min/max columns (crisp vertical strokes).
+            let colW = size.width / CGFloat(cols)
+            var path = Path()
+            for c in 0..<cols {
+                let a = c * frames / cols
+                let b = max((c + 1) * frames / cols, a + 1)
+                var lo: Float = .greatestFiniteMagnitude
+                var hi: Float = -.greatestFiniteMagnitude
+                for i in a..<min(b, frames) {
+                    lo = min(lo, buf[i])
+                    hi = max(hi, buf[i])
+                }
+                guard hi >= lo else { continue }
+                let yTop = midY - CGFloat(hi) * scale
+                let yBot = midY - CGFloat(lo) * scale
+                path.addRect(CGRect(x: CGFloat(c) * colW, y: yTop,
+                                    width: colW, height: max(yBot - yTop, 0.7)))
             }
-            guard hi >= lo else { continue }
-            let yTop = midY - CGFloat(hi) * scale
-            let yBot = midY - CGFloat(lo) * scale
-            path.addRect(CGRect(x: CGFloat(c) * colW, y: yTop,
-                                width: colW, height: max(yBot - yTop, 0.7)))
+            ctx.fill(path, with: .color(color.opacity(0.8)))
+        } else {
+            // Sparse: connect the samples into a smooth line; individual
+            // sample dots appear only at extreme zoom.
+            var line = Path()
+            let dxPerSample = size.width / CGFloat(max(frames - 1, 1))
+            line.move(to: CGPoint(x: 0, y: midY - CGFloat(buf[0]) * scale))
+            for i in 1..<frames {
+                line.addLine(to: CGPoint(x: CGFloat(i) * dxPerSample,
+                                         y: midY - CGFloat(buf[i]) * scale))
+            }
+            ctx.stroke(line, with: .color(color.opacity(0.9)),
+                       style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+            if frames < cols / 3 {
+                var dots = Path()
+                for i in 0..<frames {
+                    let p = CGPoint(x: CGFloat(i) * dxPerSample,
+                                    y: midY - CGFloat(buf[i]) * scale)
+                    dots.addEllipse(in: CGRect(x: p.x - 1.6, y: p.y - 1.6, width: 3.2, height: 3.2))
+                }
+                ctx.fill(dots, with: .color(color))
+            }
         }
-        ctx.fill(path, with: .color(color.opacity(0.8)))
     }
 
     /// Residual guidance arrow (UX §1.6): when |Δ| exceeds ~12% of the window,

@@ -269,3 +269,51 @@ owner-confirmed and the ±1 ms regression is fully armed.
 
 Phase 5 complete. Next: Phase 6 (audition + video preview + export UI + toasts
 + autosave + packaging).
+
+## 2026-06-12 — Session D, owner feedback round 1 (live review of the shell)
+
+Owner reviewed the running app ("responsiveness feels good") and directed the
+following changes, all implemented, re-verified (10/10 synthetic input tests,
+CoupleKit tests green), and captured in refreshed
+`design/screenshots/phase5/00–09*.png`:
+
+- SPEC-CHANGE (owner): anchor pins no longer snap to a transient on drag
+  release (UX §2.2 snap-on-release reverted) — the pin stays exactly where
+  placed, with a velocity-adaptive precision gain (slow pointer ⇒ finer
+  movement). The ⌖ loupe-header button remains the explicit snap.
+- SPEC-CHANGE (owner): arrow keys flipped vs UX §2.9 — ←/→ now move the
+  *external content* in the arrow's direction (→ = offset −1 ms), matching
+  what the eye sees. ⇧/⌥ step modifiers unchanged. Footer copy updated.
+- SPEC-CHANGE (owner): auto-sync no longer re-proposes anchors or re-frames
+  loupes when anchors already exist (UX §2.2 "after every auto-sync" narrowed
+  to first sync / new pair) — re-running sync updates the mapping and
+  re-measures but never disturbs the user's view.
+- SPEC-CHANGE (owner): window layout inverted vs UX §1.2 resize policy — the
+  workflow strip is now the greedy band; all four panels (Input · Video
+  preview · Controls · Export) run uniform-height from the window top to the
+  waveforms; extra height grows the video preview (16:9, width-capped so the
+  other panels keep their minimums). The waveform stage is bounded: loupe row
+  ≈ 2.4× the overview height (stacked: ~116 pt/row). Scroll fallback threshold
+  raised 560 → 640 pt height accordingly. The title row is gone — wordmark
+  moved into the Input panel; overlap chip and the layout toggle moved onto
+  the overview strip.
+- Controls panel redesigned: Auto-sync is the hero (full-width button + fit
+  status under it); offset/drift readouts demoted to compact label·field·unit
+  rows with clearer bordered nudge buttons; sparkline near-square (190×132)
+  with a DRIFT FIT label, dropping below the readouts when narrow
+  (ViewThatFits).
+- SPEC-CHANGE (owner): export panel no longer restates offset/drift/RMS;
+  shows output duration ("23:55 · video timeline") and a visible FORMAT
+  choice (Auto/MOV/MP4/WAV + keep-camera-audio) — supersedes the §8.4/F9
+  "no visible codec choice in v1". Wired to shell state now; the Phase-6
+  export job consumes it.
+- SPEC-CHANGE (owner): "never see blockiness" — loupes leave the pyramid for
+  raw samples below 500 ms windows (was 120 ms; §11.2 threshold tag was
+  [SPEC, tune visually]); within raw, ≤3 samples/px renders as a connected
+  line (round joins), with sample dots only at extreme zoom. Stepped per-bin
+  drawing remains for band-level (≥ 500 ms) windows where bins are sub-pixel.
+
+Owner attention (non-blocking): the §9.6 budgets are unaffected (raw fetch at
+500 ms = 24 k samples/loupe/frame, draw cost still ≪ 1 ms); UX-DECISIONS.md
+§1.2/§2.2/§2.9 still carry the superseded wording — left as-is per the
+append-only protocol, this entry is the authority.

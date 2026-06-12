@@ -1,27 +1,53 @@
-// Workflow strip (UX §1.2 band 2): Input | Sync | Export, intrinsic height,
-// content capped at ~1340 pt and centered when wider.
+// Workflow strip: four uniform-height panels — Input | Video preview |
+// Controls | Export — running from the window top down to the waveforms.
+// This band (not the stage) absorbs extra window height, with the video
+// preview growing to use it (owner redesign 2026-06-12, supersedes the
+// UX §1.2 stage-greedy policy; SPEC-CHANGE logged in PROGRESS.md).
 
 import CoupleKit
 import SwiftUI
 
 struct WorkflowStrip: View {
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            InputPanel()
-                .frame(width: 222)
-            SyncPanel()
-                .frame(minWidth: 500, maxWidth: .infinity)
-            ExportPanel()
-                .frame(width: 230)
+        GeometryReader { geo in
+            HStack(alignment: .top, spacing: 10) {
+                InputPanel()
+                    .frame(width: 222)
+                VideoPreviewPanel()
+                    .frame(width: previewWidth(for: geo.size))
+                ControlsPanel()
+                    .frame(minWidth: 380, maxWidth: .infinity)
+                ExportPanel()
+                    .frame(width: 240)
+            }
+            .frame(maxWidth: 1340)
+            .frame(maxWidth: .infinity)
+            .frame(height: geo.size.height)
         }
-        .frame(maxWidth: 1340)
-        .frame(maxWidth: .infinity) // center when wider
         .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .padding(.top, 26) // traffic-light clearance (hidden title bar)
+        .padding(.bottom, 8)
+    }
+
+    /// 16:9 preview width derived from the strip height — extra window height
+    /// goes primarily to the video preview — but never so wide that the other
+    /// panels fall below their minimums.
+    private func previewWidth(for size: CGSize) -> CGFloat {
+        let byHeight: CGFloat = (size.height - 52) * 16 / 9
+        let otherPanels: CGFloat = 222 + 380 + 240 + 30
+        let byWidth: CGFloat = min(size.width, 1340) - otherPanels
+        return min(max(min(byHeight, byWidth), 220), 560)
     }
 }
 
-// MARK: - Input panel (UX §1.3)
+private func sectionLabel(_ s: String) -> some View {
+    Text(s)
+        .font(.system(size: 9, weight: .bold))
+        .kerning(1.2)
+        .foregroundStyle(Theme.textTertiary)
+}
+
+// MARK: - Input panel (UX §1.3) — carries the wordmark now that the title row is gone
 
 struct InputPanel: View {
     @Environment(AppModel.self) private var model
@@ -29,6 +55,11 @@ struct InputPanel: View {
     var body: some View {
         let pair = model.pair
         VStack(alignment: .leading, spacing: 8) {
+            Text("COUPLE")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .kerning(3)
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.bottom, 2)
             sectionLabel("INPUT")
             fileRow(color: Theme.camera, track: pair.camera.track)
             fileRow(color: Theme.external, track: pair.external.track)
@@ -64,15 +95,10 @@ struct InputPanel: View {
                     .strokeBorder(Theme.textTertiary, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
             }
             .buttonStyle(.plain)
+            Spacer(minLength: 0)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
         .panel()
-    }
-
-    private func sectionLabel(_ s: String) -> some View {
-        Text(s)
-            .font(.system(size: 9, weight: .bold))
-            .kerning(1.2)
-            .foregroundStyle(Theme.textTertiary)
     }
 
     @ViewBuilder
@@ -92,50 +118,32 @@ struct InputPanel: View {
     }
 }
 
-// MARK: - Sync panel (UX §1.4)
+// MARK: - Video preview (own unit; playback lands in Phase 6)
 
-struct SyncPanel: View {
+struct VideoPreviewPanel: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         let pair = model.pair
-        HStack(alignment: .top, spacing: 12) {
-            previewPlaceholder
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 14) {
-                    offsetGroup
-                    driftGroup
-                    Spacer(minLength: 8)
-                    autoSyncGroup
-                }
-                SparklineView()
-                    .frame(height: 46)
-            }
-        }
-        .panel()
-        .disabled(!pair.inputsEnabled && !pair.isSyncRunning)
-    }
-
-    /// Video preview is Phase 6 — honest placeholder with the per-anchor jump
-    /// buttons it will carry (UX §1.4).
-    private var previewPlaceholder: some View {
-        let pair = model.pair
-        return VStack(spacing: 6) {
+        VStack(spacing: 8) {
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
                     .fill(Theme.canvasBg)
-                VStack(spacing: 4) {
+                VStack(spacing: 5) {
                     Image(systemName: "video")
+                        .font(.system(size: 18))
                         .foregroundStyle(Theme.textTertiary)
                     Text("video preview · Phase 6")
                         .font(.system(size: 9))
                         .foregroundStyle(Theme.textTertiary)
                 }
             }
-            .frame(width: 200, height: 112) // 16:9, intrinsic — never letterboxed filler
-            HStack(spacing: 6) {
+            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            HStack(spacing: 8) {
                 Image(systemName: "play.fill")
-                    .font(.system(size: 9))
+                    .font(.system(size: 10))
                     .foregroundStyle(Theme.textTertiary)
                 Text("0:00.00")
                     .font(.system(size: 10, design: .monospaced))
@@ -144,34 +152,122 @@ struct SyncPanel: View {
                 ForEach(pair.anchors.indices, id: \.self) { i in
                     Circle()
                         .fill(Theme.anchorColors[i % 4].opacity(0.35))
-                        .frame(width: 14, height: 14)
+                        .frame(width: 15, height: 15)
                         .overlay(Text("\(i + 1)").font(.system(size: 8, weight: .bold))
                             .foregroundStyle(.black.opacity(0.7)))
                 }
             }
-            .frame(width: 200)
+        }
+        .frame(maxHeight: .infinity)
+        .panel()
+    }
+}
+
+// MARK: - Controls panel (UX §1.4, redesigned 2026-06-12: Auto-sync is the
+// hero, numeric readouts demoted, sparkline near-square)
+
+struct ControlsPanel: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let pair = model.pair
+        VStack(alignment: .leading, spacing: 8) {
+            autoSyncButton
+            fitStatusLine
+                .frame(maxWidth: .infinity, alignment: .center)
+            Divider().overlay(Theme.panelStroke)
+            ViewThatFits(in: .horizontal) {
+                // Wide: readouts beside the (near-square) sparkline.
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        offsetGroup
+                        driftGroup
+                    }
+                    Spacer(minLength: 8)
+                    sparklineGroup
+                }
+                // Narrow: sparkline drops below the readouts.
+                VStack(alignment: .leading, spacing: 12) {
+                    offsetGroup
+                    driftGroup
+                    sparklineGroup
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .panel()
+        .disabled(!pair.inputsEnabled && !pair.isSyncRunning)
+    }
+
+    private var autoSyncButton: some View {
+        let pair = model.pair
+        return Button {
+            if pair.isSyncRunning {
+                pair.cancelSync()
+            } else {
+                pair.runAutoSync()
+            }
+        } label: {
+            Group {
+                if case .running(let label, _) = pair.syncActivity {
+                    Text(label)
+                } else {
+                    Text("Auto-sync")
+                }
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .frame(maxWidth: .infinity)
+            .frame(height: 34)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(Theme.accent)
+    }
+
+    @ViewBuilder
+    private var fitStatusLine: some View {
+        let pair = model.pair
+        if case .failed(let message) = pair.syncActivity {
+            Text(message)
+                .font(.system(size: 9))
+                .foregroundStyle(Theme.bad)
+                .lineLimit(2)
+        } else if let fit = pair.fitStatus {
+            Text(String(format: "fit RMS %.2f ms · %d windows", fit.rmsMs, fit.windows))
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Theme.rmsColor(fit.rmsMs))
+        } else {
+            Text("not measured")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Theme.textTertiary)
+        }
+    }
+
+    private var sparklineGroup: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            sectionLabel("DRIFT FIT")
+            SparklineView()
+                .frame(width: 190, height: 132)
         }
     }
 
     private var offsetGroup: some View {
         let pair = model.pair
         return VStack(alignment: .leading, spacing: 4) {
-            Text("OFFSET")
-                .font(.system(size: 9, weight: .bold))
-                .kerning(1.2)
-                .foregroundStyle(Theme.textTertiary)
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                NumericField(value: pair.offsetMs, decimals: 2, width: 110) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                sectionLabel("OFFSET")
+                NumericField(value: pair.offsetMs, decimals: 2, width: 92) {
                     pair.commitTypedOffset($0)
                 }
                 Text("ms")
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.textSecondary)
+                Text(abs(pair.offsetMs) >= 1000 ? Fmt.humanOffset(ms: pair.offsetMs) : "")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Theme.textTertiary)
             }
-            Text(abs(pair.offsetMs) >= 1000 ? Fmt.humanOffset(ms: pair.offsetMs) : " ")
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(Theme.textTertiary)
-            nudgeRow(steps: [-10, -1, 1, 10], format: { $0 > 0 ? "+\(Int($0))" : "\(Int($0))" }) {
+            nudgeRow(steps: [-10, -1, 1, 10], unit: "ms",
+                     format: { $0 > 0 ? "+\(Int($0))" : "\(Int($0))" }) {
                 pair.nudgeOffset($0)
             }
         }
@@ -181,22 +277,20 @@ struct SyncPanel: View {
         let pair = model.pair
         let disabled = pair.driftMode == .none
         return VStack(alignment: .leading, spacing: 4) {
-            Text("DRIFT")
-                .font(.system(size: 9, weight: .bold))
-                .kerning(1.2)
-                .foregroundStyle(Theme.textTertiary)
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                NumericField(value: pair.driftPpm, decimals: 2, width: 80) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                sectionLabel("DRIFT")
+                NumericField(value: pair.driftPpm, decimals: 2, width: 70) {
                     pair.commitTypedDrift($0)
                 }
                 Text("ppm")
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.textSecondary)
+                Text(driftSubline)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Theme.textTertiary)
             }
-            Text(driftSubline)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(Theme.textTertiary)
-            nudgeRow(steps: [-1, -0.1, 0.1, 1], format: { $0 > 0 ? "+\($0)" : "\($0)" }) {
+            nudgeRow(steps: [-1, -0.1, 0.1, 1], unit: "ppm",
+                     format: { $0 > 0 ? "+\($0)" : "\($0)" }) {
                 pair.nudgeDrift($0)
             }
         }
@@ -213,72 +307,27 @@ struct SyncPanel: View {
         return String(format: "≈ %.1f ms over overlap", pair.endToEndDriftMs)
     }
 
-    private func nudgeRow(steps: [Double], format: @escaping (Double) -> String, action: @escaping (Double) -> Void) -> some View {
-        HStack(spacing: 3) {
+    private func nudgeRow(steps: [Double], unit: String,
+                          format: @escaping (Double) -> String,
+                          action: @escaping (Double) -> Void) -> some View {
+        HStack(spacing: 4) {
             ForEach(steps, id: \.self) { step in
                 Button(format(step)) {
                     action(step)
                 }
-                .buttonStyle(.plain)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Theme.chipBg, in: RoundedRectangle(cornerRadius: 4))
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .font(.system(size: 10, design: .monospaced))
             }
-        }
-    }
-
-    private var autoSyncGroup: some View {
-        let pair = model.pair
-        return VStack(alignment: .trailing, spacing: 5) {
-            Button {
-                if pair.isSyncRunning {
-                    pair.cancelSync()
-                } else {
-                    pair.runAutoSync()
-                }
-            } label: {
-                Group {
-                    if case .running(let label, _) = pair.syncActivity {
-                        Text(label)
-                    } else {
-                        Text("Auto-sync")
-                    }
-                }
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 150, height: 30)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.accent)
-
-            fitStatusLine
-        }
-    }
-
-    @ViewBuilder
-    private var fitStatusLine: some View {
-        let pair = model.pair
-        if case .failed(let message) = pair.syncActivity {
-            Text(message)
+            Text(unit)
                 .font(.system(size: 9))
-                .foregroundStyle(Theme.bad)
-                .lineLimit(2)
-                .frame(width: 150, alignment: .trailing)
-        } else if let fit = pair.fitStatus {
-            Text(String(format: "fit RMS %.2f ms · %d windows", fit.rmsMs, fit.windows))
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(Theme.rmsColor(fit.rmsMs))
-        } else {
-            Text("not measured")
-                .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(Theme.textTertiary)
         }
     }
 }
 
-// MARK: - Export panel (export action is Phase 6; Verified gate + drift-mode
-// control live here because their semantics drive the live mapping, UX §1.5)
+// MARK: - Export panel (export action is Phase 6; Verified gate, drift-mode
+// control and file-type options live here)
 
 struct ExportPanel: View {
     @Environment(AppModel.self) private var model
@@ -286,11 +335,9 @@ struct ExportPanel: View {
 
     var body: some View {
         let pair = model.pair
-        VStack(alignment: .leading, spacing: 8) {
-            Text("EXPORT")
-                .font(.system(size: 9, weight: .bold))
-                .kerning(1.2)
-                .foregroundStyle(Theme.textTertiary)
+        @Bindable var pairB = pair
+        VStack(alignment: .leading, spacing: 9) {
+            sectionLabel("EXPORT")
 
             Button {
                 pair.toggleVerified()
@@ -312,10 +359,60 @@ struct ExportPanel: View {
             }
             .buttonStyle(.plain)
 
+            VStack(alignment: .leading, spacing: 4) {
+                sectionLabel("FORMAT")
+                Picker("", selection: $pairB.exportFormat) {
+                    ForEach(PairSession.ExportFormat.allCases, id: \.self) { f in
+                        Text(f.rawValue).tag(f)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                Text(formatHelp)
+                    .font(.system(size: 9))
+                    .foregroundStyle(Theme.textTertiary)
+                Toggle(isOn: $pairB.keepCameraAudio) {
+                    Text("keep camera audio as 2nd track")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+                .disabled(pair.exportFormat == .wav)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                sectionLabel("DRIFT CORRECTION")
+                Picker("", selection: Binding(
+                    get: { pair.driftMode },
+                    set: { pair.setDriftMode($0) }
+                )) {
+                    Text("Resample").tag(DriftMode.resample)
+                    Text("None").tag(DriftMode.none)
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.small)
+                .disabled(!pair.inputsEnabled)
+                Text(pair.driftMode == .resample
+                     ? "corrects drift, resamples audio"
+                     : "audio untouched (offset only)")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+
+            if let cam = pair.camera.track {
+                HStack(spacing: 5) {
+                    sectionLabel("OUTPUT")
+                    Text("\(Fmt.hmmss(cam.durationS)) · video timeline")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+
             Button {
                 gateNote = true
             } label: {
-                Text("Export muxed file")
+                Text("Export")
                     .font(.system(size: 12, weight: .semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 5)
@@ -330,66 +427,18 @@ struct ExportPanel: View {
                     .padding(10)
                     .frame(width: 220)
             }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("DRIFT CORRECTION")
-                    .font(.system(size: 8, weight: .bold))
-                    .kerning(1)
-                    .foregroundStyle(Theme.textTertiary)
-                Picker("", selection: Binding(
-                    get: { pair.driftMode },
-                    set: { pair.setDriftMode($0) }
-                )) {
-                    Text("Resample").tag(DriftMode.resample)
-                    Text("None").tag(DriftMode.none)
-                }
-                .pickerStyle(.segmented)
-                .disabled(!pair.inputsEnabled)
-                Text(pair.driftMode == .resample
-                     ? "corrects drift, resamples audio"
-                     : "audio untouched (offset only)")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-
-            summaryGrid
+            Spacer(minLength: 0)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
         .panel()
     }
 
-    private var summaryGrid: some View {
-        let pair = model.pair
-        let driftText: String = {
-            if pair.driftMode == .none {
-                return pair.savedDriftPpm != 0
-                    ? String(format: "%.1f ms uncorrected", pair.endToEndDriftMs)
-                    : "—"
-            }
-            return String(format: "%.2f ppm", pair.driftPpm)
-        }()
-        let fitText = pair.fitStatus.map { String(format: "%.2f ms", $0.rmsMs) } ?? "—"
-        let overlapText: String = {
-            if case .overlap(let f, _) = pair.overlapChip {
-                return "\(Int((f * 100).rounded()))%"
-            }
-            return "—"
-        }()
-        return Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 2) {
-            summaryRow("offset", String(format: "%+.2f ms", pair.offsetMs))
-            summaryRow("drift", driftText)
-            summaryRow("fit RMS", fitText)
-            summaryRow("overlap", overlapText)
-        }
-    }
-
-    private func summaryRow(_ k: String, _ v: String) -> some View {
-        GridRow {
-            Text(k)
-                .font(.system(size: 9))
-                .foregroundStyle(Theme.textTertiary)
-            Text(v)
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(Theme.textSecondary)
+    private var formatHelp: String {
+        switch model.pair.exportFormat {
+        case .auto: return "matches the camera container"
+        case .mov: return "QuickTime, PCM audio"
+        case .mp4: return "MP4, AAC 256 kbps audio"
+        case .wav: return "aligned audio only, no video"
         }
     }
 }
@@ -408,7 +457,7 @@ struct NumericField: View {
     var body: some View {
         TextField("", text: $text)
             .textFieldStyle(.plain)
-            .font(.system(size: 17, weight: .semibold, design: .monospaced))
+            .font(.system(size: 13, weight: .semibold, design: .monospaced))
             .foregroundStyle(Theme.textPrimary)
             .multilineTextAlignment(.trailing)
             .frame(width: width)

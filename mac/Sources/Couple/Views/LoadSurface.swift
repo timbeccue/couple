@@ -14,6 +14,15 @@ struct LoadSurface: View {
     var body: some View {
         let pair = model.pair
         VStack(spacing: 20) {
+            HStack {
+                Text("COUPLE")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .kerning(3)
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer()
+            }
+            .padding(.top, 24) // below traffic lights
+            .padding(.leading, 62)
             Spacer()
             Text("Drop a video and an external recording")
                 .font(.system(size: 16, weight: .medium))

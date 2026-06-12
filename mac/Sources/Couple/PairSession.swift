@@ -71,6 +71,17 @@ final class PairSession {
     var measurementCenters: [Double?] = []
     var driftWindows: [DriftWindowState] = []
 
+    // Export options (consumed by the Phase-6 export job)
+    enum ExportFormat: String, CaseIterable {
+        case auto = "Auto"
+        case mov = "MOV"
+        case mp4 = "MP4"
+        case wav = "WAV"
+    }
+
+    var exportFormat: ExportFormat = .auto
+    var keepCameraAudio = false
+
     // Sync
     var syncActivity: SyncActivity = .none
     var lastSync: SyncResult?
@@ -332,11 +343,17 @@ final class PairSession {
             }
             syncActivity = .failed(message: msg)
         }
-        // Anchors are (re)proposed after every auto-sync, success or failure
-        // (UX §2.2 — the failure fallback enables the rescue flow).
-        proposeAnchors()
+        // Anchors are proposed only when none exist yet; a re-sync must not
+        // disturb the view the user has set up (owner decision 2026-06-12,
+        // overriding UX §2.2 "after every auto-sync" — SPEC-CHANGE logged).
+        let firstProposal = anchors.isEmpty
+        if firstProposal {
+            proposeAnchors()
+        }
         measureAllAnchors()
-        autoFrame()
+        if firstProposal {
+            autoFrame()
+        }
         pushColdState()
     }
 
@@ -423,13 +440,21 @@ final class PairSession {
         anchors[i] = min(max(t, 0), cam.durationS)
     }
 
-    /// Drag release / ⌖ snap: snap to the strongest transient within ±4 s,
-    /// then re-measure and re-frame (anchor move invalidates its measurement).
+    /// Explicit ⌖ snap: jump to the strongest transient within ±4 s. Drag
+    /// release no longer snaps — the pin stays exactly where the user put it
+    /// (owner decision 2026-06-12, overriding UX §2.2 snap-on-release).
     func snapAnchor(_ i: Int) {
         guard anchors.indices.contains(i), let cam = camera.track else { return }
         if let onset = cam.bestOnset(near: anchors[i], halfSpan: 4) {
             anchors[i] = onset.t
         }
+        releaseAnchor(i)
+    }
+
+    /// Drag release: keep the user's placement; re-measure and re-frame
+    /// (anchor move invalidates its measurement).
+    func releaseAnchor(_ i: Int) {
+        guard anchors.indices.contains(i) else { return }
         // Keep chronological order (UX §2.2).
         let t = anchors[i]
         let sortedIndex = anchors.sorted().firstIndex(of: t)!

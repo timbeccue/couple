@@ -86,12 +86,13 @@ final class AppModel {
         let chars = event.charactersIgnoringModifiers ?? ""
 
         switch event.keyCode {
-        case 123, 124: // ← →
+        case 123, 124: // ← → — arrows move the EXTERNAL content in the arrow's
+            // direction (owner 2026-06-12; +offset shifts external left, so → = −offset)
             guard pair.inputsEnabled else { return true }
             var step = 1.0
             if mods.contains(.shift) { step = 10 }
             if mods.contains(.option) { step = 0.1 }
-            pair.nudgeOffset(event.keyCode == 123 ? -step : step)
+            pair.nudgeOffset(event.keyCode == 123 ? step : -step)
             return true
         case 36, 76: // Return / keypad Enter — reserved for v2 queue triage
             return true
