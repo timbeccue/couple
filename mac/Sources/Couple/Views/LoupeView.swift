@@ -42,7 +42,7 @@ struct LoupeView: View {
 
     private var header: some View {
         let pair = model.pair
-        let winMs = pair.frames.indices.contains(index) ? pair.frames[index].winMs : 240
+        let winMs = pair.frames.indices.contains(index) ? pair.frames[index].winMs : PairSession.defaultWinMs
         let delta = pair.displayedDelta(index)
         return HStack(spacing: 6) {
             Text("\(index + 1)")

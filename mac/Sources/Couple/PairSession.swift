@@ -437,7 +437,7 @@ final class PairSession {
         }
         picks.sort()
         anchors = picks
-        frames = picks.map { _ in Frame(winMs: 240, auto: true) }
+        frames = picks.map { _ in Frame(winMs: Self.defaultWinMs, auto: true) }
         measurements = picks.map { _ in nil }
         measurementCenters = picks.map { _ in nil }
     }
@@ -456,7 +456,7 @@ final class PairSession {
     private func insertAnchor(at t: Double) {
         let idx = anchors.firstIndex(where: { $0 > t }) ?? anchors.count
         anchors.insert(t, at: idx)
-        frames.insert(Frame(winMs: currentLockedWindow ?? 240, auto: true), at: idx)
+        frames.insert(Frame(winMs: currentLockedWindow ?? Self.defaultWinMs, auto: true), at: idx)
         measurements.insert(nil, at: idx)
         measurementCenters.insert(nil, at: idx)
         measureAnchor(idx)
@@ -661,17 +661,22 @@ final class PairSession {
 
     // MARK: - Loupe windows: auto-framing + zoom lock (UX §2.3)
 
+    /// Default loupe window. 500 ms (was the UX §2.3 240 ms): the owner found
+    /// the tighter default too zoomed-in to judge alignment at a glance
+    /// (2026-06-12, SPEC-CHANGE logged in PROGRESS.md).
+    static let defaultWinMs = 500.0
+
     var currentLockedWindow: Double? {
         lockZoom ? frames.map(\.winMs).max() : nil
     }
 
-    /// Auto-frame: winᵢ = max(240, 5·|Δᵢ|) rounded to 10 ms, cap 2 s. Applied on
-    /// load, auto-sync, anchor move, ⇥ align — never on plain nudges.
+    /// Auto-frame: winᵢ = max(default, 5·|Δᵢ|) rounded to 10 ms, cap 2 s.
+    /// Applied on load, auto-sync, anchor move, ⇥ align — never on plain nudges.
     func autoFrame() {
         guard !frames.isEmpty else { return }
         func desired(_ i: Int) -> Double {
             let d = displayedDelta(i).map(abs) ?? 0
-            let w = max(240.0, 5 * d)
+            let w = max(Self.defaultWinMs, 5 * d)
             return min((w / 10).rounded() * 10, 2000)
         }
         if lockZoom {

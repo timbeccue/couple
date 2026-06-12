@@ -383,16 +383,22 @@ private struct LaneAudioControls: View {
                     audition.extMuted.toggle()
                 }
             } label: {
+                // Reads as a button: same chip treatment as the transport
+                // controls, with a filled warn state while muted.
                 Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
                     .font(.system(size: 9))
-                    .foregroundStyle(muted ? Theme.textTertiary : tint)
-                    .frame(width: 14)
+                    .foregroundStyle(muted ? Theme.warn : tint)
+                    .frame(width: 24, height: 18)
+                    .background(muted ? Theme.warn.opacity(0.18) : Theme.chipBg,
+                                in: RoundedRectangle(cornerRadius: 4))
+                    .overlay(RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(muted ? Theme.warn.opacity(0.5) : Theme.panelStroke))
             }
             .buttonStyle(.plain)
             .help(muted ? "Unmute" : "Mute")
             Slider(value: lane == .camera ? $a.camGain : $a.extGain, in: 0...2)
                 .controlSize(.mini)
-                .frame(width: 68)
+                .frame(width: 64)
                 .tint(tint.opacity(0.8))
                 .disabled(muted)
                 .help("Monitor volume (waveform scales to match)")

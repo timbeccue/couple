@@ -427,3 +427,10 @@ distribution.
 - SPEC-CHANGE (owner, implied): the UX §2.4 coarse offset drag moved from
   plain drag on the external lane to ⌥-drag (plain drag now scrubs). Same
   gesture and scale otherwise; still gated on inputsEnabled.
+- Polish round (owner): lane mute buttons get chip chrome (chipBg + border,
+  filled warn state while muted) so they read as buttons, not status icons.
+  SPEC-CHANGE: default loupe window 240 → 500 ms (`PairSession.defaultWinMs`;
+  UX §2.3 floor) — 240 ms was too zoomed-in to judge alignment at a glance.
+  Video preview drops its panel box (letterboxes into the bare column) and
+  all playback controls — play, timecode, anchor jumps, monitor picker,
+  fullscreen — share a single row beneath it.

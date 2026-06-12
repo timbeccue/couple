@@ -112,12 +112,11 @@ struct VideoPreviewPanel: View {
     var body: some View {
         let pair = model.pair
         let audition = pair.audition
-        VStack(spacing: 8) {
-            // Fills the panel; the layer letterboxes the video inside it.
+        // No panel box (owner 2026-06-12): the video letterboxes into the full
+        // column, and every playback control shares the single row below it.
+        VStack(spacing: 6) {
             PlayerLayerView(player: audition.player)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Theme.canvasBg, in: RoundedRectangle(cornerRadius: 6))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
 
             HStack(spacing: 8) {
                 Button {
@@ -155,6 +154,19 @@ struct VideoPreviewPanel: View {
                     .buttonStyle(.plain)
                     .help("Play from anchor \(i + 1) (−0.8 s)")
                 }
+                Picker("", selection: Binding(
+                    get: { audition.monitorMode },
+                    set: { audition.monitorMode = $0 }
+                )) {
+                    ForEach(MonitorMode.allCases, id: \.self) { m in
+                        Text(m.label).tag(m)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.mini)
+                .frame(width: 140)
+                .disabled(pair.session == nil)
+                .help("Pan L/R: camera left, external right · Overlay: both mixed — per-track volume/mute lives on the waveform lanes")
                 Button {
                     VideoFullscreen.shared.toggle(player: audition.player)
                 } label: {
@@ -168,22 +180,8 @@ struct VideoPreviewPanel: View {
                 .disabled(pair.session == nil)
                 .help("Fullscreen video (esc or double-click exits)")
             }
-
-            Picker("", selection: Binding(
-                get: { audition.monitorMode },
-                set: { audition.monitorMode = $0 }
-            )) {
-                ForEach(MonitorMode.allCases, id: \.self) { m in
-                    Text(m.label).tag(m)
-                }
-            }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .disabled(pair.session == nil)
-            .help("Pan L/R: camera left, external right · Overlay: both mixed — per-track volume/mute lives on the waveform lanes")
         }
         .frame(maxHeight: .infinity)
-        .panel()
     }
 
     private func timecode(_ t: Double) -> String {
