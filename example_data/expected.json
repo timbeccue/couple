@@ -1,6 +1,6 @@
 {
   "frozenAt": "2026-06-11",
-  "ownerVerified": false,
+  "ownerVerified": true,
   "offsetMs": -5536.639131250842,
   "toleranceMs": 1.0,
   "driftPpm": 3.5704620480890514,

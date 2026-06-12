@@ -19,7 +19,8 @@ A single-window **workbench**. The verification-first single-pair editor is the 
 
 The defining design element: a full-width **overview strip** showing both complete tracks, with colored, draggable **anchor pins**, connected by colored leader lines to a row of **loupes** — live magnified views of both waveforms overlaid at each anchor. Every alignment adjustment (keyboard nudge, drag, automatic fit) updates all loupes simultaneously in real time. The user verifies sync at three points at once instead of zoom-scroll-zooming through the file.
 
-[SCREENSHOT: full window, post-auto-sync, side-by-side loupes]
+![Full window, post-auto-sync, side-by-side loupes](design/mockups/01-full-window-post-sync.png)
+*(The two loupe layouts: [side-by-side](design/mockups/side-by-side-view.png), [stacked](design/mockups/stacked-view.png). All mockup screenshots are structural reference, not a pixel spec — see design/mockups/README.md.)*
 
 ### 1.2 Window layout (DECIDED)
 
@@ -51,7 +52,7 @@ Right, two rows:
 
 There is intentionally **no "fit" button** and **no per-loupe match percentage** (both existed in earlier iterations and were removed — see §2.4 and the rationale notes inline).
 
-[SCREENSHOT: sync panel close-up, post-auto-sync, drift mode None with greyed drift group]
+[SCREENSHOT not captured: sync panel close-up with drift mode None / greyed drift group. The sync and export panels are visible — with Resample selected — in design/mockups/01-full-window-post-sync.png; for the None state (greyed drift group, "X ms uncorrected" summary line) the text above is the only reference.]
 
 ### 1.5 Export panel
 
@@ -73,8 +74,11 @@ The drift-mode control is not a passive export flag (DECIDED, and important): se
 - Canvas: both tracks' min/max peak bands drawn **overlaid** at the same center line with additive ("screen") blending so overlap literally brightens; **stepped per-bin rendering** (DECIDED — honest pixels; smoothing/interpolation exists as a deferred render-style option, §5); **per-loupe local normalization** — each track independently scaled so its in-window peak fills ~86% of half-height (DECIDED, and necessary: the camera track is AGC-limited while the external preserves dynamics; no global gain makes them comparable in every passage, local gain does); a vertical center line in the anchor color; during playback, a playhead in the focused loupe.
 - **Residual guidance arrow:** when the measured local Δ exceeds ~12% of the window, an amber arrow is drawn from center toward where the matching external content sits, labeled with the distance ("ext content → 38.6 ms") — the user always knows which way and how far, never lost off-screen.
 
-[SCREENSHOT: stacked loupes, far-end loupe showing guidance arrow with drift mode None]
-[SCREENSHOT: pre-sync state — offset 0, lanes mostly non-overlapping, "no alignment" chip]
+![Stacked loupes layout](design/mockups/stacked-view.png)
+*(Stacked layout reference. Not captured in any screenshot: the residual guidance arrow and the drift-mode-None loupe state — the text above is the only reference for those.)*
+
+![Misaligned state — large offset, partial overlap](design/mockups/04-pre-sync-no-alignment.png)
+*(Closest capture to the pre-sync marker: a badly misaligned mapping (offset ≈ −39 s, 87% overlap) with visibly disagreeing loupes. The true virgin state — offset 0, "no alignment" chip — was not captured; the §1.2 chip description and the §3 state definitions are authoritative.)*
 
 ---
 

@@ -25,3 +25,6 @@ fixtures/
 
 # macOS
 .DS_Store
+
+# Swift (mac/)
+mac/.build/

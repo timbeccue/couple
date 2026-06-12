@@ -990,6 +990,12 @@ code, read in this order:
   2. SPEC.md — §4 (core/shell contract; you consume the C ABI via a new CoupleKit
      wrapper), §11 (shell engineering spec), §15 Phase 5 (scope + verification).
   3. PROGRESS.md — status and SPEC-CHANGE entries from the core sessions.
+  4. design/mockups/ — screenshots of the validated mockup. Structural
+     reference, NOT a pixel spec: keep the band/panel/loupe structure they
+     show, but you have creative license on visual design (layout proportions,
+     spacing, typography, color, control styling) wherever it makes the
+     interface work better. Behavior per UX-DECISIONS.md remains binding; see
+     design/mockups/README.md for the precise boundary.
 
 Scope: Phase 5 ONLY — CoupleKit FFI wrapper, the four-band window with the §1.2
 resize policy, empty/launch + import-progress states, auto-sync on load with

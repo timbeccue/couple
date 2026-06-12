@@ -189,3 +189,83 @@ under the 40–80 ms perception threshold.
 
 Core complete (Phases 1–4). Next: Session D (SwiftUI shell, Phase 5 prompt in
 SPEC §16).
+
+## 2026-06-12 — Session D, Phase 5 complete (SwiftUI shell: stage + loupes)
+
+Implemented `mac/` (Swift 6 toolchain, macOS 14+, SPM package — see SPEC-CHANGE
+below):
+
+- **CoupleKit** (§11.1): C-ABI wrapper over `couple.h`/libcouple.a — jobs as
+  `AsyncStream<ProgressUpdate>` + awaited decoded result (C-callback trampoline,
+  retain-balanced on the terminal call); hot `band`/`raw_window` with reusable
+  caller buffers; onset queries; session hot setters 1:1, cold fields via the
+  `set_state_json` round trip (the §4.9-conformant route); wire value types for
+  MediaInfo/TrackMeta/SyncResult/AlignmentState. 3 integration tests green
+  (import job with progress, band/raw/onsets, state round trip incl. the
+  core-enforced None-mode semantics, auto-sync on an ffmpeg-generated fixture
+  recovering a constructed +2500 ms offset, measure_local).
+- **Couple.app** (Phase 5 scope): four-band window with the §1.2 resize policy
+  (stage greedy, scroll below 1000×560); load surface (drop + pickers, probe
+  classifies roles, same-kind replace confirmation, per-slot import progress +
+  cancel); auto-sync on load with live progress ("Searching N%…" → "Measuring
+  drift…"), Esc/button cancel, failure → mapping untouched + anchors proposed
+  for the rescue flow; overview strip (union extent, external lane through the
+  live mapping, overlap highlight, ticks, lock-zoom/+anchor chips, lane labels);
+  draggable pins with ±4 s transient snap; bezier connectors (side-by-side
+  only); 2–4 loupes (band rendering, raw-sample below 120 ms windows, stepped
+  per-bin, additive screen blending, 86% per-loupe local normalization, anchor
+  center line, Δ-colored headers with ⌖/⇥/×/auto, guidance arrows past 12% of
+  window); offset drag, ⇧-drag pivot drift (§2.4 math), scroll zoom with the
+  full lock/auto-frame semantics, coarse external-lane drag; readouts with
+  editable fields, nudge buttons, human-readable offset subline, drift group
+  greyed in None mode; fit status vs the *current* mapping; drift sparkline;
+  450 ms / >30 ms re-measure debounce (immediate on typed commits); keyboard
+  map §2.9 verbatim with j/k/Enter/space reserved no-ops. Export panel is the
+  honest Phase-6 placeholder but hosts the functional **Verified** toggle and
+  **Resample|None** control, since their §1.5 semantics drive the live mapping.
+
+Verification (§15 Phase 5, real pair via `COUPLE_OPEN_*` debug drive; shots in
+`design/screenshots/phase5/00–07*.png`):
+
+- In-app auto-sync reproduces the frozen result exactly: offset −5536.639 ms,
+  drift +3.570 ppm, fit RMS 0.277 ms · 9 windows, overlap 99.6%, status synced.
+  Anchor auto-proposal picked attacks-from-quiet in all three zones; all three
+  loupes show interleaved texture with sub-ms green Δs (+0.05/+0.24/−0.32 ms).
+- Behavior shots: guidance arrows + red Δs + red fit RMS after a +60 ms nudge
+  (auto-frame correctly NOT re-applied on nudge); drift-mode None honestly
+  shows the uncorrected ramp (+1.09/+2.81/+4.31 ms at the three anchors) with
+  drift group greyed and "5.1 ms uncorrected" summary; stacked layout (no
+  connectors, DECIDED); deep-zoom raw rendering at ±30 ms; ⇥-align rescue from
+  a +60 ms perturbation restores −5536.165 ms / 2.955 ppm (two-anchor align vs
+  the 12-window fit — sub-ms/sub-ppm, as expected).
+- Synthetic input events, 10/10: full §2.9 keyboard map (steps exact, modifiers,
+  v, reserved no-ops), zoom routing to the loupe under the cursor (zooms all
+  under lock, exits auto), auto-chip re-arm.
+- **60 fps criterion**: per-frame draw cost on the real pair (release build) —
+  3 loupes ≈ 0.08 ms each, overview 0.87 ms, sparkline 0.03 ms ⇒ ~1.1 ms per
+  full pass, mean and max: **13× inside the 16.6 ms budget**, and every
+  mutation produced exactly one coalesced redraw (no backlog). The on-screen
+  rate could not be demonstrated >16 Hz in this session because the machine is
+  in Low Power Mode with an idle adaptive-sync display (nominal 120 Hz,
+  compositor pinned at ~16 Hz for a non-interacting session; verified via
+  CADisplayLink + preferredFrameRateRange). **Owner: one interactive drag with
+  LPM off (or `COUPLE_PROFILE=1`) ratifies this; folded into the Phase-6
+  manual script alongside §6.10.**
+
+SPEC-CHANGE (2026-06-12, Session D, minor/structural): `mac/` is a Swift
+package (`Package.swift`, builds via `mac/Scripts/build.sh`, opens natively in
+Xcode) rather than a checked-in `.xcodeproj` (§3.1 repo sketch). No behavioral
+impact; Phase 6 packaging (signing, helpers, DMG) may add a generated project
+if needed.
+
+Deferred to the owner walkthrough (wiring is thin over tested model paths, but
+untestable without a live input session): raw NSEvent/gesture feel of loupe
+drag, pin drag, coarse drag, trackpad scroll; window-resize scroll fallback.
+Also committed with this entry (owner working-tree edits found at session
+start, kept verbatim): mockup screenshots + README under `design/mockups/`,
+the UX-DECISIONS §1 screenshot-marker links, SPEC §16 Session-D prompt item 4,
+and `expected.json` `ownerVerified` flipped to **true** — the F2 freeze is now
+owner-confirmed and the ±1 ms regression is fully armed.
+
+Phase 5 complete. Next: Phase 6 (audition + video preview + export UI + toasts
++ autosave + packaging).
