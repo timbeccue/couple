@@ -616,6 +616,91 @@ pub unsafe extern "C" fn cpl_fit_ls_json(points_json: *const c_char) -> *mut c_c
     to_cstring(serde_json::to_string(&couple_core::fit::fit_ls(&pts)).unwrap())
 }
 
+// ---------- audition (§4.8, Phase 6) ----------
+
+/// Open an audition stream on a session. mode: 0 = pan, 1 = overlay, 2 = null.
+/// Returns the stream id, 0 on error.
+#[no_mangle]
+pub extern "C" fn cpl_audition_open(ctx: u64, session: u64, mode: i32, t_start: f64) -> u64 {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return 0;
+    };
+    match ctx.audition_open(
+        session,
+        couple_core::MonitorMode::from_u8(mode as u8),
+        t_start,
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            set_error(&e);
+            0
+        }
+    }
+}
+
+/// Fill caller-allocated interleaved stereo f32 (48 kHz). Writes the frames
+/// actually rendered (< capacity only past the video end) and the stream's
+/// video time after the fill. Real-time path: locks are touched only to
+/// resolve the handles (uncontended in practice).
+#[no_mangle]
+pub unsafe extern "C" fn cpl_audition_fill(
+    ctx: u64,
+    stream: u64,
+    out_interleaved_stereo: *mut f32,
+    capacity_frames: u32,
+    out_frames: *mut u32,
+    out_stream_t: *mut f64,
+) -> i32 {
+    let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
+    let s = match ctx.audition_stream(stream) {
+        Ok(s) => s,
+        Err(e) => return set_error(&e),
+    };
+    let buf =
+        std::slice::from_raw_parts_mut(out_interleaved_stereo, capacity_frames as usize * 2);
+    let info = s.fill(buf);
+    if !out_frames.is_null() {
+        *out_frames = info.frames;
+    }
+    if !out_stream_t.is_null() {
+        *out_stream_t = info.stream_t;
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn cpl_audition_seek(ctx: u64, stream: u64, t: f64) -> i32 {
+    let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
+    match ctx.audition_stream(stream) {
+        Ok(s) => {
+            s.seek(t);
+            0
+        }
+        Err(e) => set_error(&e),
+    }
+}
+
+/// mode: 0 = pan, 1 = overlay, 2 = null. Click-free (240-sample crossfade).
+#[no_mangle]
+pub extern "C" fn cpl_audition_set_mode(ctx: u64, stream: u64, mode: i32) -> i32 {
+    let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
+    match ctx.audition_stream(stream) {
+        Ok(s) => {
+            s.set_mode(couple_core::MonitorMode::from_u8(mode as u8));
+            0
+        }
+        Err(e) => set_error(&e),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn cpl_audition_close(ctx: u64, stream: u64) {
+    if let Some(ctx) = ctx_of(ctx) {
+        ctx.audition_close(stream);
+    }
+}
+
 // ---------- export (§8, Phase 4) ----------
 
 /// Start an export job on a session (§4.9). opts_json: ExportOptions wire form

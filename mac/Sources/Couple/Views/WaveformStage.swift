@@ -117,6 +117,15 @@ struct OverviewStrip: View {
             }
 
             drawTicks(ctx, size: sz, d0: d0, d1: d1, y: waveH, h: tickH)
+
+            // Playhead during audition (UX §1.6).
+            if pair.audition.isPlaying {
+                let x = CGFloat((pair.audition.playheadT - d0) / (d1 - d0)) * sz.width
+                var line = Path()
+                line.move(to: CGPoint(x: x, y: 0))
+                line.addLine(to: CGPoint(x: x, y: waveH))
+                ctx.stroke(line, with: .color(.white.opacity(0.85)), lineWidth: 1)
+            }
         }
     }
 

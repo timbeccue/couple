@@ -3,6 +3,7 @@
 // logic from UX §2 (nudges, pivot drift, anchors, auto-framing, debounced
 // re-measurement). Deliberately list-ready for v2 (SPEC §11.1).
 
+import AppKit
 import CoupleKit
 import Foundation
 import Observation
@@ -48,6 +49,7 @@ struct PendingLoad: Identifiable {
 @Observable
 final class PairSession {
     let engine: Engine
+    let toasts: ToastCenter
 
     // Slots
     var camera: SlotState = .empty
@@ -82,6 +84,19 @@ final class PairSession {
     var exportFormat: ExportFormat = .auto
     var keepCameraAudio = false
 
+    enum ExportActivity: Equatable {
+        case idle
+        case running(phase: String, fraction: Double)
+    }
+
+    var exportActivity: ExportActivity = .idle
+    private var exportJob: Job<ExportReport>?
+    /// Saved session found for this pair's content keys (restore offer, §14 6.8).
+    private var restorable: SessionFile?
+
+    // Audition / playback (Phase 6)
+    let audition = AuditionController()
+
     // Sync
     var syncActivity: SyncActivity = .none
     var lastSync: SyncResult?
@@ -89,12 +104,14 @@ final class PairSession {
     private var importJobs: [SlotKind: Job<TrackMeta>] = [:]
     private var remeasureTask: Task<Void, Never>?
 
-    init(engine: Engine) {
+    init(engine: Engine, toasts: ToastCenter) {
         self.engine = engine
+        self.toasts = toasts
     }
 
     /// Release core handles when this pair is replaced ("+ add pair").
     func teardown() {
+        audition.teardown()
         cancelSync()
         cancelImport(.camera)
         cancelImport(.external)
@@ -264,7 +281,12 @@ final class PairSession {
     private func sessionReadyCheck() {
         guard session == nil, let cam = camera.track, let ext = external.track else { return }
         do {
-            session = try engine.sessionNew(camera: cam, external: ext)
+            let s = try engine.sessionNew(camera: cam, external: ext)
+            session = s
+            audition.attach(session: s,
+                            videoURL: URL(fileURLWithPath: cam.meta.info.path),
+                            videoDuration: cam.durationS)
+            offerRestoreIfAvailable()
             runAutoSync()
         } catch {
             loadError = "session: \((error as? CoreError)?.message ?? error.localizedDescription)"
@@ -333,6 +355,21 @@ final class PairSession {
             // Core wrote mapping + driftWindows + suggested mode into the state (§4.4).
             pullStateFromCore()
             syncActivity = .succeeded
+            // Toast with the numbers (UX §2.5); never auto-verifies.
+            let accepted = result.windows.filter(\.accepted).count
+            let detail = String(
+                format: "offset %+.2f ms · %+.2f ppm · end-to-end %.1f ms · %d/%d windows · RMS %@ — %@",
+                result.offsetMs, result.driftPpm, result.endToEndDriftMs,
+                accepted, result.windows.count,
+                result.fitRmsMs.map { String(format: "%.2f ms", $0) } ?? "—",
+                result.suggestedDriftMode == .resample ? "suggested: resample" : "suggested: none")
+            if case .synced = result.status {
+                toasts.show(Toast(style: .success, title: "Auto-sync complete", detail: detail))
+            } else {
+                toasts.show(Toast(style: .warning,
+                                  title: "Low-confidence result — please review",
+                                  detail: detail))
+            }
         case .failed(let reason, let detail):
             // Mapping untouched — no half-applied guess (UX §3).
             let msg: String
@@ -342,6 +379,8 @@ final class PairSession {
                 msg = String(format: "No plausible correlation peak (best z %.1f)", detail)
             }
             syncActivity = .failed(message: msg)
+            toasts.show(Toast(style: .error, title: "Auto-sync failed",
+                              detail: msg + " — coarse-drag the external lane to rescue, then re-sync"))
         }
         // Anchors are proposed only when none exist yet; a re-sync must not
         // disturb the view the user has set up (owner decision 2026-06-12,
@@ -580,6 +619,7 @@ final class PairSession {
         guard session != nil else { return }
         verified.toggle()
         session?.setVerified(verified)
+        autosave()
     }
 
     // MARK: - Pivot drift drag and align (UX §2.4, DECIDED math)
@@ -690,5 +730,130 @@ final class PairSession {
     func setLoupeLayout(_ layout: LoupeLayout) {
         loupeLayout = layout
         pushColdState()
+    }
+
+    // MARK: - Export (§8 via core job; gated on Verified, UX §2.8)
+
+    var isExporting: Bool {
+        if case .running = exportActivity { return true }
+        return false
+    }
+
+    var suggestedExportFilename: String {
+        guard let cam = camera.track else { return "synced" }
+        let base = URL(fileURLWithPath: cam.meta.info.path).deletingPathExtension().lastPathComponent
+        return "\(base)-synced.\(exportFileExtension)"
+    }
+
+    var exportFileExtension: String {
+        switch exportFormat {
+        case .wav: return "wav"
+        case .mov: return "mov"
+        case .mp4: return "mp4"
+        case .auto:
+            let container = camera.track.map { URL(fileURLWithPath: $0.meta.info.path).pathExtension.lowercased() }
+            return container == "mov" ? "mov" : "mp4"
+        }
+    }
+
+    func runExport(to url: URL) {
+        guard let session, verified, !isExporting else { return }
+        let opts: [String: Any] = [
+            "kind": exportFormat == .wav ? "wav" : "mux",
+            "outputPath": url.path,
+            "keepCameraAudio": keepCameraAudio && exportFormat != .wav,
+            "container": exportFormat == .mov ? "mov" : exportFormat == .mp4 ? "mp4" : "auto",
+            "faststart": false,
+            "overwrite": true, // the save panel already confirmed replacement
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: opts),
+              let json = String(data: data, encoding: .utf8) else { return }
+        do {
+            let job = try session.exportStart(optionsJSON: json)
+            exportJob = job
+            exportActivity = .running(phase: "ExportRender", fraction: 0)
+            Task {
+                for await p in job.progress {
+                    if self.isExporting {
+                        self.exportActivity = .running(phase: p.phase, fraction: p.fraction)
+                    }
+                }
+                do {
+                    _ = try await job.value()
+                    self.exportActivity = .idle
+                    self.autosave()
+                    self.toasts.show(Toast(
+                        style: .success, title: "Export complete",
+                        detail: url.lastPathComponent,
+                        actionLabel: "Reveal",
+                        action: { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    ), seconds: 10)
+                } catch JobError.cancelled {
+                    self.exportActivity = .idle
+                } catch {
+                    self.exportActivity = .idle
+                    let msg = (error as? JobError).map(String.init(describing:)) ?? error.localizedDescription
+                    self.toasts.show(Toast(style: .error, title: "Export failed", detail: msg), seconds: 10)
+                }
+                self.exportJob = nil
+            }
+        } catch {
+            toasts.show(Toast(style: .error, title: "Export failed",
+                              detail: (error as? CoreError)?.message ?? error.localizedDescription))
+        }
+    }
+
+    func cancelExport() {
+        exportJob?.cancel()
+    }
+
+    // MARK: - Autosave / restore (§11.5, §14 item 6.8)
+
+    func autosave() {
+        guard let session, let cam = camera.track, let ext = external.track,
+              let state = try? session.state() else { return }
+        SessionStore.save(camera: cam.meta, external: ext.meta, alignment: state)
+    }
+
+    private func offerRestoreIfAvailable() {
+        guard let cam = camera.track, let ext = external.track,
+              let saved = SessionStore.load(cameraKey: cam.meta.contentKey,
+                                            externalKey: ext.meta.contentKey) else { return }
+        restorable = saved
+        let when = saved.savedAt.prefix(16).replacingOccurrences(of: "T", with: " ")
+        toasts.show(Toast(
+            style: .info, title: "Saved session found for this pair",
+            detail: "\(when) · offset \(String(format: "%+.2f", saved.alignment.offsetMs)) ms"
+                + (saved.alignment.verified ? " · verified" : ""),
+            actionLabel: "Restore",
+            action: { [weak self] in self?.applyRestored() }
+        ), seconds: 15)
+    }
+
+    func applyRestored() {
+        guard let session, let saved = restorable else { return }
+        cancelSync()
+        do {
+            try session.setState(saved.alignment)
+        } catch {
+            toasts.show(Toast(style: .error, title: "Restore failed",
+                              detail: (error as? CoreError)?.message ?? error.localizedDescription))
+            return
+        }
+        let a = saved.alignment
+        offsetMs = a.offsetMs
+        driftPpm = a.driftPpm
+        driftMode = a.driftMode
+        savedDriftPpm = a.savedDriftPpm
+        verified = a.verified
+        lockZoom = a.lockZoom
+        loupeLayout = a.loupeLayout
+        anchors = a.anchors
+        frames = a.frames
+        measurements = a.perAnchorMeasurements
+        measurementCenters = a.anchors.map { mapping.localLagMs($0) }
+        driftWindows = a.driftWindows
+        syncActivity = driftWindows.isEmpty ? .none : .succeeded
+        toasts.show(Toast(style: .success, title: "Session restored"))
     }
 }

@@ -52,7 +52,7 @@ impl TrackData {
         (self.pcm.len() / 4) as u64
     }
 
-    fn pcm_samples(&self) -> &[f32] {
+    pub(crate) fn pcm_samples(&self) -> &[f32] {
         // f32le on all supported targets (little-endian); mmap is 4-byte... not guaranteed
         // aligned, so go through bytemuck-free manual check.
         let bytes: &[u8] = &self.pcm;

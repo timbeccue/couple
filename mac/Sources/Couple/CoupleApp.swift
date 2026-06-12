@@ -2,11 +2,21 @@ import AppKit
 import CoupleKit
 import SwiftUI
 
+/// Held for the app's lifetime when the debug drive is active: App Nap
+/// otherwise stretches the drive's timers by an order of magnitude.
+private var debugActivityToken: NSObjectProtocol?
+
 @main
 struct CoupleApp: App {
     @State private var model = AppModel()
 
     init() {
+        // Diagnostics must reach pipes promptly (debug drives grep stdout).
+        setvbuf(stdout, nil, _IOLBF, 0)
+        if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("COUPLE_") }) {
+            debugActivityToken = ProcessInfo.processInfo.beginActivity(
+                options: [.userInitiated, .latencyCritical], reason: "couple debug drive")
+        }
         // SPM executables launch as background processes; make this a regular app.
         NSApplication.shared.setActivationPolicy(.regular)
         DispatchQueue.main.async {

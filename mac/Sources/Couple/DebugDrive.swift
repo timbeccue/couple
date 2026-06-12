@@ -101,6 +101,9 @@ final class DebugDrive {
         if env["COUPLE_EVENT_TEST"] == "1" {
             await eventTest()
         }
+        if env["COUPLE_E2E"] == "1" {
+            await endToEnd(env: env)
+        }
         if env["COUPLE_AUTOQUIT"] == "1" {
             print("DEBUG-DRIVE: done, quitting")
             NSApp.terminate(nil)
@@ -176,6 +179,91 @@ final class DebugDrive {
 
     private func settle() async {
         try? await Task.sleep(nanoseconds: 600_000_000)
+    }
+
+    // MARK: - Phase-6 end-to-end: audition playback + skew, then shell export
+
+    private func endToEnd(env: [String: String]) async {
+        guard let model, model.pair.session != nil else {
+            print("E2E: no session, skipped")
+            return
+        }
+        let pair = model.pair
+        print("E2E: begin (sync state: \(pair.syncActivity))")
+
+        // --- Shell export of the real pair first (deterministic gate); hash
+        // must match the Phase-4 CLI export.
+        if !pair.verified {
+            pair.toggleVerified()
+        }
+        pair.exportFormat = .auto
+        pair.keepCameraAudio = false
+        let out = URL(fileURLWithPath: "/tmp/couple-shell-export.\(pair.exportFileExtension)")
+        try? FileManager.default.removeItem(at: out)
+        print("E2E: export starting → \(out.path)")
+        pair.runExport(to: out)
+        for _ in 0..<1200 {
+            if pair.exportActivity == .idle {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        if FileManager.default.fileExists(atPath: out.path) {
+            let sha = Process()
+            sha.executableURL = URL(fileURLWithPath: "/usr/bin/shasum")
+            sha.arguments = ["-a", "256", out.path]
+            let pipe = Pipe()
+            sha.standardOutput = pipe
+            try? sha.run()
+            sha.waitUntilExit()
+            let hashLine = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let hash = hashLine.split(separator: " ").first.map(String.init) ?? "?"
+            let expected = env["COUPLE_E2E_EXPECTED_SHA"] ?? ""
+            let verdict = expected.isEmpty ? "(no expected hash provided)"
+                : (hash == expected ? "MATCHES Phase-4 CLI hash — PASS" : "DIFFERS from Phase-4 CLI hash — FAIL")
+            print("E2E-EXPORT: \(out.lastPathComponent) sha256 \(hash) \(verdict)")
+        } else {
+            print("E2E-EXPORT: FAIL (no output file)")
+        }
+
+        // --- Audition: play from t=60, measure A/V skew at 1 Hz (§11.4 budget 33 ms).
+        pair.audition.monitorMode = .overlay
+        print("E2E: audition opening…")
+        pair.audition.play(from: 60)
+        for _ in 0..<100 { // engine bring-up is async with a 5 s HAL timeout
+            if pair.audition.isPlaying || pair.audition.audioUnavailable {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        print("E2E: audition playing=\(pair.audition.isPlaying) unavailable=\(pair.audition.audioUnavailable)")
+        if pair.audition.audioUnavailable {
+            print("E2E-AUDITION: SKIPPED — audio output unavailable in this session; owner: run the skew test live")
+            return
+        }
+        var skews: [Double] = []
+        var playheads: [Double] = []
+        for _ in 0..<16 {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            playheads.append(pair.audition.playheadT)
+            print(String(format: "E2E: t=%.2f skew=%.1f ms", pair.audition.playheadT, pair.audition.lastSkewMs))
+            skews.append(abs(pair.audition.lastSkewMs))
+        }
+        // §11.4 acceptance is SUSTAINED skew ≤ 1 frame; evaluate the tail
+        // after the startup transient has converged.
+        skews = Array(skews.suffix(8))
+        // Mode switches mid-playback must not stall the stream.
+        pair.audition.monitorMode = .pan
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        pair.audition.monitorMode = .null
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        let advancing = zip(playheads, playheads.dropFirst()).allSatisfy { $1 > $0 }
+        let endT = pair.audition.playheadT
+        pair.audition.pause()
+        let maxSkew = skews.max() ?? .nan
+        print(String(format: "E2E-AUDITION: playhead advanced %@ (60.0 → %.2f s); max |skew| after convergence %.1f ms (budget 33) — %@",
+                     advancing ? "ok" : "STALLED", endT, maxSkew,
+                     maxSkew <= 33 ? "PASS" : "FAIL"))
     }
 
     // MARK: - Synthetic input events (verifies the UX §2.9 map end to end)

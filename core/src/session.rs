@@ -99,6 +99,9 @@ pub struct Session {
     pub external: TrackId,
     offset_ms_bits: AtomicU64,
     drift_ppm_bits: AtomicU64,
+    /// Drift as last committed (UX §2.7: audition renders the *committed* drift;
+    /// the live value only drives loupes/readouts until commit_drift()).
+    committed_drift_ppm_bits: AtomicU64,
     drift_mode: AtomicU8, // 0 = resample, 1 = none
     cold: Mutex<ColdState>,
 }
@@ -118,6 +121,7 @@ impl Session {
             external,
             offset_ms_bits: AtomicU64::new(f64_to_bits(0.0)),
             drift_ppm_bits: AtomicU64::new(f64_to_bits(0.0)),
+            committed_drift_ppm_bits: AtomicU64::new(f64_to_bits(0.0)),
             drift_mode: AtomicU8::new(0),
             cold: Mutex::new(ColdState {
                 lock_zoom: true,
@@ -167,8 +171,16 @@ impl Session {
         self.drift_ppm_bits.store(f64_to_bits(v), Ordering::Release);
     }
 
-    /// Audition re-render point (UX §2.7/§4.7); mapping itself is already live.
-    pub fn commit_drift(&self) {}
+    pub fn committed_drift_ppm(&self) -> f64 {
+        bits_to_f64(self.committed_drift_ppm_bits.load(Ordering::Acquire))
+    }
+
+    /// Audition re-render point (UX §2.7/§4.7): the live drift becomes the
+    /// value audition renders; the rest of the mapping is already live.
+    pub fn commit_drift(&self) {
+        self.committed_drift_ppm_bits
+            .store(self.drift_ppm_bits.load(Ordering::Acquire), Ordering::Release);
+    }
 
     // ---- cold setters ----
 
@@ -183,6 +195,8 @@ impl Session {
             }
             (DriftMode::None, DriftMode::Resample) => {
                 self.drift_ppm_bits
+                    .store(f64_to_bits(cold.saved_drift_ppm), Ordering::Release);
+                self.committed_drift_ppm_bits
                     .store(f64_to_bits(cold.saved_drift_ppm), Ordering::Release);
                 self.drift_mode.store(0, Ordering::Release);
             }
@@ -283,6 +297,8 @@ impl Session {
             DriftMode::Resample => s.drift_ppm,
         };
         self.drift_ppm_bits.store(f64_to_bits(live_ppm), Ordering::Release);
+        self.committed_drift_ppm_bits
+            .store(f64_to_bits(live_ppm), Ordering::Release);
         self.drift_mode
             .store(matches!(s.drift_mode, DriftMode::None) as u8, Ordering::Release);
         cold.saved_drift_ppm = s.saved_drift_ppm;
@@ -311,10 +327,13 @@ impl Session {
         match suggested {
             DriftMode::Resample => {
                 self.drift_ppm_bits.store(f64_to_bits(drift_ppm), Ordering::Release);
+                self.committed_drift_ppm_bits
+                    .store(f64_to_bits(drift_ppm), Ordering::Release);
                 self.drift_mode.store(0, Ordering::Release);
             }
             DriftMode::None => {
                 self.drift_ppm_bits.store(f64_to_bits(0.0), Ordering::Release);
+                self.committed_drift_ppm_bits.store(f64_to_bits(0.0), Ordering::Release);
                 self.drift_mode.store(1, Ordering::Release);
             }
         }

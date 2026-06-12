@@ -11,6 +11,7 @@ import SwiftUI
 final class AppModel {
     let engine: Engine?
     let engineError: String?
+    let toasts = ToastCenter()
     var pair: PairSession
     /// "1 of N": pairs opened this app session (resets each launch, §14 item 6.11).
     var pairsOpened = 1
@@ -34,8 +35,16 @@ final class AppModel {
         guard let engine else {
             fatalError("couple-core context failed: \(engineError ?? "?")")
         }
-        self.pair = PairSession(engine: engine)
+        self.pair = PairSession(engine: engine, toasts: toasts)
         installMonitors()
+        // Autosave on clean quit (§14 item 6.8). willTerminate fires on main.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.pair.autosave()
+            }
+        }
         DebugDrive.shared.configure(model: self)
     }
 
@@ -52,9 +61,10 @@ final class AppModel {
     func startNewPair() {
         confirmingNewPair = false
         guard let engine else { return }
+        pair.autosave()
         pair.teardown()
         loupeRects = [:]
-        pair = PairSession(engine: engine)
+        pair = PairSession(engine: engine, toasts: toasts)
         pairsOpened += 1
     }
 
@@ -96,7 +106,10 @@ final class AppModel {
             return true
         case 36, 76: // Return / keypad Enter — reserved for v2 queue triage
             return true
-        case 49: // space — audition is Phase 6; reserved, consumed
+        case 49: // space: play/pause audition (UX §2.9)
+            guard pair.session != nil else { return true }
+            let start = max(0, (pair.anchors.first ?? 0.8) - 0.8)
+            pair.audition.toggle(defaultStart: start)
             return true
         default:
             break

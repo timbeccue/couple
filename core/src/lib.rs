@@ -4,6 +4,7 @@
 //! processes only. The canonical timeline for everything is the video container's
 //! presentation timeline (§1.2).
 
+pub mod audition;
 pub mod cache;
 pub mod ctx;
 pub mod envelope;
@@ -28,6 +29,7 @@ pub use error::{CoupleError, Result};
 pub use job::{CancelToken, JobId, Phase, Progress, ProgressFn};
 pub use media::*;
 pub use onsets::Onset;
+pub use audition::{AuditionStream, FillInfo, MonitorMode};
 pub use pyramid::{band, Band};
 
 pub fn version() -> &'static str {

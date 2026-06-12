@@ -28,7 +28,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "Couple",
-            dependencies: ["CoupleKit"]
+            dependencies: ["CoupleKit", "CCouple"]
         ),
         .testTarget(
             name: "CoupleKitTests",

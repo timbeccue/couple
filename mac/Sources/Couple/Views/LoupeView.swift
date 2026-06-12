@@ -200,6 +200,18 @@ struct LoupeView: View {
         center.addLine(to: CGPoint(x: size.width / 2, y: size.height))
         ctx.stroke(center, with: .color(accent.opacity(0.65)), lineWidth: 1)
 
+        // Playhead in the focused loupe during audition (UX §1.6).
+        if pair.audition.isPlaying, pair.audition.focusedAnchor == index {
+            let frac = (pair.audition.playheadT - t0) / winS
+            if frac >= 0, frac <= 1 {
+                var line = Path()
+                let x = CGFloat(frac) * size.width
+                line.move(to: CGPoint(x: x, y: 0))
+                line.addLine(to: CGPoint(x: x, y: size.height))
+                ctx.stroke(line, with: .color(.white.opacity(0.8)), lineWidth: 1)
+            }
+        }
+
         drawGuidanceArrow(ctx, size: size)
     }
 

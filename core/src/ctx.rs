@@ -29,6 +29,7 @@ pub struct Ctx {
     next_id: AtomicU64,
     jobs: Mutex<HashMap<JobId, JobEntry>>,
     imports_inflight: AtomicU32,
+    streams: RwLock<HashMap<u64, Arc<crate::audition::AuditionStream>>>,
 }
 
 struct JobEntry {
@@ -50,7 +51,40 @@ impl Ctx {
             next_id: AtomicU64::new(1),
             jobs: Mutex::new(HashMap::new()),
             imports_inflight: AtomicU32::new(0),
+            streams: RwLock::new(HashMap::new()),
         })
+    }
+
+    // ---- audition (§4.8) ----
+
+    pub fn audition_open(
+        &self,
+        session: SessionId,
+        mode: crate::audition::MonitorMode,
+        t_start: f64,
+    ) -> Result<u64> {
+        let s = self.session(session)?;
+        let cam = self.track(s.camera)?;
+        let ext = self.track(s.external)?;
+        let id = self.next_id();
+        let stream = Arc::new(crate::audition::AuditionStream::open(
+            id, s, cam, ext, mode, t_start,
+        ));
+        self.streams.write().unwrap().insert(id, stream);
+        Ok(id)
+    }
+
+    pub fn audition_stream(&self, id: u64) -> Result<Arc<crate::audition::AuditionStream>> {
+        self.streams
+            .read()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| CoupleError::invalid("unknown audition stream"))
+    }
+
+    pub fn audition_close(&self, id: u64) {
+        self.streams.write().unwrap().remove(&id);
     }
 
     pub fn cache_root(&self) -> &Path {

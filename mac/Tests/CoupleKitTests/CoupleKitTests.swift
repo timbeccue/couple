@@ -126,6 +126,26 @@ struct CoupleKitTests {
         let meas = try #require(m)
         #expect(abs(meas.lagMs - 2500.0) < 2.0)
 
+        // Audition (Phase 6): construction offset is exactly +2500 ms, so in
+        // None mode (integer shift) identical content nulls to exact zero.
+        session.setDriftMode(.none)
+        session.setOffsetMs(2500)
+        let audition = try session.auditionOpen(mode: .null, tStart: 10)
+        var stereo = [Float](repeating: 1, count: 2048)
+        let r = stereo.withUnsafeMutableBufferPointer {
+            audition.fill(into: $0.baseAddress!, capacityFrames: 1024)
+        }
+        #expect(r.frames == 1024)
+        #expect(abs(r.streamT - (10 + 1024.0 / 48000)) < 1e-9)
+        #expect(stereo.allSatisfy { $0 == 0 })
+        // Past the video end: short fill, then zero frames.
+        audition.seek(to: 39.99)
+        let r2 = stereo.withUnsafeMutableBufferPointer {
+            audition.fill(into: $0.baseAddress!, capacityFrames: 1024)
+        }
+        #expect(r2.frames < 1024)
+        audition.close()
+
         session.free()
         cam.free()
         ext.free()

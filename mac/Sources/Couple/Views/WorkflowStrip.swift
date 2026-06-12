@@ -4,6 +4,7 @@
 // preview growing to use it (owner redesign 2026-06-12, supersedes the
 // UX §1.2 stage-greedy policy; SPEC-CHANGE logged in PROGRESS.md).
 
+import AVFoundation
 import CoupleKit
 import SwiftUI
 
@@ -118,48 +119,112 @@ struct InputPanel: View {
     }
 }
 
-// MARK: - Video preview (own unit; playback lands in Phase 6)
+// MARK: - Video preview + transport (UX §1.4 / §11.4)
 
 struct VideoPreviewPanel: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         let pair = model.pair
+        let audition = pair.audition
         VStack(spacing: 8) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Theme.canvasBg)
-                VStack(spacing: 5) {
-                    Image(systemName: "video")
-                        .font(.system(size: 18))
-                        .foregroundStyle(Theme.textTertiary)
-                    Text("video preview · Phase 6")
-                        .font(.system(size: 9))
-                        .foregroundStyle(Theme.textTertiary)
-                }
-            }
-            .aspectRatio(16.0 / 9.0, contentMode: .fit)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            PlayerLayerView(player: audition.player)
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.canvasBg, in: RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
 
             HStack(spacing: 8) {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.textTertiary)
-                Text("0:00.00")
+                Button {
+                    let start = max(0, (pair.anchors.first ?? 0.8) - 0.8)
+                    audition.toggle(defaultStart: start)
+                } label: {
+                    Image(systemName: audition.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(width: 22, height: 18)
+                        .background(Theme.chipBg, in: RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+                .disabled(pair.session == nil)
+                Text(timecode(audition.playheadT))
                     .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(Theme.textTertiary)
+                    .foregroundStyle(audition.isPlaying ? Theme.textPrimary : Theme.textTertiary)
+                if audition.audioUnavailable {
+                    Text("audio output unavailable")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Theme.warn)
+                }
                 Spacer()
                 ForEach(pair.anchors.indices, id: \.self) { i in
-                    Circle()
-                        .fill(Theme.anchorColors[i % 4].opacity(0.35))
-                        .frame(width: 15, height: 15)
-                        .overlay(Text("\(i + 1)").font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(.black.opacity(0.7)))
+                    Button {
+                        audition.jump(toAnchorAt: pair.anchors[i], index: i)
+                    } label: {
+                        Circle()
+                            .fill(Theme.anchorColors[i % 4]
+                                .opacity(audition.focusedAnchor == i ? 0.9 : 0.45))
+                            .frame(width: 15, height: 15)
+                            .overlay(Text("\(i + 1)").font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.black.opacity(0.7)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Play from anchor \(i + 1) (−0.8 s)")
                 }
             }
+
+            Picker("", selection: Binding(
+                get: { audition.monitorMode },
+                set: { audition.monitorMode = $0 }
+            )) {
+                ForEach(MonitorMode.allCases, id: \.self) { m in
+                    Text(m.label).tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+            .disabled(pair.session == nil)
+            .help("Null: tune for minimum residual — with different mics it's a relative dip, never silence")
         }
         .frame(maxHeight: .infinity)
         .panel()
+    }
+
+    private func timecode(_ t: Double) -> String {
+        let s = max(0, t)
+        return String(format: "%d:%05.2f", Int(s) / 60, s.truncatingRemainder(dividingBy: 60))
+    }
+}
+
+/// AVPlayerLayer host (video rendering is shell-side, SPEC §4.7 boundary).
+private struct PlayerLayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> PlayerNSView {
+        let v = PlayerNSView()
+        v.playerLayer.player = player
+        v.playerLayer.videoGravity = .resizeAspect
+        return v
+    }
+
+    func updateNSView(_ nsView: PlayerNSView, context: Context) {
+        if nsView.playerLayer.player !== player {
+            nsView.playerLayer.player = player
+        }
+    }
+
+    final class PlayerNSView: NSView {
+        let playerLayer = AVPlayerLayer()
+
+        init() {
+            super.init(frame: .zero)
+            wantsLayer = true
+            layer = playerLayer
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError()
+        }
     }
 }
 
@@ -409,8 +474,40 @@ struct ExportPanel: View {
                 }
             }
 
+            exportButton
+            Spacer(minLength: 0)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .panel()
+    }
+
+    @ViewBuilder
+    private var exportButton: some View {
+        let pair = model.pair
+        if case .running(let phase, let fraction) = pair.exportActivity {
+            VStack(spacing: 4) {
+                ProgressView(value: fraction)
+                    .tint(Theme.good)
+                HStack {
+                    Text(phase == "ExportMux" ? "muxing…" : "rendering audio…")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Button("Cancel") {
+                        pair.cancelExport()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 9))
+                    .foregroundStyle(Theme.textSecondary)
+                }
+            }
+        } else {
             Button {
-                gateNote = true
+                if pair.verified {
+                    runSavePanel()
+                } else {
+                    gateNote = true // clicking while unverified explains the gate (UX §1.5)
+                }
             } label: {
                 Text("Export")
                     .font(.system(size: 12, weight: .semibold))
@@ -420,17 +517,27 @@ struct ExportPanel: View {
             .buttonStyle(.borderedProminent)
             .tint(pair.verified ? Theme.good.opacity(0.8) : Color.gray.opacity(0.3))
             .popover(isPresented: $gateNote) {
-                Text(pair.verified
-                     ? "Export lands in Phase 6 — use `couple export` meanwhile."
-                     : "Verify the alignment first (v): check the loupes, then toggle Verified.")
+                Text("Verify the alignment first (v): check the loupes, audition if in doubt, then toggle Verified.")
                     .font(.system(size: 11))
                     .padding(10)
                     .frame(width: 220)
             }
-            Spacer(minLength: 0)
         }
-        .frame(maxHeight: .infinity, alignment: .top)
-        .panel()
+    }
+
+    private func runSavePanel() {
+        let pair = model.pair
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = pair.suggestedExportFilename
+        panel.canCreateDirectories = true
+        if let window = NSApp.keyWindow {
+            panel.beginSheetModal(for: window) { response in
+                guard response == .OK, let url = panel.url else { return }
+                Task { @MainActor in
+                    pair.runExport(to: url)
+                }
+            }
+        }
     }
 
     private var formatHelp: String {

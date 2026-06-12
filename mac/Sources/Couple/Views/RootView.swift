@@ -24,6 +24,7 @@ struct RootView: View {
             }
         }
         .background(Theme.windowBg)
+        .overlay(ToastOverlay(center: model.toasts))
         .confirmationDialog(
             "Replace \(model.pair.pendingReplace?.role == .camera ? "camera" : "external") file?",
             isPresented: Binding(

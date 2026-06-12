@@ -317,3 +317,73 @@ Owner attention (non-blocking): the §9.6 budgets are unaffected (raw fetch at
 500 ms = 24 k samples/loupe/frame, draw cost still ≪ 1 ms); UX-DECISIONS.md
 §1.2/§2.2/§2.9 still carry the superseded wording — left as-is per the
 append-only protocol, this entry is the authority.
+
+## 2026-06-12 — Session D, Phase 6 complete (audition, video, export UI, autosave, packaging)
+
+**Core (new `audition.rs` + 5 `cpl_audition_*` ABI functions, additive, ABI
+stays v1):** §4.8 implemented in full — video-time cursor streams; camera from
+the PCM cache; external through the mapping with offset always live and
+sample-accurate, drift at the *committed* value only (new
+`committed_drift_ppm` atomic on Session; commit_drift/apply_sync/
+set_state_json/set_drift_mode all keep it coherent), driftMode None ⇒
+integer-sample shift matching export (F8); 32-tap/1024-phase Kaiser polyphase
+sinc (per-phase DC-normalized) for the resample path; 240-sample crossfade on
+any mapping/monitor change between fills; loudness-matched Pan/Overlay/Null
+matrices (−20 dBFS target, +24 dB clamp, gains from a ≤120 s window at the
+overlap midpoint — full-cache scans were pointless); zeros + short fill only
+past the video end. Tests (core/tests/audition.rs): null mode cancels
+identical content to exact zero; pan channels bit-match g·source; +100 ms
+integer shift reads u(t) exactly; 0-ppm sinc transparency; crossfade ramps
+instead of clicking; end-of-video contract; **fill budget: 512-frame sinc-path
+fill median ≪ 1 ms (§9.6)**.
+
+**Shell:** CoupleKit audition wrapper (RT path = raw handles, shell render
+block calls `cpl_audition_fill` directly); AVAudioEngine + AVAudioSourceNode
+(deinterleaved 48 kHz graph with an RT-safe interleave→planar scratch);
+muted AVPlayer slaved to the audio clock per §11.4 — output-latency-
+compensated 1 Hz skew monitor, gain-scheduled rate nudge (±6% > 60 ms,
+±1% > 15 ms, deadband below), reseek > 200 ms; space play/pause, per-anchor
+jump buttons (−0.8 s, focuses the loupe), Pan/Overlay/Null picker with the
+null-dip caveat, playheads in overview + focused loupe; video preview panel
+hosts the real AVPlayerLayer. Export panel wired to `cpl_export_start`
+(NSSavePanel, format/keep-camera-audio honored, progress + cancel, reveal-in-
+Finder toast). Toast system (sync numbers per UX §2.5, low-confidence/failure,
+export, restore offer). Autosave/restore per §14 6.8: session file (§4.5
+wrapper) to Application Support keyed by content keys on verify/export/quit/
+pair-replace; reopening the same pair offers Restore (cancels the running
+auto-sync, applies the saved alignment wholesale). Packaging:
+`mac/Scripts/make-app.sh [--dmg] [--sign id]` assembles Couple.app
+(Info.plist com.timbeccue.couple, ffmpeg/ffprobe in Contents/Helpers — core
+already resolves ../Helpers first), ad-hoc signed by default, DMG via hdiutil;
+**notarization + the pinned LGPL ffmpeg build remain owner steps** (need
+Developer ID credentials; dev bundle copies the system ffmpeg).
+
+**§15 Phase-6 verification (all on the real pair, headless debug drive):**
+- **Export hash keystone: the shell's export is byte-identical to the
+  Phase-4 CLI export** — sha256 d68336c1…e417 matched on five consecutive
+  runs (deterministic end to end: in-app auto-sync → export job).
+- **A/V skew: sustained max |skew| 31.3 ms ≤ 33 ms (1 frame)** over a 16 s
+  playback at t=60, measured against the latency-compensated audio clock,
+  with mid-playback monitor-mode switches not stalling the stream; playhead
+  advanced in real time. (Measured under Low Power Mode in a non-interactive
+  session; a live session has more headroom.)
+- Full §2.9 event tests still 10/10; all 45 Rust tests + 3 CoupleKit suites
+  green; screenshots in `design/screenshots/phase6/` (toasts, monitor picker,
+  transport visible; the AVPlayerLayer frame composites via IOSurface and
+  doesn't appear in programmatic window captures — it renders on screen).
+
+Debugging note for the record: the first audition bring-up wedged the app —
+root cause was `engine.connect` raising kAudioUnitErr_FormatNotSupported
+(−10868, mixers reject interleaved connections) as an ObjC exception that
+vanished into the runloop. The fix moved the whole engine build+start off-main
+behind a 5 s timeout (a wedged HAL can never hang the UI; transport shows
+"audio output unavailable"), and the graph is now deinterleaved. App Nap also
+proved capable of stretching debug-drive timers ~8×; the drive now pins a
+latency-critical activity. Neither affects core.
+
+Owner items for the live walkthrough: listen to the three monitor modes
+(incl. the null dip) on the real pair; confirm A/V feel during nudging; the
+§6.10 nudge-step ratification and the 60 fps drag check from Phase 5 still
+stand. v1 feature work is complete pending that walkthrough — next session is
+Phase 7 (v2 queue) per §12, plus the LGPL ffmpeg pin + notarization for
+distribution.

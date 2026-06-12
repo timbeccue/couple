@@ -197,6 +197,35 @@ char *cpl_measure_local_json(uint64_t ctx,
  char *cpl_fit_ls_json(const char *points_json);
 
 /*
+ Open an audition stream on a session. mode: 0 = pan, 1 = overlay, 2 = null.
+ Returns the stream id, 0 on error.
+ */
+ uint64_t cpl_audition_open(uint64_t ctx, uint64_t session, int32_t mode, double t_start);
+
+/*
+ Fill caller-allocated interleaved stereo f32 (48 kHz). Writes the frames
+ actually rendered (< capacity only past the video end) and the stream's
+ video time after the fill. Real-time path: locks are touched only to
+ resolve the handles (uncontended in practice).
+ */
+
+int32_t cpl_audition_fill(uint64_t ctx,
+                          uint64_t stream,
+                          float *out_interleaved_stereo,
+                          uint32_t capacity_frames,
+                          uint32_t *out_frames,
+                          double *out_stream_t);
+
+ int32_t cpl_audition_seek(uint64_t ctx, uint64_t stream, double t);
+
+/*
+ mode: 0 = pan, 1 = overlay, 2 = null. Click-free (240-sample crossfade).
+ */
+ int32_t cpl_audition_set_mode(uint64_t ctx, uint64_t stream, int32_t mode);
+
+ void cpl_audition_close(uint64_t ctx, uint64_t stream);
+
+/*
  Start an export job on a session (§4.9). opts_json: ExportOptions wire form
  (`{"kind":"mux"|"wav","outputPath":…,"keepCameraAudio":…,"container":…,
  "faststart":…,"overwrite":…}`). The session's current mapping is applied
