@@ -434,3 +434,35 @@ distribution.
   Video preview drops its panel box (letterboxes into the bare column) and
   all playback controls — play, timecode, anchor jumps, monitor picker,
   fullscreen — share a single row beneath it.
+
+## 2026-06-12 — v2 planning (session queue + queue-centric redesign)
+
+Owner planning conversation; outcome written as **SPEC-V2.md** (the v2 charter:
+pairing model, queue workflow, batch export, UI redesign targets, Phase 7–9
+plan, and the Session F/G kickoff prompts). Key records:
+
+- SPEC-CHANGE (2026-06-12, owner): the v1 framing "the editor is the product /
+  the queue is an accelerator" (UX-DECISIONS v1 scope, DECIDED) is superseded
+  for v2 — auto-sync proved trustworthy enough in daily use that the waveform
+  stage is a sanity check, and the product surface becomes the many-takes
+  triage queue. The v1 editor survives intact as the per-row drill-down.
+  Attention-weight targets (visual weight, not area): queue ~25%, video ~30%,
+  export ~20%, waveforms ~20%, sync tools ~5% (SPEC-V2 §1).
+- SPEC-CHANGE (2026-06-12, owner): SPEC §12.2's best-z bipartite matching is
+  superseded — pairing is not 1:1 (the continuous-recorder session is the
+  common real shape; the v1 ground-truth pair itself is external ≫ video).
+  v2 model: video-as-unit rows with candidate lists, coverage intervals,
+  audio×audio triangle-closure simultaneity check, margin rule biased to
+  `ambiguous` (SPEC-V2 §3, flags V2-F1/F2).
+- SPEC-CHANGE (2026-06-12, owner): verified ≡ queued-for-export — one flag,
+  no separate queue checkbox (SPEC-V2 §2.4, flag V2-F4).
+- Decided out of scope for v2: audio stitching across a recorder restart
+  (honest `split across files` state instead, V2-F5); export parallelism.
+- Owner directions for the redesign recorded in SPEC-V2 §1 (overview narrows,
+  sync controls share its row, sparkline stays small, offset/drift readouts
+  on the fence → mockup compares disclosure-vs-gone, loupes on-demand).
+- Plan: Phase 7 = headless pairing core (Session F), Phase 8 = queue-centric
+  HTML mockup (Session G, may run parallel to F), Phase 9 = shell (Session H,
+  prompt written after G converges). UX-DECISIONS.md untouched per the
+  append-only protocol; SPEC-V2 §0 defines precedence until the
+  UX-DECISIONS-V2 section lands with the converged mockup.
