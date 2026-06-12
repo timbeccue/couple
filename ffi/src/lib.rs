@@ -694,6 +694,20 @@ pub extern "C" fn cpl_audition_set_mode(ctx: u64, stream: u64, mode: i32) -> i32
     }
 }
 
+/// Per-track monitor gains (1.0 = unity, 0.0 = mute), multiplied onto the
+/// loudness-matching gains. Click-free (240-sample crossfade).
+#[no_mangle]
+pub extern "C" fn cpl_audition_set_gains(ctx: u64, stream: u64, gain_cam: f32, gain_ext: f32) -> i32 {
+    let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
+    match ctx.audition_stream(stream) {
+        Ok(s) => {
+            s.set_gains(gain_cam, gain_ext);
+            0
+        }
+        Err(e) => set_error(&e),
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn cpl_audition_close(ctx: u64, stream: u64) {
     if let Some(ctx) = ctx_of(ctx) {

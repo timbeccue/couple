@@ -223,6 +223,12 @@ int32_t cpl_audition_fill(uint64_t ctx,
  */
  int32_t cpl_audition_set_mode(uint64_t ctx, uint64_t stream, int32_t mode);
 
+/*
+ Per-track monitor gains (1.0 = unity, 0.0 = mute), multiplied onto the
+ loudness-matching gains. Click-free (240-sample crossfade).
+ */
+ int32_t cpl_audition_set_gains(uint64_t ctx, uint64_t stream, float gain_cam, float gain_ext);
+
  void cpl_audition_close(uint64_t ctx, uint64_t stream);
 
 /*

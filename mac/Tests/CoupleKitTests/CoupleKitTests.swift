@@ -138,6 +138,18 @@ struct CoupleKitTests {
         #expect(r.frames == 1024)
         #expect(abs(r.streamT - (10 + 1024.0 / 48000)) < 1e-9)
         #expect(stereo.allSatisfy { $0 == 0 })
+        // User gains: muting both tracks renders exact silence in overlay too.
+        audition.setMode(.overlay)
+        audition.setGains(cam: 0, ext: 0)
+        _ = stereo.withUnsafeMutableBufferPointer {
+            audition.fill(into: $0.baseAddress!, capacityFrames: 1024) // absorb crossfade
+        }
+        let rg = stereo.withUnsafeMutableBufferPointer {
+            audition.fill(into: $0.baseAddress!, capacityFrames: 1024)
+        }
+        #expect(rg.frames == 1024)
+        #expect(stereo.allSatisfy { $0 == 0 })
+        audition.setGains(cam: 1, ext: 1)
         // Past the video end: short fill, then zero frames.
         audition.seek(to: 39.99)
         let r2 = stereo.withUnsafeMutableBufferPointer {

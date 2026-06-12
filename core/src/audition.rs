@@ -14,7 +14,7 @@ use crate::pyramid::SAMPLE_RATE;
 use crate::session::{DriftMode, Session};
 use crate::track::TrackData;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, OnceLock};
 
 pub const CROSSFADE_SAMPLES: usize = 240; // 5 ms at 48 kHz [SPEC §4.8]
@@ -29,6 +29,8 @@ pub enum MonitorMode {
     #[serde(rename = "pan")]
     PanLR,
     Overlay,
+    /// Difference monitor (cam − ext). Dropped from the shell UI; kept in the
+    /// core as the exact-cancellation oracle for the §4.8 precision tests.
     Null,
 }
 
@@ -122,6 +124,9 @@ struct RenderParams {
     drift_ppm: f64, // effective: committed when resample, 0 when none
     integer_shift: bool,
     monitor: MonitorMode,
+    /// User monitor gains (volume/mute), on top of the loudness gains.
+    gain_cam: f32,
+    gain_ext: f32,
 }
 
 pub struct AuditionStream {
@@ -135,9 +140,16 @@ pub struct AuditionStream {
     video_end_frame: i64,
     g_cam: f32,
     g_ext: f32,
+    /// User monitor gains (f32 bits): live per-track volume/mute, applied on
+    /// top of the loudness-matching gains. Changes crossfade like any other
+    /// param change.
+    user_gain_cam_bits: AtomicU32,
+    user_gain_ext_bits: AtomicU32,
     // Previous fill's params for click-free crossfades (fill-thread only).
     prev_offset_bits: AtomicU64,
     prev_drift_bits: AtomicU64,
+    prev_gain_cam_bits: AtomicU32,
+    prev_gain_ext_bits: AtomicU32,
     prev_flags: AtomicU8, // monitor(2 bits) | integer_shift(bit 2) | valid(bit 7)
 }
 
@@ -186,8 +198,12 @@ impl AuditionStream {
             video_end_frame,
             g_cam,
             g_ext,
+            user_gain_cam_bits: AtomicU32::new(1f32.to_bits()),
+            user_gain_ext_bits: AtomicU32::new(1f32.to_bits()),
             prev_offset_bits: AtomicU64::new(0),
             prev_drift_bits: AtomicU64::new(0),
+            prev_gain_cam_bits: AtomicU32::new(0),
+            prev_gain_ext_bits: AtomicU32::new(0),
             prev_flags: AtomicU8::new(0), // valid bit clear → no crossfade on first fill
         }
     }
@@ -202,6 +218,13 @@ impl AuditionStream {
         self.monitor.store(mode.as_u8(), Ordering::Release);
     }
 
+    /// Per-track monitor gains (volume; 0 = mute), multiplied onto the
+    /// loudness-matching gains. Takes effect on the next fill, click-free.
+    pub fn set_gains(&self, cam: f32, ext: f32) {
+        self.user_gain_cam_bits.store(cam.max(0.0).to_bits(), Ordering::Release);
+        self.user_gain_ext_bits.store(ext.max(0.0).to_bits(), Ordering::Release);
+    }
+
     fn current_params(&self) -> RenderParams {
         let mode_none = self.session.drift_mode() == DriftMode::None;
         RenderParams {
@@ -209,6 +232,8 @@ impl AuditionStream {
             drift_ppm: if mode_none { 0.0 } else { self.session.committed_drift_ppm() },
             integer_shift: mode_none,
             monitor: MonitorMode::from_u8(self.monitor.load(Ordering::Acquire)),
+            gain_cam: f32::from_bits(self.user_gain_cam_bits.load(Ordering::Acquire)),
+            gain_ext: f32::from_bits(self.user_gain_ext_bits.load(Ordering::Acquire)),
         }
     }
 
@@ -229,6 +254,8 @@ impl AuditionStream {
                 drift_ppm: f64::from_bits(self.prev_drift_bits.load(Ordering::Acquire)),
                 integer_shift: prev_flags & 0x04 != 0,
                 monitor: MonitorMode::from_u8(prev_flags & 0x03),
+                gain_cam: f32::from_bits(self.prev_gain_cam_bits.load(Ordering::Acquire)),
+                gain_ext: f32::from_bits(self.prev_gain_ext_bits.load(Ordering::Acquire)),
             };
             if prev != params && n > 0 {
                 let cf = CROSSFADE_SAMPLES.min(n);
@@ -244,6 +271,8 @@ impl AuditionStream {
         }
         self.prev_offset_bits.store(params.offset_ms.to_bits(), Ordering::Release);
         self.prev_drift_bits.store(params.drift_ppm.to_bits(), Ordering::Release);
+        self.prev_gain_cam_bits.store(params.gain_cam.to_bits(), Ordering::Release);
+        self.prev_gain_ext_bits.store(params.gain_ext.to_bits(), Ordering::Release);
         self.prev_flags.store(
             0x80 | params.monitor.as_u8() | if params.integer_shift { 0x04 } else { 0 },
             Ordering::Release,
@@ -270,6 +299,8 @@ impl AuditionStream {
         let off_samples = p.offset_ms / 1000.0 * sr;
         let int_shift = off_samples.round() as i64;
         let table = sinc_table();
+        let gc = self.g_cam * p.gain_cam;
+        let ge = self.g_ext * p.gain_ext;
 
         for i in 0..n {
             let frame = cursor + i as i64;
@@ -281,13 +312,13 @@ impl AuditionStream {
                 sinc_at(ext, frame as f64 * rate + off_samples, table)
             };
             let (l, r) = match p.monitor {
-                MonitorMode::PanLR => (self.g_cam * c, self.g_ext * e),
+                MonitorMode::PanLR => (gc * c, ge * e),
                 MonitorMode::Overlay => {
-                    let m = 0.5 * (self.g_cam * c + self.g_ext * e);
+                    let m = 0.5 * (gc * c + ge * e);
                     (m, m)
                 }
                 MonitorMode::Null => {
-                    let m = 0.5 * (self.g_cam * c - self.g_ext * e);
+                    let m = 0.5 * (gc * c - ge * e);
                     (m, m)
                 }
             };

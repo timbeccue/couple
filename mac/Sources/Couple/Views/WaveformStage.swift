@@ -20,6 +20,18 @@ extension PairSession {
 
 private let stagePad: CGFloat = 14
 
+// Overview strip vertical metrics: a badge gutter above the lanes keeps the
+// anchor pin heads out of the waveforms, and the tick row sits below the
+// lanes. Pin stems span the full strip so they meet the connector layer.
+private let badgeGutterH: CGFloat = 16
+private let tickRowH: CGFloat = 14
+private let overviewH: CGFloat = 112
+// Volume/mute column to the right of the lanes (own space, never overlapping
+// the waveforms). The connector layer subtracts the same reserve so pin x
+// positions stay aligned between the strip and the loupes.
+private let laneControlsW: CGFloat = 100
+private let laneControlsGap: CGFloat = 8
+
 struct WaveformStage: View {
     @Environment(AppModel.self) private var model
 
@@ -32,7 +44,7 @@ struct WaveformStage: View {
             : CGFloat(pair.anchors.count) * 116 + CGFloat(max(pair.anchors.count - 1, 0)) * 8
         VStack(spacing: 0) {
             OverviewStrip()
-                .frame(height: 96)
+                .frame(height: overviewH)
                 .padding(.horizontal, stagePad)
             if pair.loupeLayout == .grid {
                 ConnectorLayer()
@@ -58,14 +70,22 @@ struct OverviewStrip: View {
 
     var body: some View {
         GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                lanes(size: geo.size)
-                coarseDragSurface(size: geo.size)
-                pins(size: geo.size)
-                chips
-                laneLabels
+            let waveSize = CGSize(width: geo.size.width - laneControlsW - laneControlsGap,
+                                  height: geo.size.height)
+            HStack(spacing: laneControlsGap) {
+                ZStack(alignment: .topLeading) {
+                    lanes(size: waveSize)
+                    interactionSurface(size: waveSize)
+                    pins(size: waveSize)
+                    chips
+                    laneLabels
+                }
+                .coordinateSpace(name: "overview")
+                .frame(width: waveSize.width)
+                laneControlsColumn(height: geo.size.height)
+                    .frame(width: laneControlsW)
             }
-            .coordinateSpace(name: "overview")
+            .background(Theme.canvasBg)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
@@ -81,8 +101,7 @@ struct OverviewStrip: View {
             let domain = pair.stageDomain
             let d0 = domain.lowerBound
             let d1 = domain.upperBound
-            let tickH: CGFloat = 14
-            let waveH = sz.height - tickH
+            let waveH = sz.height - tickRowH - badgeGutterH
             let laneH = waveH / 2
             let cols = min(Int(sz.width), 2048)
             guard cols > 8 else { return }
@@ -92,46 +111,58 @@ struct OverviewStrip: View {
             if let ov = pair.overlap {
                 let x0 = CGFloat((ov.lowerBound - d0) / (d1 - d0)) * sz.width
                 let x1 = CGFloat((ov.upperBound - d0) / (d1 - d0)) * sz.width
-                ctx.fill(Path(CGRect(x: x0, y: 0, width: x1 - x0, height: waveH)),
+                ctx.fill(Path(CGRect(x: x0, y: badgeGutterH, width: x1 - x0, height: waveH)),
                          with: .color(.white.opacity(0.045)))
             }
 
             // Camera lane (top): band over the full domain; core zero-fills
-            // columns outside the track.
+            // columns outside the track. The monitor gain scales the lane so
+            // what you see tracks what you'd hear; mute dims it instead.
+            let audition = pair.audition
             if cam.band(t0: d0, t1: d1, nCols: cols, into: camBuf) {
                 drawLane(ctx, buf: camBuf, cols: cols, colW: colW,
-                         midY: laneH / 2, halfH: laneH / 2 - 3,
-                         gain: 1.44 / max(cam.meta.stats.activeP959600, 1e-6),
+                         midY: badgeGutterH + laneH / 2, halfH: laneH / 2 - 3,
+                         gain: 1.44 / max(cam.meta.stats.activeP959600, 1e-6) * audition.camGain,
                          normalization: cam.meta.normalization,
-                         color: Theme.camera)
+                         color: Theme.camera, dimmed: audition.camMuted)
             }
             // External lane (bottom): drawn through the current mapping — the
             // u-range is affine in t, so one band query stays column-aligned.
             let mapping = pair.mapping
             if ext.band(t0: mapping.u(d0), t1: mapping.u(d1), nCols: cols, into: extBuf) {
                 drawLane(ctx, buf: extBuf, cols: cols, colW: colW,
-                         midY: laneH + laneH / 2, halfH: laneH / 2 - 3,
-                         gain: 1.44 / max(ext.meta.stats.activeP959600, 1e-6),
+                         midY: badgeGutterH + laneH + laneH / 2, halfH: laneH / 2 - 3,
+                         gain: 1.44 / max(ext.meta.stats.activeP959600, 1e-6) * audition.extGain,
                          normalization: ext.meta.normalization,
-                         color: Theme.external)
+                         color: Theme.external, dimmed: audition.extMuted)
             }
 
-            drawTicks(ctx, size: sz, d0: d0, d1: d1, y: waveH, h: tickH)
+            drawTicks(ctx, size: sz, d0: d0, d1: d1, y: badgeGutterH + waveH, h: tickRowH)
 
-            // Playhead during audition (UX §1.6).
-            if pair.audition.isPlaying {
-                let x = CGFloat((pair.audition.playheadT - d0) / (d1 - d0)) * sz.width
+            // Playhead (UX §1.6): always visible once a session exists —
+            // bright while playing/scrubbing, grey when parked. Dragging is
+            // handled by playheadDragLayer.
+            if pair.session != nil {
+                let x = CGFloat((audition.playheadT - d0) / (d1 - d0)) * sz.width
+                let active = audition.isPlaying || audition.isScrubbing
                 var line = Path()
-                line.move(to: CGPoint(x: x, y: 0))
-                line.addLine(to: CGPoint(x: x, y: waveH))
-                ctx.stroke(line, with: .color(.white.opacity(0.85)), lineWidth: 1)
+                line.move(to: CGPoint(x: x, y: badgeGutterH))
+                line.addLine(to: CGPoint(x: x, y: badgeGutterH + waveH))
+                ctx.stroke(line, with: .color(.white.opacity(active ? 0.85 : 0.5)),
+                           lineWidth: active ? 1 : 1.5)
+                var knob = Path() // grab handle at the gutter edge
+                knob.move(to: CGPoint(x: x - 4, y: badgeGutterH - 6))
+                knob.addLine(to: CGPoint(x: x + 4, y: badgeGutterH - 6))
+                knob.addLine(to: CGPoint(x: x, y: badgeGutterH + 2))
+                knob.closeSubpath()
+                ctx.fill(knob, with: .color(.white.opacity(active ? 0.85 : 0.55)))
             }
         }
     }
 
     private func drawLane(_ ctx: GraphicsContext, buf: BandBuffer, cols: Int, colW: CGFloat,
                           midY: CGFloat, halfH: CGFloat, gain: Double, normalization: Double,
-                          color: Color) {
+                          color: Color, dimmed: Bool = false) {
         var path = Path()
         // The UX §4.1 gain applies to envelope *spans*; min/max amplitudes are
         // half a span, hence gain/2 (typical loud content ≈ 72% of lane height).
@@ -145,7 +176,7 @@ struct OverviewStrip: View {
             path.addRect(CGRect(x: CGFloat(i) * colW, y: yTop,
                                 width: colW, height: max(yBot - yTop, 0.7)))
         }
-        ctx.fill(path, with: .color(color.opacity(0.85)))
+        ctx.fill(path, with: .color(color.opacity(dimmed ? 0.25 : 0.85)))
     }
 
     private func drawTicks(_ ctx: GraphicsContext, size: CGSize, d0: Double, d1: Double,
@@ -172,46 +203,86 @@ struct OverviewStrip: View {
         ctx.stroke(ticks, with: .color(Theme.textTertiary.opacity(0.6)), lineWidth: 1)
     }
 
-    /// Coarse offset drag on the external lane — lower half of the strip
-    /// (UX §2.4, the ballpark/rescue gesture). Seconds-per-pixel scale.
-    private func coarseDragSurface(size: CGSize) -> some View {
+    private enum OverviewDrag {
+        case scrub, coarseOffset
+    }
+
+    @State private var dragMode: OverviewDrag?
+    @State private var lastCoarse: CGFloat = 0
+
+    /// One surface for the whole strip: click or drag anywhere moves the
+    /// playhead there (audio + video follow, even while paused). ⌥-drag on
+    /// the external lane keeps the coarse offset gesture (UX §2.4, the
+    /// ballpark/rescue move). Anchor pins sit above this surface, so dragging
+    /// a pin never scrubs. The mode latches at drag start.
+    private func interactionSurface(size: CGSize) -> some View {
         let pair = model.pair
-        let waveH = size.height - 14
         return Color.clear
             .contentShape(Rectangle())
-            .frame(height: waveH / 2)
-            .offset(y: waveH / 2)
+            .frame(width: size.width, height: size.height)
             .gesture(
-                DragGesture(minimumDistance: 1)
+                DragGesture(minimumDistance: 0, coordinateSpace: .named("overview"))
                     .onChanged { g in
-                        guard pair.inputsEnabled else { return }
                         let domain = pair.stageDomain
-                        let msPerPx = (domain.upperBound - domain.lowerBound) / size.width * 1000
-                        let dx = g.translation.width - lastCoarse
-                        lastCoarse = g.translation.width
-                        // Content follows the pointer.
-                        pair.setOffsetLive(pair.offsetMs - dx * msPerPx)
+                        let span = domain.upperBound - domain.lowerBound
+                        if dragMode == nil {
+                            let waveH = size.height - tickRowH - badgeGutterH
+                            let inExternalLane = g.startLocation.y > badgeGutterH + waveH / 2
+                                && g.startLocation.y < badgeGutterH + waveH
+                            let option = NSEvent.modifierFlags.contains(.option)
+                            dragMode = option && inExternalLane && pair.inputsEnabled
+                                ? .coarseOffset : .scrub
+                        }
+                        switch dragMode {
+                        case .coarseOffset:
+                            let msPerPx = span / size.width * 1000
+                            let dx = g.translation.width - lastCoarse
+                            lastCoarse = g.translation.width
+                            // Content follows the pointer.
+                            pair.setOffsetLive(pair.offsetMs - dx * msPerPx)
+                        case .scrub:
+                            guard pair.session != nil else { return }
+                            pair.audition.isScrubbing = true
+                            let frac = Double(g.location.x / size.width)
+                            pair.audition.seek(to: domain.lowerBound + frac * span)
+                        case nil:
+                            break
+                        }
                     }
                     .onEnded { _ in
+                        dragMode = nil
                         lastCoarse = 0
+                        model.pair.audition.isScrubbing = false
                     }
             )
     }
 
-    @State private var lastCoarse: CGFloat = 0
+    /// Per-lane monitor volume + mute in their own column beside the lanes.
+    /// The slider scales both the audio (core gains) and the drawn waveform.
+    private func laneControlsColumn(height: CGFloat) -> some View {
+        let waveH = height - tickRowH - badgeGutterH
+        return VStack(spacing: 0) {
+            Spacer().frame(height: badgeGutterH)
+            LaneAudioControls(lane: .camera)
+                .frame(height: waveH / 2)
+            LaneAudioControls(lane: .external)
+                .frame(height: waveH / 2)
+            Spacer(minLength: 0)
+        }
+        .opacity(model.pair.session == nil ? 0 : 1)
+    }
 
     private func pins(size: CGSize) -> some View {
         let pair = model.pair
         let domain = pair.stageDomain
         let span = domain.upperBound - domain.lowerBound
-        let waveH = size.height - 14
         return ForEach(pair.anchors.indices, id: \.self) { i in
             let x = CGFloat((pair.anchors[i] - domain.lowerBound) / span) * size.width
             AnchorPin(index: i,
                       color: Theme.anchorColors[i % 4],
-                      stemHeight: waveH,
+                      height: size.height,
                       secondsPerPoint: span / size.width)
-                .position(x: x, y: waveH / 2)
+                .position(x: x, y: size.height / 2)
         }
     }
 
@@ -277,8 +348,9 @@ struct OverviewStrip: View {
     }
 
     private var laneLabels: some View {
-        let waveH: CGFloat = 96 - 14
+        let waveH: CGFloat = overviewH - tickRowH - badgeGutterH
         return VStack(alignment: .leading, spacing: 0) {
+            Spacer().frame(height: badgeGutterH)
             Text("V · CAMERA")
                 .font(.system(size: 8, weight: .bold, design: .monospaced))
                 .foregroundStyle(Theme.camera.opacity(0.7))
@@ -294,11 +366,45 @@ struct OverviewStrip: View {
     }
 }
 
+private struct LaneAudioControls: View {
+    @Environment(AppModel.self) private var model
+    let lane: SlotKind
+
+    var body: some View {
+        let audition = model.pair.audition
+        @Bindable var a = audition
+        let muted = lane == .camera ? audition.camMuted : audition.extMuted
+        let tint = lane == .camera ? Theme.camera : Theme.external
+        HStack(spacing: 6) {
+            Button {
+                if lane == .camera {
+                    audition.camMuted.toggle()
+                } else {
+                    audition.extMuted.toggle()
+                }
+            } label: {
+                Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(muted ? Theme.textTertiary : tint)
+                    .frame(width: 14)
+            }
+            .buttonStyle(.plain)
+            .help(muted ? "Unmute" : "Mute")
+            Slider(value: lane == .camera ? $a.camGain : $a.extGain, in: 0...2)
+                .controlSize(.mini)
+                .frame(width: 68)
+                .tint(tint.opacity(0.8))
+                .disabled(muted)
+                .help("Monitor volume (waveform scales to match)")
+        }
+    }
+}
+
 private struct AnchorPin: View {
     @Environment(AppModel.self) private var model
     let index: Int
     let color: Color
-    let stemHeight: CGFloat
+    let height: CGFloat
     let secondsPerPoint: Double
 
     @State private var lastDragX: CGFloat = 0
@@ -328,21 +434,20 @@ private struct AnchorPin: View {
     }
 
     private var pinBody: some View {
-        ZStack {
+        // Badge in the gutter, stem running through the lanes and tick row to
+        // the strip's bottom edge, where the connector layer picks it up.
+        VStack(spacing: 0) {
+            Text("\(index + 1)")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.black.opacity(0.8))
+                .frame(width: 14, height: 14)
+                .background(color, in: RoundedRectangle(cornerRadius: 3))
             Rectangle()
                 .fill(color.opacity(0.8))
-                .frame(width: 1.5, height: stemHeight)
-            VStack {
-                Text("\(index + 1)")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.black.opacity(0.8))
-                    .frame(width: 14, height: 14)
-                    .background(color, in: RoundedRectangle(cornerRadius: 3))
-                Spacer()
-            }
-            .frame(height: stemHeight)
+                .frame(width: 1.5)
+                .frame(maxHeight: .infinity)
         }
-        .frame(width: 16) // generous hit target
+        .frame(width: 16, height: height) // generous hit target
         .contentShape(Rectangle())
     }
 }
@@ -361,8 +466,10 @@ struct ConnectorLayer: View {
             let n = pair.anchors.count
             let spacing: CGFloat = 8
             let loupeW = (size.width - CGFloat(n - 1) * spacing) / CGFloat(n)
+            // Pin x lives in the lane area, which stops short of the volume column.
+            let laneW = size.width - laneControlsW - laneControlsGap
             for i in 0..<n {
-                let xPin = CGFloat((pair.anchors[i] - domain.lowerBound) / span) * size.width
+                let xPin = CGFloat((pair.anchors[i] - domain.lowerBound) / span) * laneW
                 let xLoupe = CGFloat(i) * (loupeW + spacing) + loupeW / 2
                 var path = Path()
                 path.move(to: CGPoint(x: xPin, y: 0))

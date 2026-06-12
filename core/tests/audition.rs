@@ -151,6 +151,25 @@ fn matrices_offsets_end_and_crossfade() {
     assert!(tail == 0.0, "past the crossfade, null of identical content is zero");
     ctx.audition_close(st4);
 
+    // --- User gains: pan with (2.0, 0.5) on identical content ⇒ L = 4·R once
+    // the gain crossfade settles; (0, 1) mutes the camera leg exactly.
+    let stg = ctx.audition_open(r.session, MonitorMode::PanLR, 5.0).unwrap();
+    ctx.audition_stream(stg).unwrap().set_gains(2.0, 0.5);
+    let _ = fill(ctx, stg, 512); // absorb the gain crossfade
+    let (out, _) = fill(ctx, stg, 2400);
+    for i in 0..2400 {
+        assert!(
+            (out[2 * i] - 4.0 * out[2 * i + 1]).abs() < 1e-5,
+            "gains (2.0, 0.5) on identical content ⇒ L = 4·R at sample {i}"
+        );
+    }
+    ctx.audition_stream(stg).unwrap().set_gains(0.0, 1.0);
+    let _ = fill(ctx, stg, 512);
+    let (out, _) = fill(ctx, stg, 2400);
+    assert!(out.iter().step_by(2).all(|&v| v == 0.0), "muted camera leg must be exact zero");
+    assert!(out.iter().skip(1).step_by(2).any(|&v| v != 0.0), "ext leg must stay audible");
+    ctx.audition_close(stg);
+
     // --- End of video: short fill + zeros, then 0 frames.
     let dur = cam.meta.duration_s;
     let st5 = ctx.audition_open(r.session, MonitorMode::Overlay, dur - 0.01).unwrap();

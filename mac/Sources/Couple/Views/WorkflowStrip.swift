@@ -1,8 +1,9 @@
 // Workflow strip: four uniform-height panels — Input | Video preview |
 // Controls | Export — running from the window top down to the waveforms.
-// This band (not the stage) absorbs extra window height, with the video
-// preview growing to use it (owner redesign 2026-06-12, supersedes the
-// UX §1.2 stage-greedy policy; SPEC-CHANGE logged in PROGRESS.md).
+// This band (not the stage) absorbs extra window size, with the video
+// preview growing to use both the extra width and height (owner redesign
+// 2026-06-12, supersedes the UX §1.2 stage-greedy policy; SPEC-CHANGE
+// logged in PROGRESS.md).
 
 import AVFoundation
 import CoupleKit
@@ -10,34 +11,18 @@ import SwiftUI
 
 struct WorkflowStrip: View {
     var body: some View {
-        GeometryReader { geo in
-            HStack(alignment: .top, spacing: 10) {
-                InputPanel()
-                    .frame(width: 222)
-                VideoPreviewPanel()
-                    .frame(width: previewWidth(for: geo.size))
-                ControlsPanel()
-                    .frame(minWidth: 380, maxWidth: .infinity)
-                ExportPanel()
-                    .frame(width: 240)
-            }
-            .frame(maxWidth: 1340)
-            .frame(maxWidth: .infinity)
-            .frame(height: geo.size.height)
+        HStack(alignment: .top, spacing: 10) {
+            InputPanel()
+                .frame(width: 222)
+            VideoPreviewPanel() // flexible column: absorbs extra width
+            ControlsPanel()
+                .frame(width: 400)
+            ExportPanel()
+                .frame(width: 240)
         }
         .padding(.horizontal, 14)
         .padding(.top, 26) // traffic-light clearance (hidden title bar)
         .padding(.bottom, 8)
-    }
-
-    /// 16:9 preview width derived from the strip height — extra window height
-    /// goes primarily to the video preview — but never so wide that the other
-    /// panels fall below their minimums.
-    private func previewWidth(for size: CGSize) -> CGFloat {
-        let byHeight: CGFloat = (size.height - 52) * 16 / 9
-        let otherPanels: CGFloat = 222 + 380 + 240 + 30
-        let byWidth: CGFloat = min(size.width, 1340) - otherPanels
-        return min(max(min(byHeight, byWidth), 220), 560)
     }
 }
 
@@ -128,8 +113,8 @@ struct VideoPreviewPanel: View {
         let pair = model.pair
         let audition = pair.audition
         VStack(spacing: 8) {
+            // Fills the panel; the layer letterboxes the video inside it.
             PlayerLayerView(player: audition.player)
-                .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.canvasBg, in: RoundedRectangle(cornerRadius: 6))
                 .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -170,6 +155,18 @@ struct VideoPreviewPanel: View {
                     .buttonStyle(.plain)
                     .help("Play from anchor \(i + 1) (−0.8 s)")
                 }
+                Button {
+                    VideoFullscreen.shared.toggle(player: audition.player)
+                } label: {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 22, height: 18)
+                        .background(Theme.chipBg, in: RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+                .disabled(pair.session == nil)
+                .help("Fullscreen video (esc or double-click exits)")
             }
 
             Picker("", selection: Binding(
@@ -183,7 +180,7 @@ struct VideoPreviewPanel: View {
             .pickerStyle(.segmented)
             .controlSize(.small)
             .disabled(pair.session == nil)
-            .help("Null: tune for minimum residual — with different mics it's a relative dip, never silence")
+            .help("Pan L/R: camera left, external right · Overlay: both mixed — per-track volume/mute lives on the waveform lanes")
         }
         .frame(maxHeight: .infinity)
         .panel()
@@ -225,6 +222,85 @@ private struct PlayerLayerView: NSViewRepresentable {
         required init?(coder: NSCoder) {
             fatalError()
         }
+    }
+}
+
+// MARK: - Fullscreen video
+
+/// Presents the audition player in a borderless screen-filling window (the
+/// same AVPlayer drives both layers, so playback state is shared). Esc or
+/// double-click dismisses.
+@MainActor
+final class VideoFullscreen {
+    static let shared = VideoFullscreen()
+    private var window: FullscreenVideoWindow?
+
+    func toggle(player: AVPlayer) {
+        if window != nil {
+            close()
+        } else {
+            open(player)
+        }
+    }
+
+    private func open(_ player: AVPlayer) {
+        guard let screen = NSApp.keyWindow?.screen ?? NSScreen.main else { return }
+        let w = FullscreenVideoWindow(contentRect: screen.frame,
+                                      styleMask: .borderless,
+                                      backing: .buffered,
+                                      defer: false)
+        w.isReleasedWhenClosed = false
+        w.backgroundColor = .black
+        w.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 1)
+        w.collectionBehavior = [.fullScreenAuxiliary, .transient]
+        w.onDismiss = { [weak self] in self?.close() }
+        w.contentView = NSHostingView(rootView: FullscreenVideoSurface(player: player))
+        NSApp.presentationOptions = [.autoHideMenuBar, .autoHideDock]
+        w.makeKeyAndOrderFront(nil)
+        window = w
+    }
+
+    private func close() {
+        NSApp.presentationOptions = []
+        window?.orderOut(nil)
+        window = nil
+    }
+}
+
+private final class FullscreenVideoWindow: NSWindow {
+    var onDismiss: (() -> Void)?
+
+    override var canBecomeKey: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { // esc
+            onDismiss?()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            onDismiss?()
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+}
+
+private struct FullscreenVideoSurface: View {
+    let player: AVPlayer
+
+    var body: some View {
+        PlayerLayerView(player: player)
+            .ignoresSafeArea()
+            .overlay(alignment: .bottomTrailing) {
+                Text("esc exits")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.25))
+                    .padding(12)
+            }
     }
 }
 

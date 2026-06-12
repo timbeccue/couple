@@ -252,11 +252,15 @@ final class DebugDrive {
         // §11.4 acceptance is SUSTAINED skew ≤ 1 frame; evaluate the tail
         // after the startup transient has converged.
         skews = Array(skews.suffix(8))
-        // Mode switches mid-playback must not stall the stream.
+        // Mode/gain switches mid-playback must not stall the stream.
         pair.audition.monitorMode = .pan
         try? await Task.sleep(nanoseconds: 700_000_000)
-        pair.audition.monitorMode = .null
+        pair.audition.monitorMode = .overlay
+        pair.audition.camGain = 1.5
+        pair.audition.extMuted = true
         try? await Task.sleep(nanoseconds: 700_000_000)
+        pair.audition.camGain = 1.0
+        pair.audition.extMuted = false
         let advancing = zip(playheads, playheads.dropFirst()).allSatisfy { $1 > $0 }
         let endT = pair.audition.playheadT
         pair.audition.pause()

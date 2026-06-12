@@ -387,3 +387,43 @@ Owner items for the live walkthrough: listen to the three monitor modes
 stand. v1 feature work is complete pending that walkthrough — next session is
 Phase 7 (v2 queue) per §12, plus the LGPL ffmpeg pin + notarization for
 distribution.
+
+## 2026-06-12 — Session E, shell UI fixes (owner review feedback)
+
+- Overview strip gains a 16 pt badge gutter above the lanes (strip 96 → 112 pt):
+  anchor pin badges sit in the gutter instead of sinking into the camera
+  waveform, and pin stems now run through the tick row to the strip's bottom
+  edge, so they meet the loupe connector curves (the tick row had left a 14 pt
+  gap). Lanes, ticks, playhead, labels, and the coarse-drag surface all shift
+  down by the gutter; lane geometry is otherwise unchanged.
+- SPEC-CHANGE (owner): workflow strip absorbs extra *width* as well as height —
+  the 1340 pt strip cap and the 560 pt preview width cap are gone. The video
+  preview is the flexible column (Input 222 / Controls 400 / Export 240 stay
+  fixed) and the player surface fills its panel (the AVPlayerLayer letterboxes
+  internally), so a larger window means a larger video, not wider margins.
+- Fullscreen video: new ⤢ button in the transport row opens the audition
+  player in a borderless screen-filling window (same AVPlayer drives a second
+  AVPlayerLayer, so playback/monitor state is shared); esc or double-click
+  exits, menu bar and Dock auto-hide while open.
+- SPEC-CHANGE (owner): Null monitor mode dropped from the shell — the picker
+  is Pan L/R · Overlay. The core keeps mode 2 as the exact-cancellation
+  oracle for the §4.8 precision tests; it's just not reachable from the UI.
+- Per-track monitor volume + mute (owner request): new core user gains on the
+  audition stream (`cpl_audition_set_gains`, multiplied onto the loudness-
+  matching gains, click-free via the existing 5 ms params crossfade; covered
+  in `core/tests/audition.rs`). The lanes give up a 100 pt column on the
+  right where each lane gets a mute button + 0–2× volume slider — own space,
+  never overlapping the waveforms (owner). The slider also scales that lane's
+  drawn waveform so the picture tracks the ear, and mute dims the lane.
+  Gains apply in both Pan L/R and Overlay. The connector layer subtracts the
+  same reserve so pin positions stay aligned with the loupes.
+- Playhead is now a first-class scrubber: visible whenever a session exists
+  (grey when parked, bright while playing), and click or drag anywhere on the
+  overview strip moves it there (owner) — audio + video together, including
+  while paused, where it moves the shown frame (video seeks are coalesced so
+  the frame keeps up with the pointer). Anchor pins sit above the scrub
+  surface, so dragging a pin never moves the playhead. First play starts from
+  a user-parked playhead instead of the anchor default.
+- SPEC-CHANGE (owner, implied): the UX §2.4 coarse offset drag moved from
+  plain drag on the external lane to ⌥-drag (plain drag now scrubs). Same
+  gesture and scale otherwise; still gated on inputsEnabled.

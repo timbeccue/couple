@@ -58,6 +58,17 @@ final class AuditionController {
         didSet { stream?.setMode(monitorMode) }
     }
 
+    // Per-track monitor volume/mute (UX: lane controls next to the overview
+    // waveforms). Mute sends gain 0 to the core; the slider value survives.
+    var camGain: Double = 1 { didSet { pushGains() } }
+    var extGain: Double = 1 { didSet { pushGains() } }
+    var camMuted = false { didSet { pushGains() } }
+    var extMuted = false { didSet { pushGains() } }
+
+    /// True while the user drags the playhead; the UI tick stops overwriting
+    /// `playheadT` from the render thread so the bar tracks the pointer.
+    var isScrubbing = false
+
     @ObservationIgnored private var session: SessionHandle?
     @ObservationIgnored private var stream: AuditionHandle?
     @ObservationIgnored private var audioEngine: AVAudioEngine?
@@ -73,10 +84,16 @@ final class AuditionController {
         teardown()
         self.session = session
         self.videoDuration = videoDuration
+        camGain = 1
+        extGain = 1
+        camMuted = false
+        extMuted = false
+        hasUserSeek = false
         let item = AVPlayerItem(url: videoURL)
         player.replaceCurrentItem(with: item)
         player.isMuted = true
-        // Poster frame.
+        // Poster frame; the playhead starts where the poster sits.
+        playheadT = 1.0
         player.seek(to: CMTime(seconds: 1.0, preferredTimescale: 48000),
                     toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
     }
@@ -103,10 +120,16 @@ final class AuditionController {
     func toggle(defaultStart: Double) {
         if isPlaying {
             pause()
+        } else if stream == nil {
+            // First play: from the playhead if the user parked it somewhere,
+            // else the default (first anchor − 0.8 s).
+            play(from: hasUserSeek ? playheadT : defaultStart)
         } else {
-            play(from: stream == nil ? defaultStart : nil)
+            play(from: nil)
         }
     }
+
+    @ObservationIgnored private var hasUserSeek = false
 
     /// Start playback; `from` nil resumes at the stream cursor. The engine
     /// bring-up is asynchronous with a timeout: a wedged audio HAL (locked
@@ -137,6 +160,7 @@ final class AuditionController {
                 return
             }
             stream = opened
+            pushGains() // streams open at unity; re-apply the lane settings
             playheadT = tStart
         } else if let t {
             stream?.seek(to: t)
@@ -271,19 +295,48 @@ final class AuditionController {
         }
         let clamped = max(0, min(t, videoDuration))
         playheadT = clamped
+        hasUserSeek = true
         if stream == nil {
             if isPlaying {
                 return
             }
             // Not opened yet: just move the video poster.
-            player.seek(to: CMTime(seconds: clamped, preferredTimescale: 48000),
-                        toleranceBefore: .zero, toleranceAfter: .zero)
+            seekVideo(to: clamped)
             return
         }
         stream?.seek(to: clamped)
         mailbox.store(clamped)
-        player.seek(to: CMTime(seconds: clamped, preferredTimescale: 48000),
-                    toleranceBefore: .zero, toleranceAfter: .zero)
+        seekVideo(to: clamped)
+    }
+
+    private func pushGains() {
+        stream?.setGains(cam: Float(camMuted ? 0 : camGain),
+                         ext: Float(extMuted ? 0 : extGain))
+    }
+
+    /// Coalesced exact video seek: scrubbing fires many seeks per second, and
+    /// queueing them all makes AVPlayer lag the pointer — keep one in flight
+    /// and remember only the latest target.
+    @ObservationIgnored private var videoSeekInFlight = false
+    @ObservationIgnored private var pendingVideoSeekT: Double?
+
+    private func seekVideo(to t: Double) {
+        guard !videoSeekInFlight else {
+            pendingVideoSeekT = t
+            return
+        }
+        videoSeekInFlight = true
+        player.seek(to: CMTime(seconds: t, preferredTimescale: 48000),
+                    toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.videoSeekInFlight = false
+                if let next = self.pendingVideoSeekT {
+                    self.pendingVideoSeekT = nil
+                    self.seekVideo(to: next)
+                }
+            }
+        }
     }
 
     /// Jump button: anchor − 0.8 s and play (UX §1.4).
@@ -317,7 +370,9 @@ final class AuditionController {
 
     private func tick() {
         guard isPlaying else { return }
-        playheadT = mailbox.value
+        if !isScrubbing {
+            playheadT = mailbox.value
+        }
         if mailbox.ended {
             pause()
             return

@@ -8,7 +8,11 @@ import Foundation
 public enum MonitorMode: Int32, CaseIterable, Sendable {
     case pan = 0
     case overlay = 1
+    /// Difference monitor (cam − ext): exact-cancellation test oracle only —
+    /// excluded from `allCases` so the UI never offers it.
     case null = 2
+
+    public static var allCases: [MonitorMode] { [.pan, .overlay] }
 
     public var label: String {
         switch self {
@@ -47,6 +51,12 @@ public final class AuditionHandle: @unchecked Sendable {
 
     public func setMode(_ mode: MonitorMode) {
         _ = cpl_audition_set_mode(rawCtx, id, mode.rawValue)
+    }
+
+    /// Per-track monitor gains (1 = unity, 0 = mute), on top of the core's
+    /// loudness matching. Click-free.
+    public func setGains(cam: Float, ext: Float) {
+        _ = cpl_audition_set_gains(rawCtx, id, cam, ext)
     }
 
     public func close() {
