@@ -341,18 +341,42 @@ Phase numbering continues v1's (Phases 1–6 complete).
 
 ---
 
-## 11. Open owner decisions (to be settled in/after the Session G mockup)
+## 11. Open owner decisions — SETTLED at Session G convergence (2026-06-12)
 
-1. Offset/drift readouts: on-demand disclosure (spec recommendation) vs gone
-   entirely. The rescue flow must exist either way (V1 editor retains them when
-   opened? disclosure on the row? — mockup decides the surface).
-2. Loupe presentation as on-demand mode: what summons them (chip click, key,
-   editor open?) and what the default editor view shows instead.
-3. Row chip vocabulary and the triage bar (sort by needs-attention?).
-4. Whether `v` (verify-and-advance) requires the row to have been auditioned at
-   least once, or trusts the chip alone.
-5. Export naming template: `<stem>_synced.<ext>` default — configurable or fixed?
-6. Manual re-pair gesture.
+All six were resolved in/after the converged Session G mockup. Full behavior is
+in UX-DECISIONS.md Part V2; dispositions below. (DECIDED by owner unless noted.)
+
+1. **Offset/drift readouts → on-demand disclosure (option A).** The numeric
+   readouts + nudge buttons appear when the persistent bottom bar's "sync tools"
+   is expanded; one level, not a nested sub-disclosure. Never deleted — they are
+   the manual-rescue surface. Option B ("gone entirely") rejected.
+   (UX-DECISIONS-V2 §V2.4.)
+2. **Loupes → on-demand, summoned by the "loupes" toggle / `l` / clicking the
+   fit-status line / clicking an anchor pin** (which focuses that anchor's
+   loupe). Default view = video + overview + drift-fit sparkline, no loupes.
+   (§V2.4.)
+3. **Chip vocabulary → the verdict model**: a single status dot good/questionable/
+   none (green/red/grey) + an action word only when needed. **The triage bar is
+   replaced by three live workflow sections** (QUEUED FOR EXPORT / TO APPROVE /
+   TO FIX), not a sort control. (§V2.2–V2.3.)
+4. **`v` does NOT require a prior audition.** The verdict is trustworthy on its
+   own; uncertain couples already float to TO FIX. (§V2.5.)
+5. **Naming template is editable** (default `<video-stem>_synced.<ext>`), with a
+   per-couple filename override (stem only; extension owned by the format
+   selector). Configurable, not fixed. (§V2.8.)
+6. **Manual re-pair gesture → drag an audio file from the media pool (or pick
+   from the candidate list) onto a couple.** Below-floor pairings are kept and
+   marked "forced". (§V2.6.)
+
+Additional decisions taken at convergence (beyond the six listed): "couple" as
+the user-facing noun; "Approve" as the verb for verify≡queue; the persistent
+bottom tool bar; drag-resizable side rails; the media pool generalizing the
+unused tray with usage indicators + audio preview; the v1 format selector
+(Auto/MOV/MP4/WAV + keep-camera-audio) carried over with per-couple override;
+export size/resolution targeting deferred to its own post-Session-H phase. The
+verdict good/questionable thresholds ship [TUNE] pending owner-corpus
+calibration (real true-pair fit RMS ~5 ms breaks v1's thresholds — V2-F2, now
+with real numbers).
 
 ---
 
@@ -437,4 +461,87 @@ convergence: write the UX-DECISIONS-V2 behavior section (append to
 UX-DECISIONS.md as a clearly-marked v2 part, same DECIDED/owner-decision
 format), update SPEC-V2 §11 dispositions, and add a dated PROGRESS.md entry.
 The Session H (shell) kickoff prompt gets written then, not before.
+```
+
+### Session H (queue-centric shell, Phase 9) — written at Session G convergence
+
+```
+You are implementing Phase 9 of Couple — the v2 queue-centric SwiftUI shell.
+Phases 1–8 are complete: v1 ships, the Phase-7 pairing core is in (couple pair/
+correlate/candidates), and the Session-G mockup has CONVERGED. Nothing you do
+may change v1 engine behavior, the existing ABI symbols, the frozen real-pair
+regression values, or the Phase-7 pairing results.
+
+Read first, in this order:
+  1. UX-DECISIONS.md PART V2 — the binding behavior spec for this work. It is
+     the authority; where it is silent on a v1-unchanged behavior, Part v1
+     governs (it says which). Read Part v1 §2 (editor interaction), §2.7
+     (audition), §2.8 (export) — the drill-down editor is v1, intact.
+  2. SPEC-V2.md §4 (the core you call), §5 (shell architecture deltas: media
+     pool, queue model, audition lifecycle, persistence), §6 (batch export),
+     §7 (the per-row export-hash + j/k/v/Enter event gates), §10 (flags),
+     §11 (settled dispositions).
+  3. design/mockups-v2/ — the converged reference design. README.md lists the
+     settled intent and the deliberately-deferred cosmetic items. index.html is
+     the interaction reference (run it: python3 -m http.server, then open it);
+     it is structural/behavioral reference, NOT a visual contract (same rule as
+     design/mockups/ for v1 — you have creative license on pixels, none on
+     behavior; a behavior departure is a SPEC-CHANGE).
+  4. PROGRESS.md — the Session D/E owner SPEC-CHANGEs (no anchor snap, content-
+     relative arrows, sync-never-disturbs-a-seen-view, uniform panels, raw-
+     sample loupes, ⌥ coarse drag) and the 2026-06-12 Session G entry. Project
+     memory carries the owner's standing UX prefs — honor them.
+
+Scope, strictly (SPEC-V2 §5, §8 Phase 9):
+  - Media-pool refactor (§5.1): a session-level pool owns probe/import and holds
+    TrackHandles by content key; PairSession gains a two-handles init path. The
+    v1 single-drop path still behaves exactly like v1 (one couple, auto-paired,
+    opened). This is the one real refactor — budget for it.
+  - Queue model (§5.2): AppModel becomes a couple list + selection; each couple
+    owns its PairSession (alignment shadow, view state, export options, sync
+    jobs). Per-couple sync runs in a serialized background queue; verdict dots
+    update progressively. Resolution (coverage, triangle, margin, states) is the
+    Phase-7 CLI logic, lifted into the shell so the user can override it.
+  - Audition lifecycle (§5.3): one AVAudioEngine / one output / one fullscreen
+    window across N couples; the detach/attach/swap protocol with exactly one
+    audition handle open at a time. (Phase-6 history: the audio graph is where
+    surprises live.)
+  - The shell per UX-DECISIONS-V2: three-column layout, workflow sections,
+    verdict dots, persistent bottom tool bar (§11.1=A on-demand readouts;
+    loupes on-demand per §11.2), Approve≡queue (clickable 3 ways; no audition
+    gate per §11.4), candidates-never-destroyed + pinning, media pool with
+    usage indicators + audio preview, drag-resizable rails, the v1 editor as
+    the drill-down. "Couple"/"Approve" vocabulary.
+  - Batch export UI (§6): destination, editable naming template + per-couple
+    stem override, format selector (Auto/MOV/MP4/WAV + keep-camera-audio) with
+    per-couple override, disk preflight, serial jobs, per-row status,
+    continue-past-failure.
+  - Persistence (§5.4): the new versioned session file (couple-queue/1) beside
+    the unchanged per-pair autosave; restore the whole queue on reopen.
+
+Out of scope — do not start: export size/resolution targeting (its own later
+phase, SPEC-CHANGE territory); any change to sync/export/audition engine math;
+new ABI symbols (the shell uses cpl_pair_* and the existing v1/Phase-6 surface).
+Cosmetic polish from the mockup is app-side and owner-reviewed live, not a gate.
+
+Hard rules:
+  - UX-DECISIONS-V2 is binding behavior; v1 Part governs anything it doesn't
+    change. A behavior departure is a SPEC-CHANGE in PROGRESS.md.
+  - Aspect ratio inviolable: the video letterboxes, never distorts.
+  - Sync never re-proposes anchors or re-frames a view the user has seen
+    (Session-D rule); auto-sync is ambient, "re-sync" is the manual re-run.
+  - Never confident-and-wrong: ambiguous/no-match couples carry no selection;
+    below-floor manual pairings are kept but marked "forced".
+  - Verdict good/questionable thresholds are [TUNE] — surface the raw fit/z so
+    the owner can calibrate on real sessions (v1's RMS thresholds DO NOT
+    transfer; real true-pairs run ~5 ms — V2-F2/§V2.9).
+
+Finish line (SPEC-V2 §7 shell-phase gates):
+  - The per-couple export is BYTE-IDENTICAL to the Phase-4 CLI export for the
+    same state — the Phase-6 hash keystone, now asserted across a batch.
+  - The §2.9 event tests extend to j/k/v/Enter over the queue.
+  - couple pair on the owner's multifile-session and the canonical real pair
+    reproduce in the shell what the CLI/mockup show (same couples, states,
+    selections, unused pool). Report the batch-export hashes and the resolved
+    queue in your final summary.
 ```

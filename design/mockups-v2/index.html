@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Couple v2 — queue-centric mockup (Session G, round 2 — real session)</title>
+<style>
+  :root{
+    --bg:#13161b; --bg2:#181c22; --panel:#1d222a; --panel2:#222834;
+    --line:#2b323d; --line2:#39424f;
+    --ink:#d8dee6; --ink2:#8b95a3; --ink3:#5d6673;
+    --teal:#56cfc1; --amber:#e8a64a; --green:#5fd08a; --red:#e0635f; --blue:#6aa6e8;
+    --chipbg:#242b35;
+    --mono:"SF Mono",ui-monospace,Menlo,monospace;
+    --sans:-apple-system,"Helvetica Neue",sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--ink);font:13px/1.45 var(--sans);overflow:hidden;
+       display:flex;flex-direction:column}
+  canvas{display:block}
+  button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+  .small{font-size:11px}.mono{font-family:var(--mono)}
+  .dim{color:var(--ink2)}.dimmer{color:var(--ink3)}
+
+  /* ---------- mockup chrome (not product UI) ---------- */
+  #chrome{display:flex;align-items:center;gap:14px;padding:5px 12px;
+    background:#0e1014;border-bottom:1px dashed #3a4250;font-size:11px;color:#7c8694}
+  #chrome .tag{background:#2a3140;color:#aab4c2;border-radius:3px;padding:1px 7px;
+    font-weight:600;letter-spacing:.06em}
+  #chrome .grp{display:flex;align-items:center;gap:6px}
+  .seg{display:flex;border:1px solid #3a4250;border-radius:5px;overflow:hidden}
+  .seg button{padding:2px 9px;color:#8b95a3;font-size:11px}
+  .seg button.on{background:#39424f;color:#e4e9ef}
+  #chrome label{display:flex;align-items:center;gap:5px;cursor:pointer}
+
+  /* ---------- main grid ---------- */
+  #app{flex:1;display:flex;min-height:0}
+  .vsplit{width:5px;flex:none;cursor:col-resize;background:transparent;position:relative;z-index:5;
+    margin:0 -2px}
+  .vsplit:hover,.vsplit.active{background:#36507a}
+
+  /* ---------- queue rail ---------- */
+  #queue{width:330px;min-width:330px;background:var(--bg2);border-right:1px solid var(--line);
+    display:flex;flex-direction:column;min-height:0}
+  #qhead{padding:12px 14px 8px}
+  #wordmark{font-weight:700;letter-spacing:.18em;font-size:12px;color:var(--ink)}
+  #wordmark em{font-style:normal;color:var(--teal)}
+  #sessionline{margin-top:2px}
+  #triagebar{display:flex;align-items:center;gap:8px;padding:8px 14px 6px;font-size:11px;color:var(--ink2)}
+  #rows{flex:1;overflow-y:auto;padding:2px 8px 8px;min-height:0}
+
+  .row{display:flex;gap:9px;padding:8px 8px;border-radius:8px;border:1px solid transparent;
+    cursor:pointer;position:relative;margin-bottom:2px}
+  .row:hover{background:#1c212a}
+  .row.sel{background:#222a36;border-color:#36507a}
+  .row.dropok{border-color:var(--amber);background:#2a2820}
+  .row .tcol{display:flex;flex-direction:column;gap:3px;flex:none;width:62px}
+  .row .thumb{width:62px;height:36px;border-radius:4px;background:#000;overflow:hidden;flex:none;position:relative}
+  .row .thumb img,.row .thumb canvas{width:100%;height:100%;object-fit:cover}
+  .row .thumb .dur{position:absolute;right:2px;bottom:2px;background:rgba(0,0,0,.65);
+    font-family:var(--mono);font-size:9px;padding:0 3px;border-radius:2px;color:#cfd6df}
+  .row .mid{flex:1;min-width:0}
+  .row .vname{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .aname{font-size:11px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    display:flex;align-items:center;gap:4px}
+  .row .aname .adot{width:6px;height:6px;border-radius:3px;background:var(--amber);flex:none}
+  /* audio-coverage strip: under the thumb on every couple; amber = the
+     external-audio identity color, so it reads as audio, not playback */
+  .row .cover{height:3px;border-radius:2px;background:rgba(255,255,255,.08);
+    position:relative;overflow:hidden;cursor:help}
+  .row .cover i{position:absolute;top:0;bottom:0;background:var(--amber);opacity:.5}
+  .row .right{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:none;justify-content:center}
+  .chip{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;padding:2px 8px;border-radius:9px;
+    background:var(--chipbg);border:1px solid var(--line2);white-space:nowrap;font-weight:600;letter-spacing:.02em}
+  .chip i{width:6px;height:6px;border-radius:3px;flex:none}
+  .chip.green{color:#9fe3b8}.chip.green i{background:var(--green)}
+  .chip.amber{color:#f2c684}.chip.amber i{background:var(--amber)}
+  .chip.red{color:#f0a09d}.chip.red i{background:var(--red)}
+  .chip.blue{color:#a9c8ee}.chip.blue i{background:var(--blue)}
+  .chip.grey{color:#9aa3b0}.chip.grey i{background:#5d6673}
+  /* quality = one status dot in the verdict color (Option 1, round 7); the
+     reason rides as a word only when the couple needs action */
+  .qdot{display:inline-block;width:9px;height:9px;border-radius:5px;vertical-align:middle}
+  .qdot.good{background:#36e27e}
+  .qdot.bad{background:#ff5d5d}
+  .qdot.none{background:transparent;border:1.5px solid #6a7280}
+  .qword{font-size:10px;font-weight:600;letter-spacing:.02em;vertical-align:middle}
+  .qword.bad{color:#ff8585}.qword.none{color:#8b95a3}
+  /* picker only: a relative strength bar so two same-piece takes can be compared */
+  .qstr{display:inline-block;width:40px;height:4px;border-radius:2px;background:#272d37;
+    overflow:hidden;vertical-align:middle;flex:none}
+  .qstr i{display:block;height:100%}
+  .qstr i.good{background:#36e27e}.qstr i.bad{background:#ff5d5d}.qstr i.none{background:#6a7280}
+  .qlab{font-size:10px;font-weight:600;letter-spacing:.03em}
+  .qlab.red{color:#f0a09d}.qlab.grey{color:#8b95a3}.qlab.amber{color:#f2c684}
+  .sechead{display:flex;align-items:center;gap:7px;margin:10px 8px 4px;font-size:9.5px;
+    letter-spacing:.13em;color:var(--ink3);font-weight:700}
+  .sechead .cnt{color:var(--ink2);font-family:var(--mono);font-weight:400}
+  .sechead::after{content:"";flex:1;height:1px;background:var(--line)}
+  .row.hl{border-color:#3d5070;background:#1d2430}
+  .vbox{width:17px;height:17px;border:1.5px solid var(--line2);border-radius:4px;display:flex;
+    align-items:center;justify-content:center;font-size:11px;color:transparent}
+  .row.verified .vbox{background:var(--green);border-color:var(--green);color:#10241a;font-weight:800}
+  .row .pin{position:absolute;left:2px;top:4px;font-size:9px}
+  .row .ear{font-size:9px;color:var(--ink3)}
+
+  #tray{border-top:1px solid var(--line);padding:9px 14px 11px;background:#161a20}
+  #tray h3{font-size:10px;letter-spacing:.12em;color:var(--ink3);font-weight:600;margin-bottom:6px;
+    display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;padding:3px 0}
+  #tray h3:hover{color:var(--ink2)}
+  #pooltoggle{color:var(--ink3);font-size:10px;padding:0 2px}
+  #pooltoggle:hover{color:var(--ink)}
+  #poolimport{margin-left:auto;font-size:10px;color:var(--ink2);border:1px solid var(--line2);
+    border-radius:4px;padding:1px 7px}
+  #poolimport:hover{color:var(--ink);background:#262d38}
+  /* two-line pool items: nothing can force a horizontal scrollbar */
+  .trayitem{display:block;padding:4px 6px;border-radius:5px;cursor:grab;border:1px dashed transparent}
+  .trayitem:hover{background:#1d222b;border-color:var(--line2)}
+  .trayitem .l1{display:flex;align-items:center;gap:7px;min-width:0}
+  .trayitem .l1 .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+  .trayitem .l2{display:flex;align-items:center;gap:8px;margin:1px 0 0 14px;font-size:10px;
+    color:var(--ink3);font-family:var(--mono);min-width:0}
+  .trayitem .l2 .use{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .trayitem .adot{width:7px;height:7px;border-radius:4px;background:var(--amber);opacity:.7;flex:none}
+  .trayitem .vdot{width:7px;height:7px;border-radius:4px;background:var(--teal);opacity:.7;flex:none}
+  .trayitem .pv{font-size:9px;color:var(--ink2);border:1px solid var(--line2);border-radius:3px;
+    padding:0 4px;flex:none}
+  .trayitem .pv:hover{color:var(--ink)}
+  .trayitem .pvtrack{flex:none;width:46px;height:3px;border-radius:2px;background:#262c36;overflow:hidden;display:none}
+  .trayitem.playing .pvtrack{display:block}
+  .trayitem .pvtrack i{display:block;height:100%;background:var(--amber);width:0}
+  #trayitems{max-height:300px;overflow-y:auto;overflow-x:hidden}
+  #trayitems.closed{display:none}
+
+  /* ---------- center ---------- */
+  #center{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--bg)}
+  #hero{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;position:relative;
+    background:#0b0d10;margin:10px 10px 0;border-radius:8px;overflow:hidden}
+  #herocanvas{position:absolute;inset:0;width:100%;height:100%}
+  #herohud{position:absolute;left:12px;bottom:10px;display:flex;align-items:center;gap:10px;
+    font-family:var(--mono);font-size:11px;color:#cfd6df;background:rgba(10,12,15,.55);
+    padding:4px 10px;border-radius:6px;backdrop-filter:blur(4px)}
+  #herohud .play{font-size:13px}
+  #heroname{position:absolute;left:12px;top:10px;font-size:11px;color:#9aa3b0;
+    background:rgba(10,12,15,.5);padding:3px 9px;border-radius:6px}
+  #herostate{position:absolute;right:12px;top:10px}
+
+  /* persistent tool strip: always visible, buttons are same-place toggles */
+  #editorbar{display:flex;align-items:center;gap:10px;margin:8px 10px 10px;padding:6px 12px;
+    background:var(--panel);border:1px solid var(--line);border-radius:8px}
+  #toolsbtn{padding:2px 10px;border:1px solid var(--line2);border-radius:5px;font-size:11px;color:var(--ink2)}
+  #toolsbtn.on{background:#2c3442;color:var(--ink)}
+  #monitor{display:inline-flex;border:1px solid rgba(120,130,145,.4);border-radius:5px;overflow:hidden}
+  #monitor button{padding:0 8px;font-size:10px;color:#9aa3b0}
+  #monitor button.on{background:rgba(90,105,125,.45);color:#e4e9ef}
+  #loupebtn{padding:2px 10px;border:1px solid var(--line2);border-radius:5px;font-size:11px;color:var(--ink2)}
+  #loupebtn.on{background:#2c3442;color:var(--ink)}
+  #verifybtn{margin-left:auto;padding:2px 10px;border:1px solid var(--line2);border-radius:5px;font-size:11px;color:var(--ink2)}
+  #verifybtn.on{background:var(--green);border-color:var(--green);color:#10241a;font-weight:700}
+  #readouts{display:none;align-items:center;gap:14px;font-family:var(--mono);font-size:11.5px;
+    padding-left:6px;margin-left:4px;border-left:1px solid var(--line2)}
+  #readouts.open{display:flex}
+  #readouts .grp{display:flex;align-items:center;gap:5px}
+  #readouts .lbl{font-family:var(--sans);font-size:10px;letter-spacing:.1em;color:var(--ink3)}
+  #readouts input{width:86px;background:#141820;border:1px solid var(--line2);border-radius:4px;
+    color:var(--ink);font:11.5px var(--mono);padding:2px 6px;text-align:right}
+  #readouts .nud{display:flex;gap:2px}
+  #readouts .nud button{border:1px solid var(--line2);border-radius:3px;font-size:9.5px;
+    padding:1px 4px;color:var(--ink2)}
+  #readouts .nud button:hover{color:var(--ink);background:#262d38}
+
+  /* resolve banner for ambiguous / split / 2-sources / no-match rows */
+  #resolve{display:none;margin:8px 10px 0;padding:8px 12px;border-radius:8px;
+    border:1px solid #57452a;background:#241f17;font-size:12px}
+  #resolve.open{display:block}
+  #resolve .rtitle{font-weight:700;font-size:12.5px}
+  #resolve .rsub{color:var(--ink2);font-size:11.5px;margin-top:1px}
+  #resolve .cands{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+  #resolve .cand{display:flex;align-items:center;gap:10px;padding:5px 10px;border:1px solid var(--line2);
+    border-radius:6px;background:#1d222a;font-size:11.5px;width:100%;text-align:left}
+  #resolve .cand:hover{border-color:#6a7686}
+  #resolve .cand .meta{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink3);
+    white-space:nowrap}
+  #resolve .cand.cur{border-color:#4a6a4f;background:#1d2a20}
+
+  /* loupes */
+  #loupes{display:none;gap:8px;margin:8px 10px 0;height:230px;flex:none;position:relative}
+  #loupes.open{display:flex}
+  #lockchip{position:absolute;right:6px;top:5px;z-index:2;font-size:9.5px;color:var(--ink2);
+    border:1px solid var(--line2);border-radius:9px;padding:1px 8px;background:rgba(20,24,30,.85)}
+  .loupe.focused{border-color:var(--lc)}
+  .loupe.focused .lhead{color:var(--ink)}
+  .loupe{flex:1;background:#10131a;border:1px solid var(--line);border-radius:8px;overflow:hidden;
+    display:flex;flex-direction:column;border-bottom:2px solid var(--lc,#888)}
+  #connect{display:none;height:18px;margin:0 10px;flex:none}
+  .loupe .lhead{display:flex;align-items:center;gap:8px;padding:4px 9px;font-size:10.5px;
+    color:var(--ink2);font-family:var(--mono)}
+  .loupe .lhead .ldot{width:7px;height:7px;border-radius:4px;background:var(--lc)}
+  .loupe .lhead .delta{font-weight:700}
+  .loupe canvas{flex:1;width:100%}
+
+  /* overview + sync row */
+  #stage{flex:none;display:flex;gap:10px;margin:8px 10px 0;align-items:stretch}
+  #ovwrap{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    position:relative;overflow:hidden;height:152px}
+  #ovcanvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
+  #ovlabel{position:absolute;left:8px;top:5px;font-size:9px;letter-spacing:.1em;color:var(--ink3)}
+  #ovchip{position:absolute;right:8px;top:5px;font-size:10px;color:var(--ink2);font-family:var(--mono)}
+  #synctools{width:218px;flex:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;
+    padding:8px 10px;display:flex;flex-direction:column;gap:4px;justify-content:center}
+  #fitline{font-size:10.5px;font-family:var(--mono);cursor:pointer}
+  #fitline.green{color:#9fe3b8}#fitline.amber{color:#f2c684}#fitline.red{color:#f0a09d}#fitline.grey{color:var(--ink3)}
+  #sparkwrap{display:flex;align-items:center;gap:8px}
+  #spark{width:130px;height:34px}
+  #resync{font-size:10.5px;color:var(--ink2);border:1px solid var(--line2);border-radius:5px;
+    padding:3px 8px;align-self:flex-start}
+  #resync:hover{color:var(--ink);background:#262d38}
+
+  /* ---------- export rail ---------- */
+  #export{width:300px;min-width:300px;background:var(--bg2);border-left:1px solid var(--line);
+    display:flex;flex-direction:column;padding:14px;gap:10px;min-height:0}
+  #export h2{font-size:10px;letter-spacing:.14em;color:var(--ink3);font-weight:600}
+  .exprow{display:flex;align-items:center;gap:8px;font-size:12px}
+  .exprow .k{width:62px;color:var(--ink3);font-size:10.5px;flex:none}
+  .exprow .v{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .exprow button.pick{color:var(--ink2);border:1px solid var(--line2);border-radius:4px;
+    padding:1px 7px;font-size:10.5px}
+  #naming input{width:100%;background:#141820;border:1px solid var(--line2);border-radius:4px;
+    color:var(--ink);font:11px var(--mono);padding:3px 7px}
+  #preflight{font-size:10.5px;color:var(--ink3);font-family:var(--mono)}
+  #exportbtn{margin-top:2px;padding:12px;border-radius:9px;font-size:14.5px;font-weight:700;
+    background:var(--green);color:#0d2316;letter-spacing:.01em;position:relative;overflow:hidden}
+  #exportbtn:disabled{background:#27313c;color:#5d6673;cursor:default}
+  #exportbtn .prog{position:absolute;left:0;top:0;bottom:0;background:rgba(255,255,255,.22);width:0}
+  #expstat{flex:1;overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:3px}
+  .est{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;background:#1b2027;
+    font-size:11px;cursor:pointer;border:1px solid transparent}
+  .est.sel{border-color:#36507a;background:#202938}
+  .est .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink2)}
+  .est .st{font-family:var(--mono);font-size:10px}
+  .est.run{background:#1c2733}.est.done .st{color:var(--green)}.est.fail .st{color:var(--red)}
+  .est .bar{height:3px;border-radius:2px;background:#2a323d;width:54px;overflow:hidden}
+  .est .bar i{display:block;height:100%;background:var(--blue);width:0}
+  .est .nm{cursor:text}
+  .est .cust{font-size:8.5px;color:var(--blue);border:1px solid #34507a;border-radius:3px;
+    padding:0 3px;margin-left:5px;vertical-align:1px}
+  .est .fmt{font-size:9px;color:var(--ink2);border:1px solid var(--line2);border-radius:3px;
+    padding:0 4px;flex:none;font-family:var(--mono)}
+  .est .fmt:hover{color:var(--ink);background:#262d38}
+  .est .ext{color:var(--ink3);font-family:var(--mono);font-size:10.5px}
+  .est .undo{display:none;color:var(--ink3);font-size:11px;flex:none}
+  .est:hover .undo.avail{display:inline}
+  .est input{background:#141820;border:1px solid var(--line2);border-radius:3px;color:var(--ink);
+    font:10.5px var(--mono);padding:1px 4px;flex:1;min-width:0}
+
+  /* ---------- footer ---------- */
+  #footer{flex:none;display:flex;gap:18px;align-items:center;padding:5px 14px;font-size:10.5px;
+    color:var(--ink3);background:#101319;border-top:1px solid var(--line)}
+  #footer .k{color:var(--ink2);font-family:var(--mono)}
+  #footer .note{margin-left:auto}
+
+  /* toast */
+  #toasts{position:fixed;right:316px;bottom:40px;display:flex;flex-direction:column;gap:8px;z-index:50}
+  .toast{background:#222a36;border:1px solid #3a4453;border-radius:8px;padding:9px 14px;font-size:12px;
+    box-shadow:0 6px 24px rgba(0,0,0,.5);max-width:420px}
+  .toast b{color:var(--ink)}
+  .toast.warn{border-color:#6a5630}
+
+  ::-webkit-scrollbar{width:8px}::-webkit-scrollbar-thumb{background:#2c3440;border-radius:4px}
+</style>
+</head>
+<body>
+
+<!-- ======= mockup chrome: NOT product UI ======= -->
+<div id="chrome">
+  <span class="tag">MOCKUP</span>
+  <span>Session G converged — real bach session via <span class="mono">couple pair</span>; this is the reference design for Session H</span>
+  <span class="grp" style="margin-left:auto" title="settled at convergence, 2026-06-12">
+    §11.1 readouts = on-demand disclosure · §11.4 approve needs no audition</span>
+</div>
+
+<div id="app">
+
+  <!-- ======= queue rail (~25% attention) ======= -->
+  <div id="queue">
+    <div id="qhead">
+      <div id="wordmark">C<em>O</em>UPLE</div>
+      <div id="sessionline" class="small dim">bach session — 4 video, 7 audio files</div>
+    </div>
+    <div id="triagebar">
+      <span class="dimmer">approve (v) queues a couple for export</span>
+      <span style="margin-left:auto" id="qcount" class="mono"></span>
+    </div>
+    <div id="rows"></div>
+    <div id="tray">
+      <h3><button id="pooltoggle">▾</button> MEDIA POOL · <span id="poolcount"></span>
+        <button id="poolimport" title="add files — dropping anything on the window works too">+ import</button></h3>
+      <div id="trayitems"></div>
+    </div>
+  </div>
+  <div class="vsplit" id="splitL" title="drag to resize"></div>
+
+  <!-- ======= center: video hero (~30%) + waveforms/sync (~20% + ~5%) ======= -->
+  <div id="center">
+    <div id="hero">
+      <canvas id="herocanvas"></canvas>
+      <div id="heroname"></div>
+      <div id="herostate"></div>
+      <div id="herohud">
+        <button class="play" id="playbtn">▶</button>
+        <span id="timecode">0:00.00</span><span class="dimmer" id="herodur"></span>
+        <span class="dimmer">·</span>
+        <span id="monitor">
+          <button data-m="pan">Pan L/R</button>
+          <button data-m="overlay" class="on">Overlay</button>
+        </span>
+        <span id="hudmon" class="dimmer"></span>
+      </div>
+    </div>
+
+    <div id="resolve"></div>
+    <div id="loupes"></div>
+    <canvas id="connect"></canvas>
+
+    <div id="stage">
+      <div id="ovwrap">
+        <canvas id="ovcanvas"></canvas>
+        <div id="ovlabel">V · CAMERA&nbsp;&nbsp;/&nbsp;&nbsp;A · EXTERNAL</div>
+        <div id="ovchip"></div>
+      </div>
+      <div id="synctools">
+        <div id="fitline" class="green" title="click to summon loupes"></div>
+        <div id="sparkwrap"><canvas id="spark" width="260" height="68"></canvas></div>
+        <button id="resync" title="auto-sync runs by itself on pairing; this re-runs it">↻ re-sync</button>
+      </div>
+    </div>
+
+    <div id="editorbar">
+      <button id="toolsbtn" title="offset & drift controls, anchors (⏎)">⚙ sync tools</button>
+      <button id="loupebtn" title="magnified anchor views (L) — or click an anchor pin / the fit status">◫ loupes</button>
+      <span id="readouts">
+        <span class="grp"><span class="lbl">OFFSET</span><input id="offin"><span class="dimmer">ms</span>
+          <span class="nud"><button data-d="off" data-step="-10">−10</button><button data-d="off" data-step="-1">−1</button><button data-d="off" data-step="1">+1</button><button data-d="off" data-step="10">+10</button></span></span>
+        <span class="grp"><span class="lbl">DRIFT</span><input id="driftin"><span class="dimmer">ppm</span>
+          <span class="nud"><button data-d="ppm" data-step="-1">−1</button><button data-d="ppm" data-step="-0.1">−.1</button><button data-d="ppm" data-step="0.1">+.1</button><button data-d="ppm" data-step="1">+1</button></span></span>
+      </span>
+      <button id="verifybtn">Approve (v)</button>
+    </div>
+  </div>
+
+  <div class="vsplit" id="splitR" title="drag to resize"></div>
+  <!-- ======= export rail (~20% attention) ======= -->
+  <div id="export">
+    <h2>EXPORT</h2>
+    <div class="exprow"><span class="k">into</span><span class="v mono dim">~/Movies/bach session</span><button class="pick">choose…</button></div>
+    <div class="exprow" id="naming"><span class="k">naming</span><input value="<video-stem>_synced.<ext>" spellcheck="false"></div>
+    <div class="exprow"><span class="k">format</span>
+      <span class="seg" id="fmtseg">
+        <button data-f="Auto" class="on" title="match the camera container">Auto</button>
+        <button data-f="MOV">MOV</button><button data-f="MP4">MP4</button><button data-f="WAV">WAV</button>
+      </span></div>
+    <div class="exprow"><span class="k"></span>
+      <label class="small dim" style="display:flex;gap:5px;align-items:center;cursor:pointer">
+        <input type="checkbox" id="keepcam"> keep camera audio as muted track</label></div>
+    <div id="preflight"></div>
+    <button id="exportbtn" disabled><span class="prog"></span><span class="lab">Export 0 verified</span></button>
+    <h2 style="margin-top:6px">ROWS</h2>
+    <div id="expstat"></div>
+  </div>
+</div>
+
+<div id="footer">
+  <span><span class="k">j/k</span> rows</span>
+  <span><span class="k">v</span> approve = queue</span>
+  <span><span class="k">⏎</span> sync tools</span>
+  <span><span class="k">l</span> loupes</span>
+  <span><span class="k">␣</span> play</span>
+  <span><span class="k">←/→</span> nudge</span>
+  <span><span class="k">esc</span> collapse</span>
+  <span class="note">rows 1–4 are fully real (states · numbers · waveforms · frames from couple pair/sync); demo rows are labeled</span>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+"use strict";
+/* =================================================================
+   Couple v2 queue-centric mockup — Session G round 2.
+   Rows 1–4 = the owner's real session (example_data/multifile-session)
+   resolved by `couple pair`; sync numbers from `couple sync`; waveforms
+   from `couple peaks`; frames via ffmpeg. Three labeled demo rows cover
+   the §3.3 states the real session didn't produce (split / 2 sources /
+   no match). Regenerate data: python3 generate-session-data.py.
+   Serve over http:  python3 -m http.server  (repo root)
+   ================================================================= */
+
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const fmtT=(s,frac)=>{s=Math.max(0,s);const m=Math.floor(s/60),ss=s-m*60;
+  return m+":"+(ss<10?"0":"")+(frac?ss.toFixed(2):Math.floor(ss))};
+const lerp=(a,b,t)=>a+(b-a)*t;
+const smooth=(a,b,x)=>{x=Math.min(1,Math.max(0,(x-a)/(b-a)));return x*x*(3-2*x)};
+
+/* ---------- deterministic noise for the demo rows ---------- */
+function hash(seed,i){let t=(Math.imul(i,374761393)+Math.imul(seed,668265263))>>>0;
+  t=Math.imul(t^(t>>>13),1274126177)>>>0;return ((t^(t>>>16))>>>0)/4294967295}
+function n1(seed,x){const i=Math.floor(x),f=x-i,u=f*f*(3-2*f);
+  return lerp(hash(seed,i),hash(seed,i+1),u)}
+function fakeAmp(seed,t){
+  const phrase=smooth(.32,.5,n1(seed*7+1,t/14));
+  const slow=.35+.65*n1(seed*13+2,t/3.1);
+  const fast=.45+.55*n1(seed*29+3,t/.23);
+  const fine=.7+.3*n1(seed*57+9,t/.013);
+  const attack=Math.pow(n1(seed*31+5,t/.9),7)*1.6;
+  return Math.min(1,(phrase*(.10+.9*slow*fast)+attack*phrase)*fine+.018);
+}
+
+/* ---------- track store: real tracks carry column dumps ---------- */
+let DATA=null;
+const TRACKS={};   // name -> {dur, cols?, gain?, seed?}
+function colGain(cols){ // §4.1 display-gain rule on the dumped columns
+  const amps=[];let mx=0;
+  for(let i=0;i<cols.mins.length;i++)mx=Math.max(mx,cols.maxs[i]-cols.mins[i]);
+  for(let i=0;i<cols.mins.length;i++){const a=cols.maxs[i]-cols.mins[i];if(a>.12*mx)amps.push(a)}
+  amps.sort((a,b)=>a-b);const p95=amps[Math.floor(amps.length*.95)]||254;
+  return 1.44/(p95/254);
+}
+/* per-px [min,max] in -1..1 over [t0,t1] from a column dump (track-local time) */
+function resampleCols(cols,gain,t0,t1,px){
+  const out=new Float32Array(px*2),n=cols.mins.length;
+  for(let x=0;x<px;x++){
+    const a=t0+(t1-t0)*x/px,b=t0+(t1-t0)*(x+1)/px;
+    let i0=Math.floor((a-cols.t0)/cols.dt),i1=Math.ceil((b-cols.t0)/cols.dt);
+    let mn=0,mx=0;
+    for(let i=Math.max(0,i0);i<Math.min(n,i1);i++){
+      mn=Math.min(mn,cols.mins[i]);mx=Math.max(mx,cols.maxs[i])}
+    out[2*x]=Math.max(-1,mn/127*gain);out[2*x+1]=Math.min(1,mx/127*gain);
+  }
+  return out;
+}
+function band(track,t0,t1,px){
+  if(track.cols)return resampleCols(track.cols,track.gain,t0,t1,px);
+  const out=new Float32Array(px*2);
+  for(let x=0;x<px;x++){
+    const a=t0+(t1-t0)*x/px,b=t0+(t1-t0)*(x+1)/px;let mx=0;
+    for(let k=0;k<3;k++)mx=Math.max(mx,fakeAmp(track.seed,lerp(a,b,k/2)));
+    if(b<0||a>track.dur)mx=0.012;
+    const asym=.75+.5*n1(track.seed*3+11,a*2);
+    out[2*x]=-mx*asym;out[2*x+1]=mx*(1.5-asym);
+  }
+  return out;
+}
+
+/* =================================================================
+   Model. Real rows built from session-data.json; demo rows appended
+   for the §3.3 states the real session didn't produce.
+   ================================================================= */
+let rows=[];
+const HEROIMG={};  // video name -> Image
+const CHIP={
+  confident:["synced","green"], partial:["partial","amber"], split:["split across files","amber"],
+  twoSources:["2 sources","blue"], ambiguous:["check me","red"], noMatch:["no match","grey"],
+  forced:["forced — below floor","amber"], manual:["synced · manual","green"],
+};
+const ATTN={ambiguous:0,noMatch:1,split:2,partial:3,twoSources:4,forced:4.5,manual:5,confident:6};
+
+const DEMO_AUDIO={
+  "demo-recorder-A.wav":{dur:1610,seed:21},
+  "demo-recorder-B.wav":{dur:1500,seed:22},
+  "demo-phone-memo.m4a":{dur:1350,seed:24},
+};
+function demoRows(){
+  return [
+   {video:"demo — recorder restart.mov",vdur:1307,vseed:3,demo:true,
+    state:"split",sel:{audio:"demo-recorder-A.wav",z:41.7,off:-391000,ppm:3.6},
+    cover:[[391,1307]],coverage:.701,fit:{rms:0.29,win:7,windows:null},
+    cands:[{audio:"demo-recorder-A.wav",z:41.7,note:"covers 6:31–21:47"},
+           {audio:"demo-recorder-B.wav",z:36.2,note:"covers 0:00–6:14"}],
+    detail:"recorder restarted mid-take · selected file covers 6:31–21:47, alternate covers the start"},
+   {video:"demo — two recorders.mov",vdur:1392,vseed:4,demo:true,
+    state:"twoSources",sel:{audio:"demo-recorder-B.wav",z:41.2,off:30000,ppm:3.6},
+    cover:[[0,1392]],coverage:1,fit:{rms:0.27,win:11,windows:null},
+    cands:[{audio:"demo-recorder-B.wav",z:41.2},
+           {audio:"demo-phone-memo.m4a",z:23.8,note:"simultaneous · triangle Δ 38 ms"}],
+    detail:"2 simultaneous recorders · best z selected"},
+   {video:"demo — stray clip.mov",vdur:42,vseed:6,demo:true,
+    state:"noMatch",sel:null,cover:[],coverage:0,fit:null,cands:[],
+    detail:"no audio cleared the floor · drag one from the tray to force a pairing"},
+  ];
+}
+function buildModel(){
+  for(const [n,d] of Object.entries(DATA.durations))
+    TRACKS[n]={dur:d,cols:DATA.overviews[n],gain:colGain(DATA.overviews[n])};
+  for(const [n,t] of Object.entries(DEMO_AUDIO))TRACKS[n]=t;
+  rows=DATA.rows.map(r=>{
+    const vdur=DATA.durations[r.video];
+    const key=r.selected?`${r.video}|${r.selected.audio}`:null;
+    const sync=key?DATA.syncs[key]:null;
+    const row={video:r.video,vdur,state:r.state,chipText:r.chip,
+      thumb:DATA.thumbs[r.video],resolution:r.resolution,
+      cands:(r.selected?[{audio:r.selected.audio,z:r.selected.z,coverage:r.selected.coverage}]:[])
+        .concat(r.alternates||[]),
+      sel:null,cover:[],coverage:0,fit:null,loupeKey:null,windows:null};
+    if(r.selected&&sync){
+      row.sel={audio:r.selected.audio,z:r.selected.z,off:sync.offsetMs,ppm:sync.driftPpm,
+        baseOff:sync.offsetMs};
+      row.cover=[[r.selected.coverage.t0,r.selected.coverage.t1]];
+      row.coverage=r.selected.coverage.fraction;
+      const acc=sync.windows.filter(w=>w.accepted).length;
+      row.fit={rms:sync.fitRmsMs,win:acc,windows:sync.windows};
+      row.loupeKey=key;
+    }
+    row.detail=detailFor(row,r);
+    return row;
+  }).concat(demoRows());
+  rows.forEach((r,i)=>{r.id=i;r.verified=false;r.auditioned=false;r.pinned=false;r.exp=null});
+  // real hero frames
+  for(const [name,t] of Object.entries(DATA.thumbs)){
+    const im=new Image();im.src=t.hero;im.onload=()=>{if(cur().video===name)drawHero()};
+    HEROIMG[name]=im;
+  }
+}
+function coverTitle(r){
+  if(!r.sel||!r.cover.length)return"no audio selected — the bar shows how much of the video an audio file covers";
+  const c0=r.cover[0][0],c1=r.cover[r.cover.length-1][1];
+  return`${r.sel.audio} covers ${fmtT(c0)}–${fmtT(c1)} of ${fmtT(r.vdur)} (${(r.coverage*100).toFixed(r.coverage>.99?1:0)}%)`;
+}
+function detailFor(row,r){
+  if(r.state==="confident")
+    return `z ${r.selected.z.toFixed(1)} · covers ${(r.selected.coverage.fraction*100).toFixed(0)}% · drift ${row.sel.ppm.toFixed(1)} ppm`;
+  if(r.state==="partial")
+    return r.chip.replace(/^partial — /,"")+" · suggest keep camera audio";
+  if(r.state==="ambiguous"){
+    const m=r.resolution.margin.toFixed(1);
+    const simul=(r.resolution.triangles||[]).filter(t=>t.simultaneous);
+    let s=`margin ${m} < ${DATA.constants.zMargin.toFixed(0)} — not choosing for you`;
+    if(simul.length)s=`${simul[0].audioA.replace(".WAV","")} + ${simul[0].audioB.replace(".WAV","")} look simultaneous (Δ ${simul[0].residualMs.toFixed(1)} ms) · `+s;
+    return s;
+  }
+  return r.chip;
+}
+
+/* ---------- app state ---------- */
+const S={sel:0,editor:false,loupes:false,focusAnchor:0,variant:"A",
+  vneedsear:false,monitor:"overlay",playing:false,playT:0,exporting:false,
+  poolOpen:true,format:"Auto"};
+const cur=()=>rows[S.sel];
+
+function toast(msg,warn){const d=document.createElement("div");d.className="toast"+(warn?" warn":"");
+  d.innerHTML=msg;$("#toasts").append(d);setTimeout(()=>d.remove(),6500)}
+
+/* =================================================================
+   Rendering
+   ================================================================= */
+/* the verdict model (owner, round 4): pairings are good / questionable / none —
+   fit is bimodal for same-source audio, the only middle ground is the
+   same-piece-different-take hazard, which is exactly "a human must pick".
+   Coverage is a fact about the recording, never a quality penalty. */
+function verdictOf(r){
+  if(r.state==="noMatch")return"none";
+  if(r.state==="ambiguous"||r.state==="forced")return"bad";
+  return"good";
+}
+/* workflow sections mirror the verdicts; rows migrate live */
+const SECTIONS=["QUEUED FOR EXPORT","TO APPROVE","TO FIX"];
+function tierOf(r){return r.verified?0:verdictOf(r)==="good"?1:2}
+function orderedRows(){
+  const idx=rows.map((r,i)=>i);
+  idx.sort((a,b)=>tierOf(rows[a])-tierOf(rows[b])||(a-b));
+  return idx;
+}
+/* the one quality meter: dense uniform ticks; count = match strength,
+   color = verdict; identical on rows, hero, and the candidate picker */
+/* Option 1: status dot (verdict color) + a word only when action is needed.
+   Strength is intentionally not shown here — the bimodal model makes it noise;
+   raw z lives in the tooltip. Relative strength survives only in the picker. */
+function strengthFrac(z,maxZ){return Math.max(.1,Math.min(1,z/maxZ))}
+function qstrHTML(z,verdict,maxZ){
+  return `<span class="qstr" title="match ${z.toFixed(1)}"><i class="${verdict}" style="width:${strengthFrac(z,maxZ)*100}%"></i></span>`;
+}
+function chipHTML(r){
+  const z=r.sel?r.sel.z:(r.cands&&r.cands[0]?r.cands[0].z:0);
+  const v=verdictOf(r);
+  const title=`${CHIP[r.state][0]}${z?` · match ${z.toFixed(1)}`:""}${r.pinned?" · pinned":""}`;
+  const word=r.state==="ambiguous"?'<span class="qword bad">pick one</span>'
+            :r.state==="forced"?'<span class="qword bad">forced</span>'
+            :r.state==="noMatch"?'<span class="qword none">no audio</span>':"";
+  return `<span class="qdot ${v}" title="${title}"></span>`
+    +(word?" "+word:"")+(r.pinned?" <span class='qword'>📌</span>":"");
+}
+function renderQueue(){
+  const box=$("#rows");box.innerHTML="";
+  let lastTier=-1;
+  const header=t=>{const n=rows.filter(x=>tierOf(x)===t).length;
+    const h=document.createElement("div");h.className="sechead";
+    if(!n)h.style.opacity=.45;
+    h.innerHTML=`${SECTIONS[t]} <span class="cnt">${n}</span>`;
+    box.append(h)};
+  for(const i of orderedRows()){
+    const r=rows[i];
+    if(tierOf(r)!==lastTier){ // sections are fixed: emit skipped (empty) ones too
+      for(let t=lastTier+1;t<=tierOf(r);t++)header(t);
+      lastTier=tierOf(r);}
+    const d=document.createElement("div");
+    d.className="row"+(i===S.sel?" sel":"")+(r.verified?" verified":"");
+    d.dataset.i=i;
+    const segs=r.cover.map(([a,b])=>`<i style="left:${a/r.vdur*100}%;width:${(b-a)/r.vdur*100}%"></i>`).join("");
+    const tn=r.thumb?`<img src="${r.thumb.thumb}">`:`<canvas width="124" height="72"></canvas>`;
+    d.innerHTML=`
+      <div class="tcol">
+        <div class="thumb">${tn}<span class="dur">${fmtT(r.vdur)}</span></div>
+        <div class="cover" title="${coverTitle(r)}">${segs}</div>
+      </div>
+      <div class="mid">
+        <div class="vname">${r.video}</div>
+        <div class="aname">${r.sel?`<span class="adot"></span>${r.sel.audio}`:`<span class="dimmer">—</span>`}
+          ${r.auditioned?'<span class="ear" title="auditioned">♪</span>':""}</div>
+      </div>
+      <div class="right">${chipHTML(r)}<span class="vbox" title="verify = queue for export">✓</span></div>`;
+    const cvt=d.querySelector("canvas");if(cvt)drawScene(cvt,r.vseed||1,0.3);
+    d.querySelector(".vbox").onclick=e=>{e.stopPropagation();S.sel=i;verifyToggle(rows[i],false)};
+    d.onclick=()=>{select(i)};
+    d.ondblclick=()=>{select(i);openEditor(true)};
+    d.ondragover=e=>{e.preventDefault();d.classList.add("dropok")};
+    d.ondragleave=()=>d.classList.remove("dropok");
+    d.ondrop=e=>{e.preventDefault();d.classList.remove("dropok");
+      manualPair(i,e.dataTransfer.getData("text/plain"))};
+    box.append(d);
+  }
+  for(let t=lastTier+1;t<3;t++)header(t); // trailing empty sections stay visible too
+  $("#qcount").textContent=rows.filter(r=>r.verified).length+"/"+rows.length+" verified";
+  renderTray();renderExport();
+}
+/* media pool: every imported file, with a live usage indicator (owner: no
+   filter needed if each file says how it's used) + low-key audio preview */
+function usageOf(name,isVideo){
+  const sel=[],alt=[];
+  rows.forEach((r,i)=>{
+    if(isVideo){if(r.video===name)sel.push(i+1);return}
+    if(r.sel&&r.sel.audio===name)sel.push(i+1);
+    else if((r.cands||[]).find(c=>c.audio===name))alt.push(i+1);
+  });
+  if(sel.length)return isVideo?`take ${sel.join(", ")}`:`on take ${sel.join(", ")}`;
+  if(alt.length)return`alt · take ${alt.join(", ")}`;
+  const z=DATA.trayBestZ[name];
+  return z?`unused · best match ${z.toFixed(1)}`:"unused · no match anywhere";
+}
+let pvTimer=null;
+function poolPreview(d,name){ // fake inline audition; real app: built-in or Quick Look
+  const playing=d.classList.contains("playing");
+  $$("#trayitems .trayitem").forEach(x=>x.classList.remove("playing"));
+  clearInterval(pvTimer);
+  if(playing)return;
+  d.classList.add("playing");
+  const bar=d.querySelector(".pvtrack i");let p=0;
+  pvTimer=setInterval(()=>{p+=1.4;bar.style.width=p+"%";
+    if(p>=100){clearInterval(pvTimer);d.classList.remove("playing")}},80);
+}
+function refsOf(name){ // queue rows that reference this file
+  return rows.map((r,i)=>(r.video===name||(r.sel&&r.sel.audio===name)||
+    (r.cands||[]).find(c=>c.audio===name))?i:-1).filter(i=>i>=0);
+}
+function renderTray(){
+  const t=$("#trayitems");t.innerHTML="";
+  t.classList.toggle("closed",!S.poolOpen);
+  $("#pooltoggle").textContent=S.poolOpen?"▾":"▸";
+  const vids=Object.keys(DATA.thumbs);
+  const auds=Object.keys(DATA.durations).filter(n=>!DATA.thumbs[n]).concat(Object.keys(DEMO_AUDIO));
+  $("#poolcount").textContent=vids.length+auds.length;
+  if(!S.poolOpen)return;
+  for(const n of vids.concat(auds)){
+    const isVideo=!!DATA.thumbs[n];
+    const dur=DATA.durations[n]??DEMO_AUDIO[n].dur;
+    const d=document.createElement("div");d.className="trayitem";d.draggable=!isVideo;
+    d.innerHTML=`<div class="l1"><span class="${isVideo?"vdot":"adot"}"></span><span class="nm">${n}</span></div>
+      <div class="l2"><span>${fmtT(dur)}</span><span class="use">${usageOf(n,isVideo)}</span>
+      ${!isVideo?'<span class="pvtrack"><i></i></span><button class="pv" title="preview (real app: built-in or Quick Look)">▶</button>':""}</div>`;
+    if(!isVideo){
+      d.ondragstart=e=>e.dataTransfer.setData("text/plain",n);
+      d.querySelector(".pv").onclick=e=>{e.stopPropagation();poolPreview(d,n)};
+    }
+    d.onmouseenter=()=>refsOf(n).forEach(i=>$(`.row[data-i="${i}"]`)?.classList.add("hl"));
+    d.onmouseleave=()=>$$(".row.hl").forEach(x=>x.classList.remove("hl"));
+    t.append(d);
+  }
+}
+
+/* ---------- procedural scene for demo rows only ---------- */
+function drawScene(cv,seed,dimmer,fig=1){
+  const ctx=cv.getContext("2d"),W=cv.width,H=cv.height;
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,"#0c0e13");g.addColorStop(1,"#16130d");
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  const cx=W*(.42+.18*hash(seed,7)),fy=H*.78;
+  const spot=ctx.createRadialGradient(cx,fy-H*.22,4,cx,fy-H*.22,H*.75);
+  spot.addColorStop(0,"rgba(232,180,95,"+(0.34-0.1*dimmer)+")");spot.addColorStop(1,"rgba(0,0,0,0)");
+  ctx.fillStyle=spot;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle="rgba(20,16,10,.9)";ctx.fillRect(0,fy,W,H-fy);
+  ctx.fillStyle="#070809";
+  const s=H/72*fig;
+  ctx.beginPath();ctx.ellipse(cx,fy-30*s,7*s,9.5*s,0,0,7);ctx.fill();
+  ctx.beginPath();ctx.arc(cx,fy-44*s,4.4*s,0,7);ctx.fill();
+  ctx.fillStyle="#241a10";
+  ctx.beginPath();ctx.ellipse(cx+6*s,fy-22*s,5.5*s,12*s,-.18,0,7);ctx.fill();
+  ctx.strokeStyle="rgba(214,170,98,.5)";ctx.lineWidth=Math.max(1,s*.5);
+  ctx.beginPath();ctx.moveTo(cx-12*s,fy-30*s);ctx.lineTo(cx+14*s,fy-36*s);ctx.stroke();
+  ctx.fillStyle="rgba(0,0,0,.55)";ctx.fillRect(0,0,W,H*.085);ctx.fillRect(0,H*.915,W,H*.085);
+  ctx.fillStyle="rgba(170,180,195,.5)";ctx.font=`${Math.max(9,H*.07)}px sans-serif`;
+  ctx.fillText("demo footage",W*.04,H*.13);
+}
+
+/* ---------- video hero ---------- */
+function drawHero(){
+  const cv=$("#herocanvas"),box=$("#hero");
+  cv.width=box.clientWidth*devicePixelRatio;cv.height=box.clientHeight*devicePixelRatio;
+  const r=cur(),im=HEROIMG[r.video];
+  if(im&&im.complete&&im.naturalWidth){
+    const ctx=cv.getContext("2d");
+    ctx.fillStyle="#0b0d10";ctx.fillRect(0,0,cv.width,cv.height);
+    const s=Math.min(cv.width/im.naturalWidth,cv.height/im.naturalHeight);
+    const w=im.naturalWidth*s,h=im.naturalHeight*s;
+    ctx.drawImage(im,(cv.width-w)/2,(cv.height-h)/2,w,h);
+  }else drawScene(cv,r.vseed||1,0,0.42);
+  $("#heroname").textContent=r.video+(r.sel?"  +  "+r.sel.audio:"");
+  $("#herostate").innerHTML=chipHTML(r);
+  $("#herodur").textContent=" / "+fmtT(r.vdur);
+  $("#timecode").textContent=fmtT(S.playT,true);
+  $("#monitor").style.display=r.sel?"":"none";
+  $("#hudmon").textContent=r.sel?"":"camera audio (unpaired)";
+}
+
+/* ---------- overview strip ---------- */
+function domain(r){ // video timeline, padded ≤15% for audio overhang
+  let a0=0,a1=r.vdur,d0=0,d1=r.vdur;
+  if(r.sel){const a=TRACKS[r.sel.audio],off=r.sel.off/1000;
+    a0=-off;a1=a.dur-off;
+    d0=Math.max(Math.min(0,a0),-0.15*r.vdur);
+    d1=Math.min(Math.max(r.vdur,a1),1.15*r.vdur)}
+  return {d0,d1,a0,a1};
+}
+function drawOverview(){
+  const cv=$("#ovcanvas"),w=$("#ovwrap");
+  cv.width=w.clientWidth*devicePixelRatio;cv.height=w.clientHeight*devicePixelRatio;
+  const ctx=cv.getContext("2d");ctx.scale(devicePixelRatio,devicePixelRatio);
+  const W=w.clientWidth,H=w.clientHeight,r=cur();
+  ctx.clearRect(0,0,W,H);
+  const {d0,d1,a0,a1}=domain(r);
+  const X=t=>(t-d0)/(d1-d0)*W;
+  // anchor flags live in a bottom gutter so their stems run up and out of the
+  // strip's top edge to meet the loupe connectors (owner direction, round 3)
+  const anchorsVisible=(S.editor||S.loupes)&&r.sel;
+  const flagH=anchorsVisible?14:0, top=6, lh=(H-top-14-flagH)/2, midY=top+lh, tickY=H-flagH-12;
+  if(r.cover.length){ctx.fillStyle="rgba(120,150,190,.07)";
+    for(const [a,b]of r.cover)ctx.fillRect(X(a),top,X(b)-X(a),lh*2)}
+  drawLane(ctx,TRACKS[r.video]||{seed:(r.vseed||1)+100,dur:r.vdur},0,r.vdur,X,top,lh,"#56cfc1",d0,d1);
+  if(r.sel){const off=r.sel.off/1000;
+    drawLane(ctx,TRACKS[r.sel.audio],a0,a1,X,midY,lh,"#e8a64a",d0,d1,off);
+    ctx.fillStyle="rgba(232,166,74,.5)";ctx.font="9px "+getComputedStyle(document.body).getPropertyValue("--mono");
+    if(a0<d0)ctx.fillText("◀ "+fmtT(d0-a0)+" more",4,midY+lh+11);
+    if(a1>d1){const s="audio continues "+fmtT(a1-d1)+" ▶";
+      ctx.fillText(s,W-ctx.measureText(s).width-4,midY+lh+11)}}
+  else{ctx.fillStyle="rgba(232,166,74,.25)";ctx.font="10px "+getComputedStyle(document.body).getPropertyValue("--mono");
+    ctx.fillText(r.state==="ambiguous"?"no selection — candidates above":"no audio paired — drag one from the tray",10,midY+lh/2+3)}
+  ctx.fillStyle="rgba(140,150,165,.45)";ctx.font="8.5px "+getComputedStyle(document.body).getPropertyValue("--mono");
+  const span=d1-d0,step=span>1200?300:span>400?120:30;
+  for(let t=Math.ceil(d0/step)*step;t<d1;t+=step){
+    ctx.fillRect(X(t),tickY,1,4);ctx.fillText(fmtT(t),X(t)+3,tickY+9)}
+  if(anchorsVisible){
+    anchorsOf(r).forEach((a,i)=>{
+      const c=["#b78cf0","#f08cae","#8cc4f0"][i];
+      ctx.strokeStyle=c;ctx.lineWidth=1.2;ctx.globalAlpha=S.loupes?.9:.55;
+      ctx.beginPath();ctx.moveTo(X(a.t),0);ctx.lineTo(X(a.t),H-13);ctx.stroke();
+      ctx.globalAlpha=1;ctx.fillStyle=c;ctx.beginPath();
+      ctx.roundRect(X(a.t)-7,H-12,14,11,3);ctx.fill();
+      ctx.fillStyle="#14171c";ctx.font="bold 8px "+getComputedStyle(document.body).getPropertyValue("--sans");
+      ctx.fillText(i+1,X(a.t)-2,H-3.5);
+    });
+  }
+  const px=X(S.playT);
+  ctx.strokeStyle=S.playing?"#e4e9ef":"rgba(160,170,185,.5)";ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(px,2);ctx.lineTo(px,H-2);ctx.stroke();
+  $("#ovchip").textContent=r.sel?`overlap ${(r.coverage*100).toFixed(r.coverage>.99?1:0)}% · ${fmtT(r.vdur)}`:"no alignment";
+}
+function drawLane(ctx,track,t0,t1,X,y,lh,color,d0,d1,offSec=0){
+  const v0=Math.max(t0,d0),v1=Math.min(t1,d1);
+  const x0=X(v0),x1=X(v1);
+  const px=Math.max(2,Math.floor(x1-x0));if(px<3)return;
+  const bd=band(track,v0+offSec,v1+offSec,px); // track-local time = video time + offset
+  ctx.save();ctx.translate(x0,y+lh/2);
+  ctx.fillStyle=color;ctx.globalAlpha=.85;
+  ctx.beginPath();ctx.moveTo(0,0);
+  for(let x=0;x<px;x++)ctx.lineTo(x,bd[2*x+1]*-lh*.48);
+  for(let x=px-1;x>=0;x--)ctx.lineTo(x,bd[2*x]*-lh*.48);
+  ctx.closePath();ctx.fill();ctx.restore();
+}
+/* colored leader lines: loupe bottom-center down to its anchor pin */
+function drawConnectors(){
+  const c=$("#connect"),r=cur();
+  const open=S.loupes&&r.sel;
+  c.style.display=open?"block":"none";if(!open)return;
+  const rect=c.getBoundingClientRect();
+  c.width=rect.width*devicePixelRatio;c.height=rect.height*devicePixelRatio;
+  const ctx=c.getContext("2d");ctx.scale(devicePixelRatio,devicePixelRatio);
+  const ov=$("#ovcanvas").getBoundingClientRect();
+  const {d0,d1}=domain(r);
+  const els=$$("#loupes .loupe");
+  anchorsOf(r).forEach((a,i)=>{
+    const le=els[i];if(!le)return;
+    const lb=le.getBoundingClientRect();
+    const x0=lb.left+lb.width/2-rect.left;
+    const x1=ov.left+(a.t-d0)/(d1-d0)*ov.width-rect.left;
+    ctx.strokeStyle=LCOLORS[i];ctx.lineWidth=1.4;ctx.globalAlpha=.85;
+    ctx.beginPath();ctx.moveTo(x0,0);
+    ctx.bezierCurveTo(x0,rect.height*.75,x1,rect.height*.25,x1,rect.height+2);
+    ctx.stroke();
+  });
+}
+/* anchors: real rows use the dumped sync windows; demo rows use thirds */
+function anchorsOf(r){
+  if(r.loupeKey&&DATA.loupes[r.loupeKey])
+    return DATA.loupes[r.loupeKey].map(a=>({t:a.t,windowLagMs:a.windowLagMs,ncc:a.ncc,cam:a.cam,ext:a.ext}));
+  const [a,b]=r.cover.length?[r.cover[0][0],r.cover[r.cover.length-1][1]]:[0,r.vdur];
+  return [.15,.5,.85].map(f=>({t:lerp(a,b,f)}));
+}
+
+/* ---------- sync tools (fit line + real sparkline) ---------- */
+function renderSync(){
+  const r=cur(),f=$("#fitline");
+  if(r.fit){f.textContent=`fit RMS ${r.fit.rms.toFixed(2)} ms · ${r.fit.win} windows`;
+    f.className=r.fit.rms<0.7?"green":r.fit.rms<3?"amber":"red"}
+  else{f.textContent="fit — not measured";f.className="grey"}
+  const cv=$("#spark"),ctx=cv.getContext("2d");
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const midv=cv.height*.55;
+  ctx.strokeStyle="rgba(120,200,160,.8)";ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(6,midv);ctx.lineTo(cv.width-6,midv);ctx.stroke();
+  if(r.fit&&r.fit.windows){ // real windows: residual vs the current mapping
+    const res=r.fit.windows.map(w=>w.lagMs-(r.sel.off+w.t*r.sel.ppm*1e-3));
+    const mx=Math.max(1,...res.map(Math.abs));
+    r.fit.windows.forEach((w,i)=>{
+      const x=lerp(10,cv.width-10,w.t/r.vdur);
+      const y=midv-res[i]/mx*cv.height*.34;
+      if(w.accepted){ctx.fillStyle=`rgba(220,230,240,${.35+.65*w.ncc})`;
+        ctx.beginPath();ctx.arc(x,y,2.6,0,7);ctx.fill()}
+      else{ctx.strokeStyle="rgba(160,170,185,.45)";ctx.lineWidth=1;
+        ctx.beginPath();ctx.arc(x,y,2.4,0,7);ctx.stroke()}
+    });
+  }else if(r.fit){ // demo rows: plausible dots
+    for(let i=0;i<r.fit.win;i++){
+      const x=lerp(10,cv.width-10,i/(r.fit.win-1)),y=midv+(hash(r.id*9,i)-.5)*10;
+      ctx.fillStyle=`rgba(220,230,240,${.4+.6*hash(r.id,i)})`;
+      ctx.beginPath();ctx.arc(x,y,2.6,0,7);ctx.fill()}
+  }
+  ctx.fillStyle="rgba(93,102,115,.9)";ctx.font="8px sans-serif";ctx.fillText("DRIFT FIT",8,10);
+}
+
+/* ---------- editor / resolve / loupes ---------- */
+function candMeta(r,c){ // right-side facts: coverage + drift, never the raw z
+  const parts=[];
+  if(c.coverage)parts.push(`covers ${(c.coverage.fraction*100).toFixed(0)}%`);
+  else if(c.note)parts.push(c.note);
+  const sync=DATA.syncs[`${r.video}|${c.audio}`];
+  if(sync)parts.push(`drift ${sync.driftPpm.toFixed(sync.driftPpm>100?0:1)} ppm`);
+  return parts.join(" · ");
+}
+function renderEditor(){
+  const r=cur(),res=$("#resolve");
+  // rows that need a decision show their banner regardless of the tool strip
+  const needsResolve=(r.state==="ambiguous"||r.state==="noMatch")
+    ||(S.editor&&r.cands&&r.cands.length>1);
+  res.classList.toggle("open",needsResolve);
+  if(needsResolve){
+    const title=r.state==="ambiguous"?"Choose the audio for this take"
+      :r.state==="noMatch"?"No matching audio found"
+      :"Audio source — alternates available";
+    const head=`<div class="rtitle">${title}</div><div class="rsub">${r.detail}</div>`;
+    // every candidate stays listed forever — switching is always reversible (§3.6)
+    const cands=(r.cands||[]).map(c=>({...c,cur:!!r.sel&&c.audio===r.sel.audio}));
+    // candidate verdicts use the same logic the row will show after picking:
+    // on an ambiguous couple every rival is questionable; below-floor is none
+    const maxZ=Math.max(DATA.constants.zMin,...cands.map(c=>c.z));
+    res.innerHTML=head+(cands.length?`<div class="cands">${cands.map(c=>{
+      const v=r.state==="ambiguous"?"bad":c.z<DATA.constants.zMin?"none":"good";
+      return `<button class="cand${c.cur?" cur":""}" data-a="${c.audio}" title="match ${c.z.toFixed(1)}">${c.audio}
+       ${qstrHTML(c.z,v,maxZ)}
+       <span class="meta">${candMeta(r,c)}</span></button>`}).join("")}</div>`:"");
+    res.querySelectorAll(".cand").forEach(b=>b.onclick=()=>pickCandidate(b.dataset.a));
+  }
+  $("#toolsbtn").classList.toggle("on",S.editor);
+  $("#verifybtn").classList.toggle("on",r.verified);
+  $("#verifybtn").textContent=r.verified?"✓ Approved":"Approve (v)";
+  // §11.1 variant A: expanding the sync tools reveals the offset/drift readouts
+  // directly (one level — the disclosure IS the sync-tools toggle).
+  $("#readouts").classList.toggle("open",S.editor&&S.variant==="A"&&!!cur().sel);
+  if(cur().sel){$("#offin").value=cur().sel.off.toFixed(2);$("#driftin").value=cur().sel.ppm.toFixed(2)}
+  renderLoupes();
+}
+const LCOLORS=["#b78cf0","#f08cae","#8cc4f0"];
+function renderLoupes(){
+  const r=cur();
+  const open=S.loupes&&r.sel; // loupes toggle independently of the sync tools
+  $("#loupes").classList.toggle("open",!!open);
+  $("#loupebtn").classList.toggle("on",!!open);
+  if(!open)return;
+  const box=$("#loupes");box.innerHTML="";
+  const lock=document.createElement("span");lock.id="lockchip";
+  lock.textContent="lock zoom · on";lock.title="all loupes share one scale (v1 §2.3 — UI element only in this mockup)";
+  box.append(lock);
+  const anchors=anchorsOf(r);
+  anchors.forEach((a,i)=>{
+    const d=document.createElement("div");
+    d.className="loupe"+(i===S.focusAnchor?" focused":"");
+    d.style.setProperty("--lc",LCOLORS[i]);
+    d.onclick=()=>{S.focusAnchor=i;renderLoupes();drawConnectors()};
+    // local Δ against the *current* mapping (live under nudges); real where we have windows
+    let dl=null;
+    if(a.windowLagMs!==undefined)dl=a.windowLagMs-(r.sel.off+a.t*r.sel.ppm*1e-3);
+    else if(r.demo)dl=[+0.19,-0.08,+0.31][i]*lerp(.6,1.8,hash(r.id,i));
+    const cls=dl===null?"grey":Math.abs(dl)<0.7?"green":Math.abs(dl)<3?"amber":"red";
+    const dtxt=dl===null?"—":(dl>=0?"+":"")+dl.toFixed(2)+" ms";
+    d.innerHTML=`<div class="lhead"><span class="ldot"></span><span>${i+1} · ${fmtT(a.t)}</span>
+      <span class="delta" style="color:var(--${cls==="grey"?"ink3":cls})">local Δ ${dtxt}</span>
+      <span class="dimmer">±250ms</span><span style="margin-left:auto" class="dimmer">⌖ snap</span><span class="dimmer">⇥ align</span></div>
+      <canvas></canvas>`;
+    box.append(d);
+    const cv=d.querySelector("canvas");
+    requestAnimationFrame(()=>{
+      cv.width=cv.clientWidth*devicePixelRatio;cv.height=cv.clientHeight*devicePixelRatio;
+      const ctx=cv.getContext("2d");ctx.scale(devicePixelRatio,devicePixelRatio);
+      const W=cv.clientWidth,H=cv.clientHeight,win=0.5;
+      const u=a.t*(1+r.sel.ppm*1e-6)+r.sel.off/1000;
+      let b1,b2;
+      if(a.cam){ // dumped fine windows (real, 0.5 ms bins)
+        b1=resampleCols(a.cam,1,a.t-win/2,a.t+win/2,W);
+        b2=resampleCols(a.ext,1,u-win/2,u+win/2,W);
+      }else{
+        b1=band(TRACKS[r.video]||{seed:(r.vseed||1)+100,dur:r.vdur},a.t-win/2,a.t+win/2,W);
+        b2=band(TRACKS[r.sel.audio],u-win/2,u+win/2,W);
+      }
+      const norm=bd=>{let m=0;for(const v of bd)m=Math.max(m,Math.abs(v));return m>0?.86/m:1};
+      const g1=norm(b1),g2=norm(b2);
+      ctx.globalCompositeOperation="screen";
+      for(const [bd,g,col] of [[b1,g1,"#56cfc1"],[b2,g2,"#e8a64a"]]){
+        ctx.fillStyle=col;ctx.globalAlpha=.8;ctx.beginPath();
+        ctx.moveTo(0,H/2);
+        for(let x=0;x<W;x++)ctx.lineTo(x,H/2+bd[2*x+1]*g*-H/2);
+        for(let x=W-1;x>=0;x--)ctx.lineTo(x,H/2+bd[2*x]*g*-H/2);
+        ctx.closePath();ctx.fill();
+      }
+      ctx.globalCompositeOperation="source-over";ctx.globalAlpha=.6;
+      ctx.strokeStyle=LCOLORS[i];
+      ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke();ctx.globalAlpha=1;
+    });
+  });
+}
+
+/* ---------- export rail ---------- */
+/* the extension is owned by the format choice; names edit the stem only */
+function extOf(r){
+  const f=r.format||S.format;
+  return f==="Auto"?"mov":f.toLowerCase(); // Auto = match camera (this session: .mov)
+}
+function resolvedStem(r){ // template applies unless the row was renamed
+  if(r.exportName)return r.exportName;
+  const stem=r.video.replace(/\.\w+$/,"");
+  return $("#naming input").value.replace("<video-stem>",stem).replace(/\.?<ext>/,"");
+}
+function editName(r,row){
+  const nm=row.querySelector(".nm");
+  const inp=document.createElement("input");inp.value=resolvedStem(r);
+  nm.replaceWith(inp);inp.focus();inp.select(); // stem only — extension isn't editable
+  inp.onclick=e=>e.stopPropagation();
+  const commit=()=>{const v=inp.value.trim();
+    r.exportName=(v&&v!==resolvedStem({video:r.video}))?v:null;renderExport()};
+  inp.onblur=commit;
+  inp.onkeydown=e=>{if(e.key==="Enter")commit();if(e.key==="Escape")renderExport();e.stopPropagation()};
+}
+const FORMATS=["Auto","MOV","MP4","WAV"];
+function cycleFormat(r){ // per-couple override; null = the global default
+  const cur=r.format||null;
+  const next=FORMATS[(FORMATS.indexOf(cur||"Auto")+1)%FORMATS.length];
+  r.format=next==="Auto"?null:next;
+  renderExport();
+}
+function renderExport(){
+  const v=rows.filter(r=>r.verified);
+  const btn=$("#exportbtn");
+  btn.querySelector(".lab").textContent=S.exporting?"Exporting…":`Export (${v.length} file${v.length===1?"":"s"})`;
+  btn.disabled=!v.length||S.exporting;
+  $("#preflight").textContent=v.length?`preflight: ${(v.reduce((s,r)=>s+r.vdur,0)*0.0028).toFixed(1)} GB needed · 412 GB free ✓`:"";
+  const box=$("#expstat");box.innerHTML="";
+  for(const r of rows){
+    if(!r.verified&&!r.exp)continue;
+    const d=document.createElement("div");
+    d.className="est"+(r.id===S.sel?" sel":"")
+      +(r.exp==="run"?" run":r.exp==="done"?" done":r.exp&&r.exp!=="run"&&r.exp!=="done"?" fail":"");
+    let st=r.exp==null?"queued":r.exp==="run"?'<span class="bar"><i></i></span>':r.exp==="done"?"✓":"✗ "+r.exp;
+    d.innerHTML=`<span class="nm" title="click to rename (extension follows the format)">${resolvedStem(r)}<span class="ext">.${extOf(r)}</span>${r.exportName?'<span class="cust">custom</span>':""}</span>
+      <span class="undo${r.exportName?" avail":""}" title="back to the template name">↺</span>
+      <button class="fmt" title="format for this couple — click to change">${r.format||S.format}</button>
+      <span class="st">${st}</span>`;
+    d.onclick=()=>select(r.id); // same couple, selectable from either list
+    d.querySelector(".undo").onclick=e=>{e.stopPropagation();r.exportName=null;renderExport()};
+    d.querySelector(".nm").onclick=e=>{e.stopPropagation();editName(r,d)};
+    d.querySelector(".fmt").onclick=e=>{e.stopPropagation();cycleFormat(r)};
+    box.append(d);
+  }
+}
+
+/* =================================================================
+   Behaviors
+   ================================================================= */
+function select(i){S.sel=i;S.playT=0;S.playing=false;S.loupes=false;S.focusAnchor=0;drawAll()}
+function openEditor(on){
+  S.editor=on===undefined?!S.editor:on;
+  if(!S.editor)S.loupes=false;
+  drawAll();
+}
+function verifyToggle(r,advance){
+  if(S.vneedsear&&!r.auditioned&&!r.verified){toast("Audition first — <b>space</b> plays this take (§11.4 toggle is on).",true);return}
+  if(!r.sel){toast("Nothing to approve — this take has no audio paired.",true);return}
+  r.verified=!r.verified;
+  if(r.verified&&advance){
+    const ord=orderedRows(),pos=ord.indexOf(rows.indexOf(r));
+    for(let k=1;k<=ord.length;k++){const j=ord[(pos+k)%ord.length];
+      if(!rows[j].verified){S.sel=j;break}}
+  }
+  drawAll();
+}
+function verify(){verifyToggle(cur(),true)}
+/* picking a candidate (ambiguous banner / alternates) — real sync data when we have it */
+function applyPairing(r,name,z){
+  const key=`${r.video}|${name}`,sync=DATA.syncs[key];
+  if(sync){
+    r.sel={audio:name,z,off:sync.offsetMs,ppm:sync.driftPpm,baseOff:sync.offsetMs};
+    const acc=sync.windows.filter(w=>w.accepted).length;
+    r.fit={rms:sync.fitRmsMs,win:acc,windows:sync.windows};
+    r.loupeKey=key;
+    const alt=(r.cands||[]).find(a=>a.audio===name);
+    if(alt&&alt.coverage){r.cover=[[alt.coverage.t0,alt.coverage.t1]];r.coverage=alt.coverage.fraction}
+    else{r.cover=[[Math.max(0,-sync.offsetMs/1000),Math.min(r.vdur,TRACKS[name].dur-sync.offsetMs/1000)]];
+      r.coverage=(r.cover[0][1]-r.cover[0][0])/r.vdur}
+  }else{
+    r.sel={audio:name,z,off:0,ppm:0,baseOff:0};
+    r.fit=null;r.loupeKey=null;
+    r.cover=[[0,Math.min(r.vdur,TRACKS[name].dur)]];r.coverage=r.cover[0][1]/r.vdur;
+  }
+}
+function pickCandidate(name){
+  const r=cur();
+  const c=(r.cands||[]).find(c=>c.audio===name);if(!c)return;
+  if(r.sel&&name===r.sel.audio)return;
+  const wasAmbiguous=r.state==="ambiguous";
+  applyPairing(r,name,c.z);
+  r.state="manual";r.pinned=true;
+  r.detail=wasAmbiguous?"picked by you · pinned — the other candidates stay available above"
+                       :"switched by you · pinned";
+  toast(`<b>${r.video}</b> → ${name}${r.fit?` — full sync ran (fit RMS ${r.fit.rms.toFixed(2)} ms)`:""}. Pinned; switching back stays one click away.`);
+  drawAll();
+}
+function manualPair(i,name){
+  if(!name||!TRACKS[name])return;
+  const r=rows[i];S.sel=i;
+  const z=DATA.trayBestZ[name]??0;
+  const key=`${r.video}|${name}`;
+  if(DATA.syncs[key]){ // real pair we have full data for (bach 170 candidates)
+    const c=(r.cands||[]).find(a=>a.audio===name);
+    applyPairing(r,name,c?c.z:z);
+    r.state="manual";r.detail="paired by you · pinned";
+    toast(`<b>${r.video}</b> ← ${name}: full sync ran (fit RMS ${r.fit.rms.toFixed(2)} ms). Pinned.`);
+  }else{ // below the floor: keep it, say so (§3.6)
+    applyPairing(r,name,z);
+    r.state="forced";
+    r.detail=`kept your pairing · best correlation z ${z.toFixed(1)} < ${DATA.constants.zMin} — offset is a guess, check by ear`;
+    toast(`<b>${r.video}</b> ← ${name}: forced — correlation <b>below the floor</b> (z ${z.toFixed(1)} < ${DATA.constants.zMin}). The chip stays honest.`,true);
+  }
+  r.pinned=true;
+  r.cands=r.cands||[];
+  if(!r.cands.find(c=>c.audio===name))r.cands.unshift({audio:name,z});
+  DATA.unusedAudio=DATA.unusedAudio.filter(n=>n!==name);
+  drawAll();
+}
+function runExport(){
+  const queue=rows.filter(r=>r.verified);if(!queue.length||S.exporting)return;
+  S.exporting=true;queue.forEach(r=>r.exp=null);renderExport();
+  let i=0,done=0,failed=0,firstErr=null;
+  const prog=$("#exportbtn .prog");
+  function step(){
+    if(i>=queue.length){
+      S.exporting=false;prog.style.width=0;renderExport();renderQueue();
+      toast(`<b>${done} exported, ${failed} failed</b>${firstErr?" — "+firstErr:""}`,failed>0);return}
+    const r=queue[i];r.exp="run";renderExport();
+    const fails=r.video.startsWith("demo — two"); // demo: one job fails, batch continues (§6)
+    let p=0;
+    const iv=setInterval(()=>{
+      p+=8+Math.random()*10;
+      const bar=$("#expstat .est.run .bar i");if(bar)bar.style.width=Math.min(100,p)+"%";
+      prog.style.width=((i+Math.min(1,p/100))/queue.length*100)+"%";
+      if(fails&&p>42){clearInterval(iv);r.exp="disk full (errno 28)";failed++;firstErr=firstErr||"disk full (errno 28)";i++;renderExport();step()}
+      else if(p>=100){clearInterval(iv);r.exp="done";done++;i++;renderExport();step()}
+    },140);
+  }
+  step();
+}
+
+/* ---------- wiring ----------
+   §11.1 = A (offset/drift on-demand) and §11.4 = no-audition-required are
+   settled; S.variant stays "A" and S.vneedsear stays false (no live toggles). */
+$("#toolsbtn").onclick=()=>openEditor();
+$("#verifybtn").onclick=()=>verifyToggle(cur(),false);
+$("#naming input").oninput=()=>renderExport();
+$("#fmtseg").onclick=e=>{const b=e.target.closest("button");if(!b)return;
+  S.format=b.dataset.f;$$("#fmtseg button").forEach(x=>x.classList.toggle("on",x===b));renderExport()};
+$("#tray h3").onclick=()=>{S.poolOpen=!S.poolOpen;renderTray()}; // whole header toggles
+$("#poolimport").onclick=e=>{e.stopPropagation();
+  toast("Import dialog opens here (or drop files anywhere on the window — §2.1).")};
+/* drag-resize side rails */
+function dragSplit(el,side){
+  el.onpointerdown=e=>{
+    e.preventDefault();el.classList.add("active");
+    const startX=e.clientX,panel=side==="L"?$("#queue"):$("#export");
+    const w0=panel.getBoundingClientRect().width;
+    const move=ev=>{
+      const d=ev.clientX-startX;
+      const w=side==="L"?Math.max(260,Math.min(520,w0+d)):Math.max(240,Math.min(480,w0-d));
+      panel.style.width=panel.style.minWidth=w+"px";
+      drawHero();drawOverview();drawConnectors();
+    };
+    window.addEventListener("pointermove",move);
+    window.addEventListener("pointerup",()=>{el.classList.remove("active");
+      window.removeEventListener("pointermove",move)},{once:true});
+  };
+}
+dragSplit($("#splitL"),"L");dragSplit($("#splitR"),"R");
+$("#loupebtn").onclick=()=>{S.loupes=!S.loupes;drawAll()};
+$("#fitline").onclick=()=>{S.loupes=!S.loupes;drawAll()};
+$("#monitor").onclick=e=>{const b=e.target.closest("button");if(!b)return;
+  S.monitor=b.dataset.m;$$("#monitor button").forEach(x=>x.classList.toggle("on",x===b));drawHero()};
+$("#resync").onclick=()=>toast("Re-ran auto-sync — mapping updated, your anchors and loupes untouched.");
+$("#exportbtn").onclick=runExport;
+$("#playbtn").onclick=togglePlay;
+$("#ovcanvas").onpointerdown=e=>{
+  const r=cur(),w=$("#ovwrap"),{d0,d1}=domain(r);
+  // anchor flags live in the bottom gutter; clicking one summons the loupes
+  // focused on that anchor (clicks never toggle-close; esc/l dismiss)
+  if((S.editor||S.loupes)&&r.sel&&e.offsetY>w.clientHeight-15){
+    const X=t=>(t-d0)/(d1-d0)*w.clientWidth;
+    const hit=anchorsOf(r).findIndex(a=>Math.abs(X(a.t)-e.offsetX)<10);
+    if(hit>=0){S.loupes=true;S.focusAnchor=hit;drawAll();return}
+  }
+  const move=ev=>{S.playT=Math.max(0,Math.min(r.vdur,d0+(ev.offsetX/w.clientWidth)*(d1-d0)));drawOverview();drawHero()};
+  move(e);
+  $("#ovcanvas").onpointermove=move;
+  window.onpointerup=()=>{$("#ovcanvas").onpointermove=null};
+};
+$$("#readouts .nud button").forEach(b=>b.onclick=()=>{
+  const r=cur();if(!r.sel)return;const st=parseFloat(b.dataset.step);
+  if(b.dataset.d==="off")r.sel.off+=st;else r.sel.ppm+=st;
+  renderEditor();drawOverview();renderSync();
+});
+
+let playTimer=null;
+function togglePlay(){
+  const r=cur();S.playing=!S.playing;
+  $("#playbtn").textContent=S.playing?"⏸":"▶";
+  if(S.playing){r.auditioned=true;renderQueue();
+    playTimer=setInterval(()=>{S.playT+=0.1;if(S.playT>r.vdur){S.playT=0;togglePlay();return}
+      $("#timecode").textContent=fmtT(S.playT,true);drawOverview()},100);}
+  else clearInterval(playTimer);
+}
+
+document.addEventListener("keydown",e=>{
+  if(e.target.tagName==="INPUT"&&e.target.type!=="checkbox")return;
+  const ord=orderedRows(),pos=ord.indexOf(S.sel);
+  switch(e.key){
+    case "j": select(ord[Math.min(ord.length-1,pos+1)]);break;
+    case "k": select(ord[Math.max(0,pos-1)]);break;
+    case "v": verify();break;
+    case "Enter": openEditor();break;
+    case "l": if(cur().sel){S.loupes=!S.loupes;drawAll()}break;
+    case " ": e.preventDefault();togglePlay();break;
+    case "Escape": if(S.loupes){S.loupes=false;drawAll()}else openEditor(false);break;
+    case "ArrowLeft": case "ArrowRight":
+      if(S.editor&&cur().sel){ // content-relative: → moves the amber content right = offset −
+        const st=(e.shiftKey?10:e.altKey?0.1:1)*(e.key==="ArrowRight"?-1:1);
+        cur().sel.off+=st;renderEditor();drawOverview();renderSync();e.preventDefault()}
+      break;
+  }
+});
+
+function drawAll(){renderQueue();drawHero();drawOverview();renderSync();renderEditor();
+  requestAnimationFrame(drawConnectors)}
+window.onresize=()=>{drawHero();drawOverview();drawConnectors()};
+
+(async function boot(){
+  try{
+    DATA=await (await fetch("session-data.json")).json();
+  }catch(e){
+    document.body.innerHTML='<div style="padding:40px;font:14px sans-serif;color:#d8dee6">'+
+      'session-data.json failed to load — serve over http from the repo root '+
+      '(<code>python3 -m http.server</code>) and regenerate it with '+
+      '<code>python3 design/mockups-v2/generate-session-data.py</code> if missing.</div>';
+    return;
+  }
+  buildModel();
+  drawAll();
+})();
+</script>
+</body>
+</html>

@@ -570,3 +570,55 @@ the stage tolerance window. Asserted as `realdata_pair_confident_row`
 
 Session F complete. Next: Session G (queue-centric mockup, Phase 8) per the
 SPEC-V2 §12 kickoff; Session H prompt written after G converges.
+
+## 2026-06-12 — Session G, Phase 8 complete (queue-centric mockup converged)
+
+Interactive HTML mockup in `design/mockups-v2/` (the v1 real-data method), built
+and iterated with the owner over seven rounds, declared **converged**. No
+production code; nothing in `mac/` touched.
+
+- **Real data baked in.** The owner supplied `example_data/multifile-session`
+  (4 video + 7 audio, the bach recital). `generate-session-data.py` runs the
+  Phase-7 binary (`couple pair`/`sync`/`peaks`) + ffmpeg to bake the real
+  resolved couples, sync numbers, fit windows, waveform columns, and video
+  frames into `session-data.json`. Mockup rows 1–4 are fully real; three labeled
+  "demo —" rows cover the §3.3 states this session didn't produce (split / 2
+  sources / no match). Regenerable; documented in `design/mockups-v2/README.md`.
+- **V2-F2 calibration evidence captured on real data** (recorded in
+  UX-DECISIONS-V2 §V2.9): bach 170 resolves `ambiguous` (margin 3.3 < 6.0) with
+  ZOOM0031+ZOOM0027 measuring simultaneous (triangle Δ 1.6 ms); cross-take
+  decoys z 14–19 vs true 23–74; **true-pair fit RMS 4.5–5.3 ms, drift to ~90 ppm**
+  on the 2013 recorder — these are "good" yet RED under v1's thresholds, so the
+  verdict good/questionable line is [TUNE] pending owner-corpus calibration.
+- **Owner decisions ratified** (full behavior in UX-DECISIONS.md PART V2):
+  three-column shell with drag-resizable rails; "couple" as the user-facing
+  noun and "Approve" as the verify≡queue verb; queue in three live workflow
+  sections (QUEUED FOR EXPORT / TO APPROVE / TO FIX) replacing any sort control;
+  **quality = a three-state verdict dot** (good/questionable/none) with an action
+  word only when needed (match strength dropped from rows as false precision —
+  bimodal — kept only as a relative bar in the candidate picker); persistent
+  bottom tool bar (sync tools + loupes + Approve, nothing repositions);
+  candidates never destroyed + pinning; media pool generalizing the unused tray
+  with usage indicators + audio preview; export rail with editable naming +
+  per-couple stem/format override + the v1 Auto/MOV/MP4/WAV selector;
+  coverage-under-thumbnail strip; aspect ratio inviolable.
+- **SPEC-V2 §11 settled (all six):** §11.1 readouts = on-demand disclosure
+  (option A, revealed by expanding sync tools); §11.2 loupes on-demand
+  (loupes button / `l` / fit-status click / anchor-pin click → focuses that
+  anchor); §11.3 verdict dots + workflow sections; §11.4 approve needs NO
+  audition; §11.5 naming template editable + per-couple override; §11.6 re-pair
+  = drag audio from the pool onto a couple (below-floor kept as "forced").
+  Dispositions written into SPEC-V2 §11; the mockup's A/B comparison toggles
+  removed now that the options are decided.
+- **Out of scope, deferred to its own post-Session-H phase:** export
+  size/resolution targeting (re-encode pipeline; SPEC-CHANGE vs the v1
+  stream-copy contract). Recorded in UX-DECISIONS-V2 §V2.10.
+- **Tooling note (not project code):** `agent-browser`'s daemon wedged
+  repeatedly mid-session (EAGAIN/os error 35); root-caused and worked around
+  outside the repo (self-healing wrapper + global pin), captured in user memory.
+  The mockup itself was never the problem.
+
+UX-DECISIONS.md gains **PART V2** (the converged behavior spec; precedence per
+SPEC-V2 §0 — authority for v2, with Part v1 binding for everything v2 leaves
+unchanged). Session H (Phase 9, queue-centric shell) kickoff prompt written into
+SPEC-V2 §12. Next: Session H.

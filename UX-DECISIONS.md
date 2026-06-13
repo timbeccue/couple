@@ -299,4 +299,229 @@ Observed on the validated run: true alignment had coarse NCC 0.88 / fine (24 spb
 
 ---
 
-*End of document.*
+*End of v1 document.*
+
+---
+---
+
+# PART V2 — Queue-centric redesign (UX-DECISIONS-V2)
+
+**Provenance.** This part was written from the **converged Session G mockup**
+(`design/mockups-v2/`, the same real-data interactive-HTML method that produced
+Part v1 — see the top-of-document provenance note and `design/mockups/`). Rows
+1–4 of the mockup are the owner's real `multifile-session` resolved by the
+Phase-7 engine (`couple pair`/`sync`/`peaks`); the design was iterated with the
+owner over seven rounds on 2026-06-12 and declared converged that day.
+
+**Precedence.** Per SPEC-V2 §0, this part is the UX authority for v2 behavior
+and takes over from SPEC-V2's interim charter. **Part v1 above remains binding
+for everything v2 does not change** — the single-pair editor's interaction
+semantics, the alignment math (§2.1), anchors/loupes mechanics (§2.2–2.3), the
+nudge/pivot workflow (§2.4), audition (§2.7), export internals (§2.8), the
+engine requirements (§4). v2 demotes the v1 editor to a per-couple drill-down;
+it does not rewrite how that editor works once open. Session-D/E owner
+SPEC-CHANGEs (no anchor snap-on-drag, content-relative arrows, sync never
+disturbs a seen view, uniform-height panels, raw-sample loupe rendering, ⌥ for
+coarse drag) carry forward unchanged — see also the standing owner UX prefs in
+project memory.
+
+**Format.** Same DECIDED / owner-decision convention as Part v1. Cosmetic detail
+(exact spacing, dot size, colors, label wording) is explicitly NOT specified
+here — those are app-side polish (the v1 precedent: the owner re-judged many
+mockup-"DECIDED" visuals once the real shell existed). What is fixed below is
+behavior, structure, and vocabulary.
+
+## V2.0 The product (DECIDED, owner)
+
+The product is **many-takes triage**, not single-pair verification. Drop a
+session's files; the app auto-pairs and auto-syncs; the user walks the resulting
+**couples**, approving the good ones and fixing the rest; one action exports
+everything approved. The v1 verification editor is correct and kept — it becomes
+the drill-down a couple opens into, not the front door. Attention weights
+(SPEC-V2 §1) are realized as visual weight: queue ~25%, video hero ~30%,
+export ~20%, waveforms ~20%, sync tools ~5%.
+
+**"Couple" is the user-facing noun (DECIDED, owner).** A row = one video + its
+selected audio source + an alternates list. The app's name is literal: it
+couples audio to video. Used in copy throughout.
+
+## V2.1 Shell layout (DECIDED)
+
+Three columns, no modal screens — **everything is visible at once; there is no
+"editor screen" you navigate to and back from**:
+
+1. **Queue rail** (left, ~25%): session header, the couple list in workflow
+   sections (§V2.2), the media pool (§V2.6).
+2. **Center**: the **video hero** (top, greedy), the waveform stage (overview +
+   sync-tools panel), and a **persistent tool bar pinned to the bottom**
+   (§V2.4).
+3. **Export rail** (right, ~20%): destination, naming, format, the export
+   button, per-couple export status (§V2.5).
+
+- **Both side rails are drag-resizable** (owner); the center absorbs the slack.
+- The video hero is greedy for height; the waveform stage is bounded (carries
+  the v1 §1.2/Session-D resize policy: video absorbs extra height, waveforms
+  stay compact).
+- **Aspect ratio is inviolable** (owner): the video letterboxes, never
+  distorts, under any layout change (binding for Session H — the mockup's
+  canvas redraw is not the contract).
+
+## V2.2 The queue (DECIDED)
+
+- **Three workflow sections, not a sort control** (owner — supersedes SPEC-V2
+  §11.3's "sort by needs-attention?"): **QUEUED FOR EXPORT** (approved) /
+  **TO APPROVE** (good, unapproved) / **TO FIX** (questionable or no-match).
+  Couples migrate between sections live as they are approved or repaired. Empty
+  sections stay visible (dimmed, with counts) so movement is legible, not
+  appearing/vanishing chrome.
+- **Each couple shows**: video thumbnail, video filename, selected-audio
+  filename, a coverage strip, a quality dot, an approve checkbox.
+- **Coverage strip (DECIDED, owner)**: a thin amber bar **under the thumbnail**
+  on every couple, showing the span of the video timeline the audio covers.
+  Amber because amber is the external-audio identity color (so it reads as
+  audio, not a playhead); consistent on all couples (full coverage = full bar).
+  Coverage is a fact about the recording — it is **never** a quality penalty.
+
+## V2.3 Quality = the verdict model (DECIDED, owner — settles §11.3 vocabulary)
+
+Pairing quality is **three categories, not a continuous score**: **good /
+questionable / none**. Rationale (owner + Phase-7 data): fit is bimodal for
+same-source audio — it either locks (consistent drift line) or never converges;
+the only real middle ground is *two takes of the same piece*, which means "a
+human must choose," i.e. the questionable bucket. So:
+
+- **Indicator = a single status dot** in the verdict color: filled green
+  (good), filled red (questionable), hollow grey (none). A short **word rides
+  along only when action is needed**: "pick one" (ambiguous), "forced"
+  (below-floor manual), "no audio" (no match). Good couples show just a dot.
+- **Match strength (z) is NOT shown on couples** — bimodality makes a strength
+  meter false precision (rounds 1–4 tried a tick meter; dropped). Raw z lives
+  in the tooltip only.
+- **Relative strength survives only in the candidate picker**, where comparing
+  two same-piece takes is the actual task — a short relative bar, same verdict
+  colors.
+- Section membership mirrors the verdict: good→TO APPROVE, questionable/none→
+  TO FIX, approved→QUEUED.
+- **[TUNE] verdict thresholds.** v1's fit-RMS thresholds (green <0.7 ms, amber
+  <3 ms) do **not** transfer: true pairs on the owner's 2013 recorder run
+  ~4.5–5.3 ms RMS with drift to ~90 ppm and are unambiguously "good." The
+  good/questionable line must be re-calibrated on the owner corpus (this is the
+  V2-F2 calibration debt, now with real numbers — see §V2.9).
+
+## V2.4 Sync tools, loupes, approve — the persistent bottom bar (DECIDED)
+
+The demoted v1 editor lives in a **bar pinned to the bottom of the center
+column**, always present. Its toggles are same-place on/off switches (nothing
+repositions between states):
+
+- **⚙ sync tools** (also `Enter`): expands the offset/drift controls and shows
+  the anchor pins on the overview. **§11.1 DECIDED = on-demand disclosure
+  (owner chose option A):** the offset/drift numeric readouts + nudge buttons
+  exist and appear when sync tools are expanded — one level, not a nested
+  sub-disclosure. They are the manual-rescue surface the honesty architecture
+  requires; never deleted, just not a default surface. (Option B "gone
+  entirely" rejected.)
+- **◫ loupes** (also `l`, clicking the fit-status line, or clicking an anchor
+  pin): summons the magnified anchor views. **§11.2 DECIDED:** loupes are
+  on-demand, not resident; the default view shows video + overview + the
+  drift-fit sparkline, no loupes. Clicking an anchor pin focuses that anchor's
+  loupe. Loupes toggle independently of the sync tools. Dismiss with the same
+  control / `esc`.
+- **Approve** (also `v`, and the couple's checkbox): §V2.5.
+- **Anchor pins sit at the bottom edge of the overview**; their stems run up to
+  colored leader lines that connect to the loupes above (owner — loupes-on-top
+  geometry).
+
+Demotion specifics (SPEC-V2 §1/V2-F6, ratified):
+- **Auto-sync is ambient** — it runs on pairing; there is no hero Auto-sync
+  button. "↻ re-sync" is the re-run affordance, and (carrying the Session-D
+  rule) re-sync updates the mapping but never re-proposes anchors or re-frames
+  a view the user has seen.
+- The overview is narrowed and **shares its row with the sync-tools panel**
+  (fit status, the small drift-fit sparkline, re-sync).
+- **Lock-zoom** affordance is present; its behavior is v1 §2.3 unchanged.
+
+## V2.5 Approve ≡ queued; one flag (DECIDED, owner — SPEC-V2 §2.4 / V2-F4)
+
+- **"Approve" is the verb** (chosen over v1's "Verify"). Approving a couple
+  **is** queueing it for export; there is no separate export checkbox. The
+  export button reads "Export (n files)".
+- Approve is **clickable everywhere**: the couple's checkbox in the queue, the
+  Approve button in the bottom bar, and `v`. `v` also advances to the next
+  unapproved couple.
+- **§11.4 DECIDED (owner): approving does NOT require a prior audition.** The
+  verdict/chip can be trusted on its own; the honesty architecture already
+  floats anything uncertain into TO FIX, so gating approval on a listen would
+  tax the confident common case for no safety gain.
+
+## V2.6 Pairing, candidates, manual re-pair (DECIDED)
+
+- **Candidates are never destroyed.** Every candidate the resolver found stays
+  listed for a couple; switching the selection is always one click and fully
+  reversible (SPEC-V2 §3.6). A manual choice **pins** the couple (📌); re-runs
+  over new files may add alternates but never override a pinned selection.
+- **Resolve banner** (for ambiguous / no-match / has-alternates couples): a
+  plain-language title ("Choose the audio for this take" / "No matching audio
+  found" / "Audio source — alternates available"), the reason beneath, then the
+  candidate list. Each candidate shows the relative strength bar (§V2.3) and
+  **coverage · drift on the right — never the raw z number**. Ambiguous and
+  no-match couples carry **no selection** (never a coin-flip, V2-F2).
+- **§11.6 DECIDED — manual re-pair gesture: drag an audio file from the media
+  pool (or pick from the candidate list) onto a couple.** A manual pair runs a
+  full sync; if correlation is below the floor the couple keeps the pairing and
+  the dot goes questionable with "forced" (honest, SPEC-V2 §3.6).
+- **Monitor modes (Pan L/R | Overlay)** live in the video HUD (owner), beside
+  the timecode.
+
+## V2.7 Media pool (DECIDED — generalizes the v1 "+ add pair" / unused tray)
+
+- A **collapsible "MEDIA POOL · n"** section in the queue rail lists **every
+  imported file** (video and audio), each with a **usage indicator** ("take N"
+  / "alt · take N" / "unused · best match z"). Hovering a file highlights the
+  couples that reference it. Nothing the user dropped ever silently disappears.
+- **Audio files get a low-key preview** affordance (owner) — built-in playback
+  or macOS Quick Look in the real app.
+- **"+ import"** button; per SPEC §2.1 the whole window also stays a drop
+  target. Items are two-line so the rail never needs a horizontal scrollbar.
+
+## V2.8 Export rail (DECIDED — realizes SPEC-V2 §6)
+
+- One **destination folder**; **naming template** (default
+  `<video-stem>_synced.<ext>`) that is **editable** (settles §11.5 — configurable,
+  not fixed), with a **per-couple filename override** (the override edits the
+  *stem only*; the extension is owned by the format).
+- **Format selector carried from v1**: a global **Auto (match camera) / MOV /
+  MP4 / WAV** + keep-camera-audio-as-muted-track, with a **per-couple format
+  override** shown as a tag on the export row.
+- **Disk preflight** sums the queue; **"Export (n files)"** runs serial jobs
+  with per-row progress and **continue-past-failure** (a failed couple records
+  its error and the batch proceeds; summary reports "n exported, m failed").
+- Couples are **selectable from the export list too**; selection is shown in
+  both the queue and the export list (so you can click an export row to refresh
+  yourself on its contents before naming it).
+
+## V2.9 Calibration findings recorded from the real session (V2-F2)
+
+The converged mockup ran on the owner's real `multifile-session` (4 video,
+7 audio). Recorded for the future corpus calibration:
+
+- **bach 170 honestly refused to choose**: margin 3.3 < Z_MARGIN 6.0 ⇒
+  `ambiguous`, no selection. Notably ZOOM0031 + ZOOM0027 measured **simultaneous**
+  (triangle residual ~1.6 ms) while Gigue Recording was a different take —
+  the §3.4 triangle check working on real data.
+- **Cross-take z separation is real but thinner than unrelated content**: true
+  pairs z 23–74, different-take decoys z 14–19 (floor 8.5). The margin rule held.
+- **Fit RMS on true pairs: 4.5–5.3 ms; drift up to ~90 ppm** (2013 recorder).
+  This is "good," yet red under v1's thresholds — hence the §V2.3 [TUNE].
+
+## V2.10 Out of scope (own future phase)
+
+**Export size/resolution targeting** (cap output size or dimensions, trade
+video vs audio quality) is a real owner request but requires a re-encode
+pipeline — a SPEC-CHANGE against v1's stream-copy export contract (which is why
+export is fast, lossless, and byte-reproducible). Deferred to its own phase
+after Session H; the audio-vs-video quality knob is likely unnecessary (audio
+is a rounding error in a video bitrate budget — keep audio high, spend the rest
+on video).
+
+*End of v2 part.*
