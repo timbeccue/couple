@@ -63,6 +63,37 @@ public struct TrackMeta: Codable, Sendable {
     public var contentKey: String
 }
 
+// ---------- pairing (SPEC-V2 §3.2 / §4) ----------
+
+/// Role-agnostic stage-1 measurement between any two imported tracks
+/// (`cpl_pair_correlate` wire form). Lag convention: content at time t in
+/// track_a occurs at t + lagMs/1000 in track_b — so for (video, audio) this is
+/// the audio offset. `z` is the stage-1 peak prominence; a cell is a *candidate*
+/// when `!insufficientOverlap && z >= Z_MIN` (resolution is shell-side).
+public struct PairCorrelation: Codable, Sendable {
+    public var z: Double
+    public var lagMs: Double
+    public var ncc: Double
+    /// null (core None) when the peak was below floor and refinement was skipped.
+    public var fineNcc: Double?
+    public var overlapBins: UInt64
+    public var runnerUpZ: Double
+    public var refined: Bool
+    public var insufficientOverlap: Bool
+
+    public init(z: Double, lagMs: Double, ncc: Double, fineNcc: Double?, overlapBins: UInt64,
+                runnerUpZ: Double, refined: Bool, insufficientOverlap: Bool) {
+        self.z = z
+        self.lagMs = lagMs
+        self.ncc = ncc
+        self.fineNcc = fineNcc
+        self.overlapBins = overlapBins
+        self.runnerUpZ = runnerUpZ
+        self.refined = refined
+        self.insufficientOverlap = insufficientOverlap
+    }
+}
+
 // ---------- sync (§4.4) ----------
 
 public struct StagePeak: Codable, Sendable {

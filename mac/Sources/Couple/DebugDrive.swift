@@ -64,7 +64,8 @@ final class DebugDrive {
         guard !started else { return }
         started = true
         let env = ProcessInfo.processInfo.environment
-        guard env["COUPLE_OPEN_CAMERA"] != nil || env["COUPLE_PROFILE"] != nil else { return }
+        guard env["COUPLE_OPEN_CAMERA"] != nil || env["COUPLE_PAIR_DIR"] != nil
+            || env["COUPLE_PROFILE"] != nil || env["COUPLE_RESTORE_TEST"] != nil else { return }
         Task { await run(env: env) }
     }
 
@@ -76,17 +77,22 @@ final class DebugDrive {
             try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
             capture(to: "\(dir)/00-launch-empty.png")
         }
-        if let cam = env["COUPLE_OPEN_CAMERA"] {
-            model.pair.loadFile(URL(fileURLWithPath: cam))
-        }
-        if let ext = env["COUPLE_OPEN_EXTERNAL"] {
-            model.pair.loadFile(URL(fileURLWithPath: ext))
-        }
+        // v2: everything imports into the media pool, then resolves into couples.
+        // COUPLE_PAIR_DIR drives the whole-session queue gates; the single
+        // camera+external pair behaves like v1 (one couple, auto-paired, opened).
+        var dropURLs: [URL] = []
+        if let dir = env["COUPLE_PAIR_DIR"] { dropURLs.append(URL(fileURLWithPath: dir)) }
+        if let cam = env["COUPLE_OPEN_CAMERA"] { dropURLs.append(URL(fileURLWithPath: cam)) }
+        if let ext = env["COUPLE_OPEN_EXTERNAL"] { dropURLs.append(URL(fileURLWithPath: ext)) }
+        if !dropURLs.isEmpty { model.importDropped(dropURLs) }
 
-        // Wait for sync to finish (success or failure), up to 3 min.
+        // Wait for resolution + the selected couple's sync (success or failure),
+        // up to 3 min.
         for _ in 0..<1800 {
-            if model.pair.syncActivity == .succeeded { break }
-            if case .failed = model.pair.syncActivity { break }
+            if let c = model.selectedCouple, !model.resolving {
+                if c.pair.syncActivity == .succeeded { break }
+                if case .failed = c.pair.syncActivity { break }
+            }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         try? await Task.sleep(nanoseconds: 700_000_000) // settle/render
@@ -103,6 +109,12 @@ final class DebugDrive {
         }
         if env["COUPLE_E2E"] == "1" {
             await endToEnd(env: env)
+        }
+        if env["COUPLE_QUEUE_TEST"] == "1" {
+            await queueTest(env: env)
+        }
+        if env["COUPLE_RESTORE_TEST"] == "1" {
+            await restoreTest()
         }
         if env["COUPLE_AUTOQUIT"] == "1" {
             print("DEBUG-DRIVE: done, quitting")
@@ -268,6 +280,183 @@ final class DebugDrive {
         print(String(format: "E2E-AUDITION: playhead advanced %@ (60.0 → %.2f s); max |skew| after convergence %.1f ms (budget 33) — %@",
                      advancing ? "ok" : "STALLED", endT, maxSkew,
                      maxSkew <= 33 ? "PASS" : "FAIL"))
+    }
+
+    // MARK: - Queue gates (SPEC-V2 §7 shell phase): resolution parity, queue
+    // triage events (j/k/v/Enter), and the byte-identical batch export keystone.
+
+    private func queueTest(env: [String: String]) async {
+        guard let model else { return }
+        // Wait for resolution + every couple's background sync to settle.
+        for _ in 0..<3000 {
+            let pending = model.couples.contains { c in
+                c.pair.session != nil && (c.pair.syncActivity == .none || c.pair.isSyncRunning)
+            }
+            if !model.resolving && !pending { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        func verdictName(_ v: Verdict) -> String {
+            switch v {
+            case .good: return "good"
+            case .questionable: return "questionable"
+            case .none: return "none"
+            }
+        }
+        func section(_ c: CoupleRow) -> String {
+            if c.approved { return "QUEUED" }
+            return c.verdict == .good ? "TO-APPROVE" : "TO-FIX"
+        }
+        print("QUEUE-TEST: \(model.couples.count) couples · \(model.pool.videos.count) video · \(model.pool.audios.count) audio")
+        for c in model.couples {
+            let sel = c.selectedCandidate?.audioName ?? "—"
+            let cov = c.selectedCandidate.map { String(format: "%.1f%%", $0.coverage.fraction * 100) } ?? "—"
+            print("  \(c.video.name) [\(c.state.rawValue)] -> \(sel) (cov \(cov)) verdict=\(verdictName(c.verdict)) §\(section(c))")
+            for a in c.alternates { print("      alt: \(a.audioName)") }
+        }
+        let used = Set(model.couples.compactMap { $0.selectedAudioKey })
+        let unused = model.pool.audios.filter { !used.contains($0.id) }.map(\.name)
+        print("QUEUE-TEST unused: \(unused.joined(separator: ", "))")
+        print("QUEUE-DEST: \(model.exportDestination?.lastPathComponent ?? "nil")")
+
+        if let dir = env["COUPLE_QUEUE_SHOT_DIR"] {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            if let good = model.toApprove.first { model.select(good.id) }
+            model.syncToolsExpanded = true
+            await settle()
+            capture(to: "\(dir)/v2-01-queue.png")
+            model.loupesShown = true
+            await settle()
+            capture(to: "\(dir)/v2-02-loupes.png")
+            model.loupesShown = false
+            if let amb = model.toFix.first(where: { $0.needsResolve }) { model.select(amb.id) }
+            await settle()
+            capture(to: "\(dir)/v2-03-resolve-banner.png")
+            model.syncToolsExpanded = false
+            // Export rail with approved couples: in-place filenames, no template,
+            // global format only (owner 2026-06-13).
+            for c in model.couples where c.verdict == .good && c.pair.session != nil && !c.approved {
+                c.pair.toggleVerified()
+            }
+            if let good = model.queued.first { model.select(good.id) }
+            await settle()
+            capture(to: "\(dir)/v2-04-export.png")
+            print("QUEUE-SHOT: wrote screenshots to \(dir)")
+        }
+
+        await queueNavTest()
+
+        // Persist the queue (§5.4) so a restore can be exercised: approve the
+        // good couples through the model path (which saves), then write the file.
+        for c in model.couples where c.verdict == .good && c.pair.session != nil && !c.approved {
+            model.toggleApprove(c)
+        }
+        model.saveQueue()
+        print("QUEUE-SAVE: queue.json \(model.couples.count) couples, \(model.approvedCount) approved")
+
+        guard let outDir = env["COUPLE_BATCH_OUT"] else { return }
+        try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+        for c in model.couples where c.pair.session != nil && !c.approved { c.pair.toggleVerified() }
+        model.exportDestination = URL(fileURLWithPath: outDir)
+        model.globalFormat = .auto
+        model.globalKeepCameraAudio = false
+        print("QUEUE-TEST: batch exporting \(model.approvedCount) couple(s) → \(outDir)")
+        model.batch.run()
+        for _ in 0..<6000 {
+            if case .finished = model.batch.phase { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let expected = env["COUPLE_E2E_EXPECTED_SHA"] ?? ""
+        for c in model.couples {
+            if case .done(let url) = c.exportStatus {
+                let hash = sha256(url)
+                let verdict = (expected.isEmpty || model.couples.count != 1) ? ""
+                    : (hash == expected ? "  MATCHES Phase-4 CLI — PASS" : "  DIFFERS — FAIL")
+                print("QUEUE-EXPORT: \(c.video.name) -> \(url.lastPathComponent) sha256 \(hash)\(verdict)")
+            } else if case .failed(let msg) = c.exportStatus {
+                print("QUEUE-EXPORT: \(c.video.name) FAILED: \(msg)")
+            }
+        }
+    }
+
+    /// j/k/v/Enter over the queue (UX §2.9 extension to v2; SPEC-V2 §7).
+    private func queueNavTest() async {
+        guard let model, model.couples.count >= 2,
+              let win = NSApp.windows.first(where: { $0.isVisible }) else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        win.makeKeyAndOrderFront(nil)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        let pid = ProcessInfo.processInfo.processIdentifier
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("QUEUE-EVENT \(ok ? "ok  " : "FAIL") \(name)")
+        }
+        func key(_ code: CGKeyCode) async {
+            for down in [true, false] {
+                if let e = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down) {
+                    e.postToPid(pid)
+                }
+            }
+            try? await Task.sleep(nanoseconds: 160_000_000)
+        }
+        model.select(model.orderedCouples.first?.id)
+        try? await Task.sleep(nanoseconds: 120_000_000)
+        let first = model.selectedID
+        await key(38) // j
+        check("j → next couple", model.selectedID != nil && model.selectedID != first)
+        await key(40) // k
+        check("k → previous couple", model.selectedID == first)
+        let expanded = model.syncToolsExpanded
+        await key(36) // Return
+        check("Return toggles sync tools", model.syncToolsExpanded != expanded)
+        await key(36)
+        // v approves the selected couple (if it can be) and advances.
+        if let sel = model.selectedCouple, sel.pair.session != nil {
+            let id = sel.id
+            let was = sel.approved
+            await key(9) // v
+            check("v approves (= queue) the selected couple",
+                  model.couples.first { $0.id == id }?.approved != was)
+            // un-approve it again so the batch below starts clean.
+            if let c = model.couples.first(where: { $0.id == id }), c.approved { c.pair.toggleVerified() }
+        }
+        print("QUEUE-EVENT summary: \(pass) passed, \(fail) failed")
+    }
+
+    /// Restore round-trip (§5.4): load queue.json, re-import + re-resolve + overlay
+    /// the saved selections/approvals, and print the restored queue.
+    private func restoreTest() async {
+        guard let model else { return }
+        guard let saved = QueueStore.load() else {
+            print("RESTORE-TEST: no saved queue.json")
+            return
+        }
+        print("RESTORE-TEST: restoring \(saved.couples.count) couples (\(saved.couples.filter(\.approved).count) approved) from queue.json")
+        model.applyRestore(saved)
+        for _ in 0..<3000 {
+            let settled = !model.resolving && model.couples.count == saved.couples.count
+                && !model.couples.contains { $0.pair.session != nil
+                    && ($0.pair.syncActivity == .none || $0.pair.isSyncRunning) }
+            if settled { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        print("RESTORE-TEST: \(model.couples.count) couples, \(model.approvedCount) approved")
+        for c in model.couples {
+            print("  \(c.video.name) [\(c.state.rawValue)] -> \(c.selectedCandidate?.audioName ?? "—") approved=\(c.approved)")
+        }
+    }
+
+    private func sha256(_ url: URL) -> String {
+        let sha = Process()
+        sha.executableURL = URL(fileURLWithPath: "/usr/bin/shasum")
+        sha.arguments = ["-a", "256", url.path]
+        let pipe = Pipe()
+        sha.standardOutput = pipe
+        try? sha.run()
+        sha.waitUntilExit()
+        let line = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        return line.split(separator: " ").first.map(String.init) ?? "?"
     }
 
     // MARK: - Synthetic input events (verifies the UX §2.9 map end to end)

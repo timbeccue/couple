@@ -38,13 +38,6 @@ enum SyncActivity: Equatable {
     case failed(message: String)                 // Failed status or job error
 }
 
-struct PendingLoad: Identifiable {
-    let id = UUID()
-    let url: URL
-    let role: TrackRole
-    let filename: String
-}
-
 @MainActor
 @Observable
 final class PairSession {
@@ -56,7 +49,6 @@ final class PairSession {
     var external: SlotState = .empty
     var session: SessionHandle?
     var loadError: String?
-    var pendingReplace: PendingLoad?
 
     // Alignment shadow (canonical copy lives in core)
     var offsetMs: Double = 0
@@ -94,31 +86,33 @@ final class PairSession {
     /// Saved session found for this pair's content keys (restore offer, §14 6.8).
     private var restorable: SessionFile?
 
-    // Audition / playback (Phase 6)
-    let audition = AuditionController()
+    /// Audition / playback is a single shared controller across N couples (SPEC-V2
+    /// §5.3), owned by AppModel and injected here — a PairSession references it
+    /// (so the v1 editor's `pair.audition` keeps working) but never owns or frees
+    /// it; AppModel attaches it to whichever couple is selected.
+    let audition: AuditionController
 
     // Sync
     var syncActivity: SyncActivity = .none
     var lastSync: SyncResult?
     private var syncJob: Job<SyncResult>?
-    private var importJobs: [SlotKind: Job<TrackMeta>] = [:]
+    /// The in-flight auto-sync Task, so the per-couple serial queue (§5.2) can
+    /// await one couple's sync before starting the next.
+    @ObservationIgnored private var syncTask: Task<Void, Never>?
     private var remeasureTask: Task<Void, Never>?
 
-    init(engine: Engine, toasts: ToastCenter) {
+    init(engine: Engine, toasts: ToastCenter, audition: AuditionController) {
         self.engine = engine
         self.toasts = toasts
+        self.audition = audition
     }
 
-    /// Release core handles when this pair is replaced ("+ add pair").
+    /// Release the core session when this couple's selection changes or the app
+    /// tears down. Tracks are owned by the MediaPool (§5.1) — never freed here.
     func teardown() {
-        audition.teardown()
         cancelSync()
-        cancelImport(.camera)
-        cancelImport(.external)
         session?.free()
         session = nil
-        camera.track?.free()
-        external.track?.free()
         camera = .empty
         external = .empty
     }
@@ -188,109 +182,27 @@ final class PairSession {
         return abs(ppm) * (ov.upperBound - ov.lowerBound) / 1000
     }
 
-    // MARK: - Loading
+    // MARK: - Loading (SPEC-V2 §5.1 two-handles init; tracks owned by the pool)
 
-    func handleDropped(urls: [URL]) {
-        for url in urls {
-            loadFile(url)
-        }
-    }
-
-    func loadFile(_ url: URL) {
-        loadError = nil
-        let filename = url.lastPathComponent
-        Task {
-            do {
-                let info = try await Task.detached { [engine] in
-                    try engine.probe(url.path)
-                }.value
-                let role: TrackRole = info.video != nil ? .camera : .external
-                guard !info.audio.isEmpty || role == .external else {
-                    loadError = "\(filename): no audio stream"
-                    return
-                }
-                let slot = role == .camera ? camera : external
-                if slot.track != nil || slot.isBusy {
-                    // Same-kind replacement needs confirmation (UX §3).
-                    pendingReplace = PendingLoad(url: url, role: role, filename: filename)
-                } else {
-                    startImport(url: url, role: role)
-                }
-            } catch let e as CoreError {
-                loadError = "\(filename): \(e.message)"
-            } catch {
-                loadError = "\(filename): \(error.localizedDescription)"
-            }
-        }
-    }
-
-    func confirmReplace(_ pending: PendingLoad) {
-        pendingReplace = nil
-        // Replacing a track invalidates the session.
+    /// Build a couple's core session from two pool-owned tracks. Replaces v1's
+    /// probe→import→sessionReadyCheck path (the pool now owns that). Does NOT
+    /// auto-run sync — the per-couple serial queue (§5.2) drives that, so N
+    /// couples don't fire N concurrent syncs. A single video+audio drop ends up
+    /// as one couple whose sync runs immediately, behaving exactly like v1.
+    func load(cameraTrack: TrackHandle, externalTrack: TrackHandle) {
+        teardown()
         resetAlignment()
-        session = nil
-        startImport(url: pending.url, role: pending.role)
-    }
-
-    private func startImport(url: URL, role: TrackRole) {
-        let kind: SlotKind = role == .camera ? .camera : .external
-        let filename = url.lastPathComponent
-        setSlot(kind, .importing(filename: filename, phase: "Decode", fraction: 0))
+        camera = .loaded(cameraTrack)
+        external = .loaded(externalTrack)
         do {
-            let job = try engine.importStart(url.path, role: role)
-            importJobs[kind] = job
-            Task {
-                for await p in job.progress {
-                    if case .importing = self.slot(kind) {
-                        self.setSlot(kind, .importing(filename: filename, phase: p.phase, fraction: p.fraction))
-                    }
-                }
-                do {
-                    let meta = try await job.value()
-                    self.setSlot(kind, .loaded(self.engine.track(meta)))
-                    self.importJobs[kind] = nil
-                    self.sessionReadyCheck()
-                } catch JobError.cancelled {
-                    self.setSlot(kind, .empty)
-                    self.importJobs[kind] = nil
-                } catch {
-                    self.setSlot(kind, .empty)
-                    self.importJobs[kind] = nil
-                    self.loadError = "\(filename): \((error as? JobError).map(String.init(describing:)) ?? error.localizedDescription)"
-                }
-            }
+            session = try engine.sessionNew(camera: cameraTrack, external: externalTrack)
         } catch {
-            setSlot(kind, .empty)
-            loadError = "\(filename): \((error as? CoreError)?.message ?? error.localizedDescription)"
+            loadError = "session: \((error as? CoreError)?.message ?? error.localizedDescription)"
         }
-    }
-
-    func cancelImport(_ kind: SlotKind) {
-        importJobs[kind]?.cancel()
     }
 
     func slot(_ kind: SlotKind) -> SlotState {
         kind == .camera ? camera : external
-    }
-
-    private func setSlot(_ kind: SlotKind, _ state: SlotState) {
-        if kind == .camera { camera = state } else { external = state }
-    }
-
-    /// Both imports landed → create the session and auto-sync (UX §2.5, DECIDED).
-    private func sessionReadyCheck() {
-        guard session == nil, let cam = camera.track, let ext = external.track else { return }
-        do {
-            let s = try engine.sessionNew(camera: cam, external: ext)
-            session = s
-            audition.attach(session: s,
-                            videoURL: URL(fileURLWithPath: cam.meta.info.path),
-                            videoDuration: cam.durationS)
-            offerRestoreIfAvailable()
-            runAutoSync()
-        } catch {
-            loadError = "session: \((error as? CoreError)?.message ?? error.localizedDescription)"
-        }
     }
 
     private func resetAlignment() {
@@ -310,13 +222,17 @@ final class PairSession {
 
     // MARK: - Auto-sync
 
-    func runAutoSync() {
+    /// `announce` toasts the result. v2 auto-sync is ambient (§V2.4): the per-
+    /// couple serial queue runs silent (the verdict dot + fit-status line carry
+    /// the result), so N couples don't stack N toasts. An explicit user re-sync
+    /// passes announce: true.
+    func runAutoSync(announce: Bool = true) {
         guard let session, !isSyncRunning else { return }
         do {
             let job = try session.autoSyncStart()
             syncJob = job
             syncActivity = .running(label: "Searching…", fraction: 0)
-            Task {
+            syncTask = Task {
                 for await p in job.progress {
                     let label: String
                     switch p.phase {
@@ -331,7 +247,7 @@ final class PairSession {
                 }
                 do {
                     let result = try await job.value()
-                    self.applySyncResult(result)
+                    self.applySyncResult(result, announce: announce)
                 } catch JobError.cancelled {
                     self.syncActivity = .none // back to unaligned unverified (UX §3)
                 } catch {
@@ -348,7 +264,13 @@ final class PairSession {
         syncJob?.cancel()
     }
 
-    private func applySyncResult(_ result: SyncResult) {
+    /// Await the in-flight auto-sync (for the §5.2 serial per-couple queue). The
+    /// Task self-cleans on completion; awaiting a finished/absent sync is a no-op.
+    func awaitSync() async {
+        await syncTask?.value
+    }
+
+    private func applySyncResult(_ result: SyncResult, announce: Bool = true) {
         lastSync = result
         switch result.status {
         case .synced, .lowConfidence:
@@ -363,12 +285,14 @@ final class PairSession {
                 accepted, result.windows.count,
                 result.fitRmsMs.map { String(format: "%.2f ms", $0) } ?? "—",
                 result.suggestedDriftMode == .resample ? "suggested: resample" : "suggested: none")
-            if case .synced = result.status {
-                toasts.show(Toast(style: .success, title: "Auto-sync complete", detail: detail))
-            } else {
-                toasts.show(Toast(style: .warning,
-                                  title: "Low-confidence result — please review",
-                                  detail: detail))
+            if announce {
+                if case .synced = result.status {
+                    toasts.show(Toast(style: .success, title: "Auto-sync complete", detail: detail))
+                } else {
+                    toasts.show(Toast(style: .warning,
+                                      title: "Low-confidence result — please review",
+                                      detail: detail))
+                }
             }
         case .failed(let reason, let detail):
             // Mapping untouched — no half-applied guess (UX §3).
@@ -379,8 +303,10 @@ final class PairSession {
                 msg = String(format: "No plausible correlation peak (best z %.1f)", detail)
             }
             syncActivity = .failed(message: msg)
-            toasts.show(Toast(style: .error, title: "Auto-sync failed",
-                              detail: msg + " — coarse-drag the external lane to rescue, then re-sync"))
+            if announce {
+                toasts.show(Toast(style: .error, title: "Auto-sync failed",
+                                  detail: msg + " — coarse-drag the external lane to rescue, then re-sync"))
+            }
         }
         // Anchors are proposed only when none exist yet; a re-sync must not
         // disturb the view the user has set up (owner decision 2026-06-12,
@@ -812,6 +738,45 @@ final class PairSession {
         exportJob?.cancel()
     }
 
+    struct ExportError: LocalizedError {
+        let message: String
+        var errorDescription: String? { message }
+    }
+
+    /// Awaited export for the batch coordinator (§6). Identical options and
+    /// pipeline to the single export above — so a batch is byte-identical to the
+    /// Phase-4 CLI export, couple by couple — but serialized via `await`.
+    /// format/keepCameraAudio come from the couple's effective settings; drift
+    /// mode lives in the core session and is honored unchanged.
+    func exportAwait(to url: URL, format: ExportFormat, keepCameraAudio: Bool,
+                     onProgress: @escaping (Double) -> Void) async throws {
+        guard let session, verified else { throw ExportError(message: "not approved") }
+        let opts: [String: Any] = [
+            "kind": format == .wav ? "wav" : "mux",
+            "outputPath": url.path,
+            "keepCameraAudio": keepCameraAudio && format != .wav,
+            "container": format == .mov ? "mov" : format == .mp4 ? "mp4" : "auto",
+            "faststart": false,
+            "overwrite": true,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: opts),
+              let json = String(data: data, encoding: .utf8) else {
+            throw ExportError(message: "bad export options")
+        }
+        let job = try session.exportStart(optionsJSON: json)
+        exportJob = job
+        exportActivity = .running(phase: "ExportRender", fraction: 0)
+        let progressTask = Task {
+            for await p in job.progress {
+                self.exportActivity = .running(phase: p.phase, fraction: p.fraction)
+                onProgress(p.fraction)
+            }
+        }
+        defer { progressTask.cancel(); exportActivity = .idle; exportJob = nil }
+        _ = try await job.value()
+        autosave()
+    }
+
     // MARK: - Autosave / restore (§11.5, §14 item 6.8)
 
     func autosave() {
@@ -835,7 +800,21 @@ final class PairSession {
         ), seconds: 15)
     }
 
-    func applyRestored() {
+    /// Apply this pair's saved per-pair alignment (SessionStore) if present — the
+    /// §5.4 restore path, used by the queue-level restore so manual edits and the
+    /// approved state come back, not just a fresh re-sync. Returns false when no
+    /// saved file exists (the caller then auto-syncs instead).
+    @discardableResult
+    func restoreSavedAlignment() -> Bool {
+        guard let cam = camera.track, let ext = external.track,
+              let saved = SessionStore.load(cameraKey: cam.meta.contentKey,
+                                            externalKey: ext.meta.contentKey) else { return false }
+        restorable = saved
+        applyRestored(announce: false)
+        return true
+    }
+
+    func applyRestored(announce: Bool = true) {
         guard let session, let saved = restorable else { return }
         cancelSync()
         do {
@@ -859,6 +838,6 @@ final class PairSession {
         measurementCenters = a.anchors.map { mapping.localLagMs($0) }
         driftWindows = a.driftWindows
         syncActivity = driftWindows.isEmpty ? .none : .succeeded
-        toasts.show(Toast(style: .success, title: "Session restored"))
+        if announce { toasts.show(Toast(style: .success, title: "Session restored")) }
     }
 }

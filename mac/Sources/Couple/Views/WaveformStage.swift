@@ -417,6 +417,11 @@ private struct AnchorPin: View {
 
     var body: some View {
         pinBody
+            // Clicking a pin summons the loupes and focuses this anchor (§V2.4).
+            .onTapGesture {
+                model.loupesShown = true
+                model.audition.focusedAnchor = index
+            }
             .gesture(
                 DragGesture(minimumDistance: 1)
                     .onChanged { g in

@@ -117,4 +117,30 @@ public final class Engine: @unchecked Sendable {
     public func cacheGC(maxBytes: UInt64) -> UInt64 {
         cpl_cache_gc(ctx, maxBytes)
     }
+
+    // ---------- pairing (SPEC-V2 §4) ----------
+
+    /// Role-agnostic stage-1 between any two imported tracks. Never errors on a
+    /// poor match (below-floor cells keep the coarse lag); nil only on a real
+    /// core fault.
+    public func pairCorrelate(_ a: TrackHandle, _ b: TrackHandle) -> PairCorrelation? {
+        (try? decodeOptionalJSON(cpl_pair_correlate(ctx, a.id, b.id), as: PairCorrelation.self)) ?? nil
+    }
+
+    /// Batch candidate matrix: result[i] is video i's row of cells, one per
+    /// audio (same wire form as `pairCorrelate`). Returns one empty row per
+    /// video when there are no audios; nil only on a core fault.
+    public func pairCandidates(videos: [TrackHandle], audios: [TrackHandle]) -> [[PairCorrelation]]? {
+        guard !videos.isEmpty else { return [] }
+        guard !audios.isEmpty else { return videos.map { _ in [] } }
+        let vs = videos.map(\.id)
+        let aus = audios.map(\.id)
+        return vs.withUnsafeBufferPointer { vp in
+            aus.withUnsafeBufferPointer { ap in
+                try? decodeJSON(
+                    cpl_pair_candidates(ctx, vp.baseAddress, UInt(vp.count), ap.baseAddress, UInt(ap.count)),
+                    as: [[PairCorrelation]].self)
+            }
+        }
+    }
 }

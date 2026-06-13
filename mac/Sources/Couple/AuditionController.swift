@@ -80,7 +80,11 @@ final class AuditionController {
 
     var isAttached: Bool { session != nil }
 
-    func attach(session: SessionHandle, videoURL: URL, videoDuration: Double) {
+    /// Attach to a couple (§5.3 detach/attach/swap): teardown closes any open
+    /// audition handle (exactly one open at a time), swaps the AVPlayer item, and
+    /// seeks the poster. A nil session attaches video-only (an unpaired couple
+    /// shows its frame; play() no-ops until a source is chosen).
+    func attach(session: SessionHandle?, videoURL: URL, videoDuration: Double) {
         teardown()
         self.session = session
         self.videoDuration = videoDuration

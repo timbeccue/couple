@@ -486,13 +486,17 @@ Demotion specifics (SPEC-V2 §1/V2-F6, ratified):
 
 ## V2.8 Export rail (DECIDED — realizes SPEC-V2 §6)
 
-- One **destination folder**; **naming template** (default
-  `<video-stem>_synced.<ext>`) that is **editable** (settles §11.5 — configurable,
-  not fixed), with a **per-couple filename override** (the override edits the
-  *stem only*; the extension is owned by the format).
-- **Format selector carried from v1**: a global **Auto (match camera) / MOV /
-  MP4 / WAV** + keep-camera-audio-as-muted-track, with a **per-couple format
-  override** shown as a tag on the export row.
+- One **destination folder**; **per-file naming** — each couple's output
+  filename (default `<video-stem>_synced`) is **edited in place** by clicking it
+  in the export list, with a one-click ↺ reset to the default. The extension is
+  owned by the format selector. **REVISED (owner 2026-06-13, Phase 9):** the
+  global editable *naming template* originally specified here was removed — it
+  was brittle and offered no way to recover a mistyped value; per-file in-place
+  naming replaces it. (Supersedes the §11.5 "editable template" disposition.)
+- **Format selector carried from v1**: a **single global** **Auto (match camera)
+  / MOV / MP4 / WAV** + keep-camera-audio-as-muted-track. **REVISED (owner
+  2026-06-13, Phase 9):** the per-couple format override (a tag on the export
+  row) was removed — format is a whole-batch choice, not per file.
 - **Disk preflight** sums the queue; **"Export (n files)"** runs serial jobs
   with per-row progress and **continue-past-failure** (a failed couple records
   its error and the batch proceeds; summary reports "n exported, m failed").

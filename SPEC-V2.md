@@ -241,10 +241,15 @@ live; budget accordingly.)
 
 ## 6. Batch export
 
-- **One folder, automatic naming.** Default template `<video-stem>_synced.<ext>`
-  [SPEC]; extension from the §8.4 codec matrix (per-row Auto unless the row's
-  editor set an explicit format). Collisions append `_2`, `_3`, …; an existing
-  file from a previous run prompts once per batch (replace all / skip existing).
+- **One folder, per-file naming.** Each couple's output filename defaults to
+  `<video-stem>_synced` and is **edited in place** in the export list (click the
+  name). The global editable naming *template* was tried and removed (owner
+  2026-06-13, Phase 9): it was brittle and unrecoverable once mangled — per-file
+  names are simpler and safer. The extension comes from the **single global**
+  format selector (§8.4 codec matrix; Auto = camera container) — there is **no
+  per-couple format override** (owner 2026-06-13). Collisions append `_2`, `_3`,
+  …; an existing file from a previous run prompts once per batch (replace all /
+  skip existing).
 - **Disk preflight sums the whole queue** before the first job starts.
 - **Serial execution** over the existing export job (stream-copy is ~16 s per
   24-min take; parallelism is not worth the I/O contention or the progress-UI
@@ -361,9 +366,11 @@ in UX-DECISIONS.md Part V2; dispositions below. (DECIDED by owner unless noted.)
    TO FIX), not a sort control. (§V2.2–V2.3.)
 4. **`v` does NOT require a prior audition.** The verdict is trustworthy on its
    own; uncertain couples already float to TO FIX. (§V2.5.)
-5. **Naming template is editable** (default `<video-stem>_synced.<ext>`), with a
-   per-couple filename override (stem only; extension owned by the format
-   selector). Configurable, not fixed. (§V2.8.)
+5. **Per-file naming, edited in place** (default `<video-stem>_synced`; click the
+   name in the export list to rename, ↺ to reset). The global editable *template*
+   originally settled here was **removed in Phase 9** (owner 2026-06-13): brittle
+   and unrecoverable once mistyped. The extension is owned by the single global
+   format selector. (§V2.8.)
 6. **Manual re-pair gesture → drag an audio file from the media pool (or pick
    from the candidate list) onto a couple.** Below-floor pairings are kept and
    marked "forced". (§V2.6.)
@@ -372,7 +379,8 @@ Additional decisions taken at convergence (beyond the six listed): "couple" as
 the user-facing noun; "Approve" as the verb for verify≡queue; the persistent
 bottom tool bar; drag-resizable side rails; the media pool generalizing the
 unused tray with usage indicators + audio preview; the v1 format selector
-(Auto/MOV/MP4/WAV + keep-camera-audio) carried over with per-couple override;
+(Auto/MOV/MP4/WAV + keep-camera-audio) carried over as a **single global**
+control (the per-couple override was removed in Phase 9, owner 2026-06-13);
 export size/resolution targeting deferred to its own post-Session-H phase. The
 verdict good/questionable thresholds ship [TUNE] pending owner-corpus
 calibration (real true-pair fit RMS ~5 ms breaks v1's thresholds — V2-F2, now

@@ -35,6 +35,21 @@ enum Theme {
 
     static let accent = Color(red: 0.36, green: 0.62, blue: 0.98)
 
+    // Verdict-model dots (UX-DECISIONS-V2 §V2.3): good / questionable / none.
+    // Hues kept deliberately distinct from the approve-green/amber so the dot
+    // (pairing quality) never reads as the approve state. [TUNE] thresholds.
+    static let verdictGood = Color(red: 0.28, green: 0.80, blue: 0.58)        // emerald
+    static let verdictQuestionable = Color(red: 0.97, green: 0.40, blue: 0.42) // red
+    static let verdictNone = Color.white.opacity(0.28)                        // hollow grey
+
+    static func verdictColor(_ v: Verdict) -> Color {
+        switch v {
+        case .good: return verdictGood
+        case .questionable: return verdictQuestionable
+        case .none: return verdictNone
+        }
+    }
+
     static func deltaColor(absMs: Double) -> Color {
         if absMs < 0.7 { return good }
         if absMs < 3.0 { return warn }

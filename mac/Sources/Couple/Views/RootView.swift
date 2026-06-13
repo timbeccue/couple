@@ -1,85 +1,60 @@
-// Window bands (owner redesign 2026-06-12): workflow strip (greedy — extra
-// height grows the video preview) / waveform stage (bounded) / footer. Below
-// ~1000×640 the window scrolls rather than crushing content.
+// Root layout (§V2.1): three columns with no modal screens — everything visible
+// at once. Empty session ⇒ the load surface; otherwise the queue rail (left),
+// the video-hero center, and the export rail (right), with both side rails
+// drag-resizable (HSplitView) and the center absorbing the slack. The whole
+// window stays a drop target (§2.1).
 
 import CoupleKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        GeometryReader { geo in
-            let needsScroll = geo.size.width < 1000 || geo.size.height < 640
-            Group {
-                if needsScroll {
-                    ScrollView([.horizontal, .vertical]) {
-                        content
-                            .frame(width: max(1000, geo.size.width),
-                                   height: max(640, geo.size.height))
-                    }
-                } else {
-                    content
-                }
-            }
-        }
-        .background(Theme.windowBg)
-        .overlay(ToastOverlay(center: model.toasts))
-        .confirmationDialog(
-            "Replace \(model.pair.pendingReplace?.role == .camera ? "camera" : "external") file?",
-            isPresented: Binding(
-                get: { model.pair.pendingReplace != nil },
-                set: { if !$0 { model.pair.pendingReplace = nil } }
-            )
-        ) {
-            if let pending = model.pair.pendingReplace {
-                Button("Replace with \(pending.filename)", role: .destructive) {
-                    model.pair.confirmReplace(pending)
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The current alignment will be discarded.")
-        }
-        .confirmationDialog(
-            "Open a new pair?",
-            isPresented: Binding(
-                get: { model.confirmingNewPair },
-                set: { model.confirmingNewPair = $0 }
-            )
-        ) {
-            Button("Discard current pair", role: .destructive) {
-                model.startNewPair()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The current pair's alignment has not been exported. Opening a new pair replaces it.")
-        }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        let pair = model.pair
         VStack(spacing: 0) {
-            if pair.session == nil {
-                LoadSurface()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                WorkflowStrip()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                WaveformStage()
+            Group {
+                if !model.hasContent {
+                    LoadSurface()
+                } else {
+                    HSplitView {
+                        QueueRail()
+                            .frame(minWidth: 248, idealWidth: 304, maxWidth: 440)
+                        CenterColumn()
+                            .frame(minWidth: 460)
+                            .layoutPriority(1)
+                        ExportRail()
+                            .frame(minWidth: 224, idealWidth: 280, maxWidth: 400)
+                    }
+                }
             }
             FooterBar()
         }
+        .background(Theme.windowBg)
+        .overlay(ToastOverlay(center: model.toasts))
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            Task { await ingest(providers) }
+            return true
+        }
+    }
+
+    private func ingest(_ providers: [NSItemProvider]) async {
+        var urls: [URL] = []
+        for p in providers {
+            if let url = await withCheckedContinuation({ (c: CheckedContinuation<URL?, Never>) in
+                _ = p.loadObject(ofClass: URL.self) { url, _ in c.resume(returning: url) }
+            }) { urls.append(url) }
+        }
+        if !urls.isEmpty { model.importDropped(urls) }
     }
 }
 
-// MARK: - Footer
+// MARK: - Footer cheat line (v2 keys)
 
 struct FooterBar: View {
     var body: some View {
         HStack(spacing: 6) {
-            Text("←/→ move external 1 ms · ⇧ 10 ms · ⌥ 0.1 ms     [ ] drift 1 ppm · ⌥ 0.1 ppm     drag loupe = offset · ⇧-drag = pivot drift · scroll = zoom     v verify")
+            Text("j/k move · v approve (=queue) · ⏎/⚙ sync tools · l/◫ loupes · esc collapse     ←/→ offset 1 ms · ⇧ 10 · ⌥ 0.1 · [ ] drift · drag loupe = offset · ⇧-drag = pivot")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)

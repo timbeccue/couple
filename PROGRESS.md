@@ -622,3 +622,163 @@ UX-DECISIONS.md gains **PART V2** (the converged behavior spec; precedence per
 SPEC-V2 §0 — authority for v2, with Part v1 binding for everything v2 leaves
 unchanged). Session H (Phase 9, queue-centric shell) kickoff prompt written into
 SPEC-V2 §12. Next: Session H.
+
+## 2026-06-13 — Session H, Phase 9 complete (queue-centric SwiftUI shell)
+
+Implemented the v2 shell (SPEC-V2 §5/§6, UX-DECISIONS-V2). No v1 engine behavior,
+ABI symbol, frozen regression value, or Phase-7 result changed — the v1 editor is
+reused intact as the per-couple drill-down, and the v1 single-pair path still
+behaves like v1 (one couple, auto-paired, opened; byte-identical export).
+
+- **CoupleKit pair layer** (`Wire.swift`, `Engine.swift`): `PairCorrelation` wire
+  type + `Engine.pairCorrelate`/`pairCandidates` over the existing
+  `cpl_pair_correlate`/`cpl_pair_candidates`. No new ABI symbols. (Decode bug
+  caught + fixed: core's `fine_ncc: Option<f64>` serializes `null`, so `fineNcc`
+  must be `Double?` — a non-optional decode silently emptied the whole matrix.)
+- **Resolver** (`Resolver.swift`): the Phase-7 `cli/src/pair.rs` resolution
+  (coverage via `overlap_info` ppm 0, interval clustering, §3.4 triangle closure
+  memoized/antisymmetric, §3.5 margin, the six states + chip text, name/z tie-
+  breaks) lifted into the shell so the user can override it. Runs off-main.
+- **MediaPool** (`MediaPool.swift`, the one real refactor): a session-level pool
+  owns probe→classify→import and holds `TrackHandle`s by content key (dedup);
+  the pool holding open handles IS the V2-F3 cache-GC pin (Session-F liveness-
+  via-open-handles). `PairSession` gains a two-handles `load(...)` init and no
+  longer owns import or frees pool tracks.
+- **Queue model** (`AppModel.swift`, `Couple.swift`): `AppModel` = pool + couple
+  list + selection; `CoupleRow` = video + selected audio + alternates + pinned/
+  forced + approved(≡`pair.verified`) + export overrides + status + verdict.
+  Three live workflow sections (QUEUED/TO APPROVE/TO FIX). Per-couple sync in a
+  serialized background queue; verdict dots from the §V2.3 model. j/k/v/Enter
+  triage; manual re-pair (drag pool audio onto a couple, or candidate pick;
+  below-floor kept as `forced`); candidates never destroyed + pinning.
+- **Audition lifecycle** (§5.3): one shared `AuditionController` injected into
+  every PairSession (so the v1 editor's `pair.audition` is unchanged), attached
+  to the selected couple via the existing teardown/attach (exactly one handle
+  open). `attach` now takes an optional session (an unpaired couple shows its
+  video frame).
+- **Three-column shell**: drag-resizable rails (`HSplitView`), the v1 editor's
+  video hero / transport / waveform overview / loupes / sync readouts reused;
+  persistent bottom tool bar (⚙ sync tools = §11.1 option A readouts, ◫ loupes
+  on-demand per §11.2, Approve clickable 3 ways with no audition gate per §11.4),
+  resolve banner (§V2.6, relative-strength bars + coverage, never raw z), media
+  pool with usage indicators + inline audio preview, coverage strip, verdict dots.
+- **Batch export** (`BatchExport.swift`, §6): destination, editable naming
+  template + per-couple stem override, Auto/MOV/MP4/WAV global + per-couple tag,
+  keep-camera-audio, disk preflight, serial jobs, per-row status, continue-past-
+  failure. Each job is the unchanged Phase-4 pipeline (identical options to the
+  v1 single export) → byte-identical to the CLI.
+- **Persistence** (`QueueStore.swift`, §5.4): the new `couple-queue/1` file (pool
+  files, per-couple selection + pinned/forced + overrides, approved flags, export
+  dest/template) beside the unchanged per-pair `SessionStore` autosave; whole-
+  queue restore offered on reopen.
+
+SPEC-CHANGEs:
+- SPEC-CHANGE (2026-06-13, Session H, ABI-bounded): a **video with a stripped
+  audio stream is surfaced as `skipped`, not a `no match` row** (§3.3/§7.5). The
+  shell only has the strict `cpl_probe_json`; `probe_lenient` is intentionally
+  not in the C ABI and Phase 9 forbids new symbols. Cameras record audio, and the
+  common zero-candidate `no match` (a video whose audio matches nothing) is fully
+  reachable; the stripped-audio case is the headless CLI gate's only.
+- SPEC-CHANGE (2026-06-13, Session H, minor): the §V2.4 "loupes-on-top" geometry
+  is **deferred as app-side cosmetic** — loupes render below the narrowed overview
+  (v1 geometry) for now. The on-demand *behavior* is honored in full (summoned by
+  `l` / the ◫ toggle / clicking the fit-status line / clicking an anchor pin which
+  focuses that loupe; dismissed by esc). Above-vs-below placement is pixels (the
+  README's "creative license on pixels"); owner reviews live.
+- Implementation note (not a SPEC-CHANGE): the Swift queue-row type is `CoupleRow`
+  (the executable module is named `Couple`, so `Couple.ID` resolves to the
+  module). "Couple"/"Approve" remain the user-facing vocabulary everywhere.
+- Note: v1's per-pair "restore offer" toast is replaced by the queue-level restore
+  offer (§5.4); within a restore each couple's saved per-pair alignment is applied
+  silently. Fresh imports still auto-sync.
+
+Shell-phase gates (SPEC-V2 §7, all via the real release binary, headless
+DebugDrive `COUPLE_QUEUE_TEST`/`COUPLE_RESTORE_TEST`/`COUPLE_EVENT_TEST`):
+- **Resolution parity** — `couple pair` on the owner's `multifile-session`
+  reproduced *exactly* in the shell: bach 169 `partial`→Gigue (cov 97.1%, green/
+  TO-APPROVE), bach 170 `ambiguous` no selection (margin 3.3 < 6.0, red/TO-FIX),
+  bach 171 `confident`→Prelude, bach 172 `confident`→ZOOM0033; alternate ordering
+  identical; unused ZOOM0027/0031/0034/0035. (V2-F2 evidence reproduced.)
+- **Byte-identical export, across the batch** — shell batch export sha256
+  `d68336c1…e417` on the canonical schumann pair == the Phase-4 CLI hash; on the
+  real multi-couple session, bach 171 → `1015f410…852ec70c` == a fresh CLI
+  export of the same couple. The Phase-6 hash keystone holds through the queue +
+  batch path. (bach 170 ambiguous carries no selection → correctly not approved/
+  exported.)
+- **§2.9 events extend to j/k/v/Enter over the queue**: 4/4 (j next, k prev,
+  Return toggles sync tools, v approves ≡ queue + advances). v1 editor event test
+  still 7/7; CoupleKit suites 3/3; Rust untouched.
+- **Persistence round-trip**: saved 4 couples / 3 approved, then a fresh launch
+  (no inputs) restored 4 couples / 3 approved with the right selections.
+
+Post-build review pass (bugs caught + fixed before commit): (1) **toast spam** —
+every per-couple background sync fired a result toast, stacking N toasts over the
+export rail; ambient queue syncs are now silent (the verdict dot + fit-status
+line carry the result, §V2.4), the toast survives only for an explicit user
+re-sync. (2) **audio-graph use-after-free** — reloading a selected couple's pair
+(re-pair / changed selection) freed the core session while the *shared* audition
+still held a stream opened from it (v1 closed the stream first; that ordering was
+lost when audition moved out of PairSession) — now the audition detaches before
+the session is freed. (3) resolve-banner title said "Choose the audio" after a
+choice was already made → now "alternates available" once a source is selected.
+All gates re-run green after the fixes (resolution exact, schumann export still
+`d68336c1…e417`).
+
+Owner items for the live walkthrough (app-side, owner-reviewed, not gates): pixel
+polish from the mockup (loupes-on-top geometry, dot sizes, spacing), the video
+hero on a real screen (AVPlayerLayer composites via IOSurface and doesn't appear
+in programmatic captures), and the [TUNE] verdict thresholds against a real
+multi-take corpus (V2-F2 — true pairs run ~5 ms RMS; v1's lines don't transfer).
+
+## 2026-06-13 — Session H, export-rail revisions (owner review of the shell)
+
+Owner reviewed the running shell and revised the export rail; spec + implementation
+updated (SPEC-V2 §6/§11.5/§11, UX-DECISIONS-V2 §V2.8):
+
+- SPEC-CHANGE (2026-06-13, owner): **the global editable naming template is
+  removed.** It was brittle and unrecoverable once mistyped. Naming is now
+  **per-file, edited in place** — click a filename in the export list to rename
+  (default `<video-stem>_synced`), ↺ resets to default. (`AppModel.namingTemplate`
+  and the `couple-queue/1` `export.template` field dropped; `Couple.outputStem`
+  replaces the template substitution.)
+- SPEC-CHANGE (2026-06-13, owner): **the per-couple format override is removed.**
+  Format is a single whole-batch choice (the rail's Auto/MOV/MP4/WAV selector);
+  no per-row format tag. (`Couple.formatOverride` and the export-row cycle tag
+  dropped; the saved `couple-queue/1` couple no longer stores `formatOverride`.)
+- Bug fix (focus capture): inline name edits (and the offset/drift numeric
+  fields) kept window first-responder after you finished, so `space` etc. typed
+  into the field instead of triggering shortcuts. The filename editor now exists
+  **only while editing** (a clicked Text becomes a TextField, gone on commit),
+  and committing (Enter) or losing focus (clicking elsewhere) explicitly releases
+  first-responder (`NSApp.keyWindow?.makeFirstResponder(nil)`) so the global
+  keyboard shortcuts resume. Same release-on-Enter applied to `NumericField`.
+
+Byte-identical export keystone re-verified after the format-control change
+(schumann batch `d68336c1…e417` = Phase-4 CLI); resolution + queue events still
+green.
+
+Follow-up (owner, same day) — make the inline rename behave like Finder:
+- The extension now uses the **same font** as the filename and sits **directly
+  adjacent** (`bach 169_synced.mov` reads as one name), instead of a smaller grey
+  detached `.mov`. Still non-editable (only the stem edits).
+- **Click anywhere outside the field now commits and exits.** A SwiftUI TextField
+  doesn't resign on clicks to non-focusable areas (so `onChange(focused)` never
+  fired and only Enter worked); a local mouse-down monitor (active only while
+  editing) commits when the hit-tested view isn't the field's NSTextView editor.
+- **Esc cancels (reverts)** via `onExitCommand` — and AppModel's global key
+  handler now lets esc through while a text field is editing (it was consuming
+  esc for sync-cancel/tool-collapse before the field could see it).
+- Focus release relies on the field being **removed** when editing ends (no
+  explicit `makeFirstResponder(nil)`, which would steal focus when the committing
+  click was into another field).
+
+Follow-up 2 (owner, same day):
+- **Default export folder = the most recent import's directory** (verified
+  headless: dropping `multifile-session` sets the destination to that folder).
+  Auto-tracks each import until the user picks a folder via "Choose folder…",
+  which pins it (`destinationAuto` flag); a restored session's saved destination
+  is likewise treated as pinned.
+- **An empty filename edit is now a no-op** — committing/blurring an emptied
+  field keeps the last saved name (custom or default) instead of silently
+  resetting to the original default. (esc already reverted; this covers the
+  click-away/blur path.)
