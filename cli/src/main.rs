@@ -155,6 +155,11 @@ enum Cmd {
         /// Override PairParams, e.g. --params z-margin=8
         #[arg(long = "params", value_name = "K=V")]
         params: Vec<String>,
+        /// Read-only: after the matrix, run fine-verify over the FULL V×A matrix
+        /// (z-gate bypassed) and print a per-candidate table to STDERR. Changes no
+        /// decision and adds nothing to --json (PLAN-MATCH-CLASSIFIER §4.5).
+        #[arg(long = "verify-debug")]
+        verify_debug: bool,
     },
     /// Session state tooling
     State {
@@ -393,7 +398,7 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
             };
             run_export(cli, ctx, video, audio, state, opts, cancel)
         }
-        Cmd::Pair { dir, params } => {
+        Cmd::Pair { dir, params, verify_debug } => {
             let mut pp = pair::PairParams::default();
             for kv in params {
                 let (k, v) = kv
@@ -401,7 +406,7 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
                     .ok_or_else(|| couple_core::CoupleError::invalid("--params expects k=v"))?;
                 pp.set(k, v)?;
             }
-            pair::run_pair(cli.json, cli.quiet, cli.progress_json, ctx, dir, &pp, cancel)
+            pair::run_pair(cli.json, cli.quiet, cli.progress_json, ctx, dir, &pp, *verify_debug, cancel)
         }
         Cmd::State { cmd } => match cmd {
             StateCmd::Validate { file } => {

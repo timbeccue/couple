@@ -782,3 +782,122 @@ Follow-up 2 (owner, same day):
   field keeps the last saved name (custom or default) instead of silently
   resetting to the original default. (esc already reverted; this covers the
   click-away/blur path.)
+
+---
+
+## V2-F2 — Match classifier (fine waveform-lock), Phase 2: flip behind a flag (2026-06-13)
+
+PLAN-MATCH-CLASSIFIER §5/§6 Phase 2. **The new classifier ships behind a single
+switch, `verify-active` (CLI) / `verifyClassifierActive` (Swift), DEFAULT OFF (ruling
+D2).** Flag OFF ⇒ behavior is BYTE-IDENTICAL to today: candidacy is the z-gate
+(`m.z >= z_min`) plus the active conservative RMS tie-breaker; all 10 existing gates stay
+green unchanged. Flag ON ⇒ `z` is demoted to a loose pre-filter and the fine waveform-lock
+(`verify_pair`/`is_match`) becomes the classifier. Both paths live behind a clean
+`if verify_active { … } else { …today… }` split in BOTH resolvers — the OFF path is never
+perturbed.
+
+**The flip (flag ON), Stage A→B:**
+- Candidacy pre-filter: `!insufficient_overlap && ncc >= verify_prefilter_ncc` (z no longer
+  rejects). `MatrixCell.candidate` keeps its "passed the pre-filter" meaning (ruling D4 — its
+  shape is unchanged for a given input, so gate6 stays trivially safe).
+- Per-video CAP to `verify_max_candidates_per_video` cells **ranked by NCC desc** (NOT z —
+  ranking by `z = NCC·√n` would re-introduce the very short-clip penalty this work removes),
+  ties by file name (deterministic, clock-free §1.4). Bounds fine verify at O(V·K), independent
+  of pool size A.
+- `verify_batch` + `is_match` over the capped set forms the real-match set, which REPLACES the
+  z-passing `per_video[vi]` feeding the UNCHANGED §3.3 pipeline (clustering / §3.4 simultaneity
+  / §3.5 margin / coverage selection). Verify numbers NEVER enter the serialized `Row`/`MatrixCell`
+  (§3 / gate6).
+- The RMS `escalate`/`rmsEscalate` path is KEPT as a thin tie-break among already-classified
+  real matches (ruling D6); it simply rarely fires now (a wrong take fails `is_match` upstream).
+
+**CLI parity** (the gates run through the CLI): the 15 classifier params + `verify-active`
+were added to `PairParams` (struct/Default/`set()`), and `sync_params()` now forwards all the
+verify thresholds to `verify_batch` (Phase 1 forwarded only `z_min`) so the CLI's `is_match`
+matches the resolver's. `resolve_row`'s body is otherwise unchanged.
+
+**Chosen default thresholds — Phase-1-CALIBRATED STARTING POINTS, not hard-frozen (ruling D1).
+To be tuned on real data (the owner's 24-min pair + the 20 s clip via COUPLE_VERIFY_DUMP /
+`--verify-debug`) BEFORE the owner flips the default to ON:**
+`verify_min_overlap_s=8`, `verify_win_frac=0.5`, `verify_half_win_min_s=2.5`,
+`verify_density_per_s=0.20`, `verify_min_windows_floor=3`, `verify_max_windows=24`,
+`verify_max_candidates_per_video=6`, `verify_span_cap_ms=500`, `drift_lambda_s2=50` (s²,
+added to sxx; small enough to still recover the real +3.57 ppm), `drift_max_ppm=2000`
+(NTSC-pulldown-generous; out-of-bound ⇒ clamped ⇒ not a match), `verify_min_locked=4`,
+`verify_lock_fraction_min=0.66` (the core real-vs-fake knob — ≥ ⅔ of MEASURABLE windows must
+agree; `expected` counts both-tracks-non-silent windows so quiet passages don't deflate it),
+`verify_rms_max_ms=9` (real true-pairs ≈ 5 ms), `verify_prefilter_ncc=0.15` (rejects only
+obvious garbage).
+
+**The proof of the flip (deterministic), on a generated 20 s same-master clip inside a 60 s
+video (z ≈ 9.86):** because synthetic master content has an unrealistically high envelope NCC
+(~0.97 even at 20 s, vs the real-world 0.6–0.8 the owner hit), the synthetic clip's z sits
+ABOVE the 8.5 floor — too clean to fall below it. Holding the clip fixed and raising the floor
+to `z-min=11` (the z regime a real short clip occupies) isolates the exact mechanism:
+- `verify-active=0 z-min=11` ⇒ z-gate REJECTS (candidate=false) ⇒ row **`noMatch`**, clip unused.
+- `verify-active=1 z-min=11` ⇒ classifier bypasses z, the fine lock ADMITS it ⇒ row **`partial`**
+  selecting `clip.wav` (33% coverage). z is identical in both runs; only the decision path differs.
+
+**Gates (PLAN §6).** The 10 existing gates run with DEFAULT params (flag OFF) and are green
+UNCHANGED — none moved. `margin_rule_prefers_ambiguous` is explicitly pinned to the z-path
+(default `verify-active=0`, §6 option a): under the classifier extA/extB are genuine same-master
+duplicates (both `is_match` → `2 sources`), which is correct but not the z-margin ambiguity that
+test protects. Three NEW classifier fixtures (run `verify-active=1`):
+- `gate_short_genuine_clip` — the owner-reported regression; OFF (z-min=11) ⇒ noMatch, ON ⇒
+  partial selecting the clip (proof above). Documents the synthetic-NCC-too-high limitation
+  (mirrors gate8) and the z-min=11 device that makes the regression reproducible.
+- `gate_short_spurious_clip` — a 20 s DIFFERENT-master clip ⇒ ON ⇒ `is_match` false ⇒ noMatch,
+  clip unused (reject-the-fake; the opposite failure of the same root cause).
+- `verify_classifies_takes` — the gate8-style ±400 ms-jitter decoy + true take; asserts the true
+  take is classified/selected and any selection is the true take (honesty-preserving). LIMIT:
+  synthetic ±400 ms jitter is integrated by the 200 ms stage bins, so the decoy's fine lock can
+  still broadly agree — genuine take separation waits for the owner corpus (documented like gate8).
+
+**Verification:** `cargo test -p couple-cli --release` — 10 existing gates green (flag OFF) +
+3 new fixtures green (flag ON), 13/13. Core lib tests 14/14 (incl. verify::clean_short_pair,
+different_master_not_match, gate6_unrelated_not_match — the §3 stability anchor — and determinism).
+`swift build` clean; `COUPLE_RMS_TEST=1` DebugDrive 9/9. `drift_pass`/`auto_sync_tracks` untouched
+(ruling D5). The flag default stays OFF; flipping it to ON after the owner eyeballs real sessions
+is a one-line change.
+
+---
+
+## V2-F2 calibration on real data (`example_data/difficult-match/`) — 2026-06-13
+
+Calibrated the classifier defaults against the owner's 3 real difficult-match cases
+(`bach 172.mov` + ZOOM recordings; `33-shortened*.wav` are trims of the true match
+ZOOM0033). The D1 starting defaults FALSE-REJECTED real short clips; root-caused and
+retuned (classifier-only, flag still OFF by default; flag-OFF byte-stability unchanged).
+
+**Root cause (Test 3, the failing case — diagnosed WITH evidence):** NOT a wrong coarse
+lag. The coarse stage-1 peak for the 21 s clip (−82012 ms) is CORRECT — derived
+independently: 33-shortened-more sits inside ZOOM0033 at +83193 ms (audio↔audio lock 4/4,
+NCC 0.996), and ZOOM0033↔bach172 is +1158 ms, so the true lag is +83193−1158 ≈ −82035 ms.
+Per-window `measure_local` AT that lag gives a TIGHT lock (lag std-dev ~12 ms across the
+clip) — the genuine signal is present and consistent. But the windows' NCC sits 0.27–0.47
+(degraded camera mic vs clean recorder), BELOW the shared `ncc_window_min = 0.4`, so only
+~2/4 windows counted as "locked" → `lock_fraction ≤ 0.5` and a 2-point RMS fit dominated by
+noise. Meanwhile the spurious ZOOM0035 has windows that trend COHERENTLY at ~−1600 ppm
+(different recording's envelope), which the loose `drift_max_ppm = 2000` admitted.
+
+**Fix (4 retuned/added defaults; mirrored in core `SyncParams`, CLI `PairParams`, Swift
+`PairParams`):**
+- NEW `verify_ncc_window_min = 0.25` (core, read by `verify_pair` ONLY; the editor-sync
+  `ncc_window_min = 0.4` is untouched per D5). Counts genuine-but-noisy windows so a short
+  clip's lag agreement reaches the fit (true clips → `lock_fraction = 1.0`).
+- `verify_density_per_s` 0.20 → 0.5 (a 21 s clip went from ~4 to ~10 windows; still cheap
+  under the per-video top-K cap, gate7 green at 77 s for the 6×6).
+- `drift_max_ppm` 2000 → 600 (classifier-only; `drift_pass` uses `fit_ls`, never this).
+  A coherent impostor trend (ZOOM0035 ~−1600 ppm) now CLAMPS ⇒ `is_match` false; real
+  matches sit at +44…−255 ppm (≥ 2× margin), well above the canonical pair's +3.57 ppm.
+- `verify_rms_max_ms` 9.0 → 12.0 (real true pairs run up to ~9.5 ms — Test 1
+  bach172↔ZOOM0033 rms 9.55 — so 9.0 false-rejected the true pair).
+
+**Result (flag ON), all 3 cases now correct:** Test 1 → bach172 `confident`→ZOOM0033
+(frac 0.88, rms 11.6, ppm +75), other 3 videos `noMatch`. Test 2 → bach172
+`partial`→33-shortened (frac 1.0, rms 4.9, ppm −230), others unused; ZOOM0035 clamped→no.
+Test 3 (the bug) → bach172 `partial`→33-shortened-more (frac 1.0, rms 7.3, ppm +232),
+ALL others unused; ZOOM0035 clamped→no. The discriminator is defense-in-depth:
+`lock_fraction` rejects low-overlap junk, the drift bound rejects coherent-trend impostors,
+and the RMS ceiling rejects scatter. Gates 13/13 (flag-OFF gates byte-identical; no fixture
+re-baseline needed), core lib + `swift build` green.

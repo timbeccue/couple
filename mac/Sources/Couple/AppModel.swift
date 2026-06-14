@@ -26,7 +26,18 @@ final class AppModel {
     var selectedID: CoupleRow.ID?
     /// True while the candidate matrix + resolution runs (off-main).
     var resolving = false
-    var params = PairParams()
+    var params: PairParams = {
+        var p = PairParams()
+        // App default: the fine-verify match classifier is ON (the CLI/gates keep
+        // PairParams' `false` default so the suite tests the old path explicitly).
+        // Override per launch with COUPLE_VERIFY_ACTIVE: =0 disables (A/B against the
+        // old z-gate), =1 forces on. See PLAN-MATCH-CLASSIFIER.md.
+        p.verifyClassifierActive = true
+        if let v = ProcessInfo.processInfo.environment["COUPLE_VERIFY_ACTIVE"] {
+            p.verifyClassifierActive = (v == "1")
+        }
+        return p
+    }()
 
     // Bottom-bar toggles (§V2.4): same-place on/off switches, nothing repositions.
     var syncToolsExpanded = false

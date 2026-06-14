@@ -6,6 +6,7 @@
 // Supports the §15 Phase-5 verification (screenshots + 60 fps criterion).
 
 import AppKit
+import CoupleKit
 import Foundation
 import QuartzCore
 
@@ -65,13 +66,26 @@ final class DebugDrive {
         started = true
         let env = ProcessInfo.processInfo.environment
         guard env["COUPLE_OPEN_CAMERA"] != nil || env["COUPLE_PAIR_DIR"] != nil
-            || env["COUPLE_PROFILE"] != nil || env["COUPLE_RESTORE_TEST"] != nil else { return }
+            || env["COUPLE_PROFILE"] != nil || env["COUPLE_RESTORE_TEST"] != nil
+            || env["COUPLE_RMS_TEST"] != nil || env["COUPLE_VERIFY_DUMP"] != nil else { return }
         Task { await run(env: env) }
     }
 
     private func run(env: [String: String]) async {
         guard let model else { return }
         try? await Task.sleep(nanoseconds: 800_000_000) // window up
+
+        // Media-free pure-predicate tests run first and, when nothing else is
+        // requested, exit without entering the (media-gated) resolve/sync wait.
+        if env["COUPLE_RMS_TEST"] == "1" {
+            await rmsTest()
+            let mediaRequested = env["COUPLE_OPEN_CAMERA"] != nil || env["COUPLE_PAIR_DIR"] != nil
+                || env["COUPLE_PROFILE"] != nil || env["COUPLE_RESTORE_TEST"] != nil
+            if !mediaRequested {
+                if env["COUPLE_AUTOQUIT"] == "1" { print("DEBUG-DRIVE: done, quitting"); NSApp.terminate(nil) }
+                return
+            }
+        }
 
         if let dir = env["COUPLE_SHOT_DIR"] {
             try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -112,6 +126,9 @@ final class DebugDrive {
         }
         if env["COUPLE_QUEUE_TEST"] == "1" {
             await queueTest(env: env)
+        }
+        if env["COUPLE_VERIFY_DUMP"] == "1" {
+            await verifyDump()
         }
         if env["COUPLE_RESTORE_TEST"] == "1" {
             await restoreTest()
@@ -312,7 +329,10 @@ final class DebugDrive {
             let sel = c.selectedCandidate?.audioName ?? "—"
             let cov = c.selectedCandidate.map { String(format: "%.1f%%", $0.coverage.fraction * 100) } ?? "—"
             print("  \(c.video.name) [\(c.state.rawValue)] -> \(sel) (cov \(cov)) verdict=\(verdictName(c.verdict)) §\(section(c))")
-            for a in c.alternates { print("      alt: \(a.audioName)") }
+            for a in c.alternates {
+                let fit = a.fitRmsMs.map { String(format: " · fit %.1f ms (%d win)", $0, a.fitWindows ?? 0) } ?? ""
+                print("      alt: \(a.audioName)\(fit)")
+            }
         }
         let used = Set(model.couples.compactMap { $0.selectedAudioKey })
         let unused = model.pool.audios.filter { !used.contains($0.id) }.map(\.name)
@@ -527,6 +547,154 @@ final class DebugDrive {
                   pair.frames.allSatisfy(\.auto))
         }
         print("EVENT-TEST summary: \(pass) passed, \(fail) failed")
+    }
+
+    /// Pure unit tests for the Phase-2 RMS escalation predicate
+    /// (PLAN-RMS-TIEBREAKER §6.3 R3). No engine, no media: `rmsEscalate` takes a
+    /// fit-lookup closure, so injected `PairFit`s drive every case. Run headless via
+    /// COUPLE_RMS_TEST=1 (needs no files).
+    private func rmsTest() async {
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("RMS-TEST \(ok ? "ok " : "FAIL") \(name)")
+        }
+        let params = PairParams() // floor 9 ms, ratio 3, minWindows 6
+
+        // Synthetic candidate + coverage builders. z only sets the cluster order
+        // (cluster[0] = best z); coverage seconds drive the comparability guard.
+        func corr(_ z: Double, lag: Double = 0) -> PairCorrelation {
+            PairCorrelation(z: z, lagMs: lag, ncc: 0, fineNcc: 0, overlapBins: 0,
+                            runnerUpZ: 0, refined: true, insufficientOverlap: false)
+        }
+        func cov(_ seconds: Double) -> Coverage {
+            // durVideo == durAudio, lag 0 ⇒ coverage seconds == min(dur, dur).
+            Coverage(durVideo: seconds, durAudio: seconds, lagMs: 0)
+        }
+        func fitOf(_ rms: Double, windows: UInt32) -> PairFit {
+            PairFit(offMs: 0, ppm: 0, rmsMs: rms, windows: windows)
+        }
+        // A two-candidate contested cluster (indices 0,1 = best z, runner-up).
+        let c = [(0, corr(20.0)), (1, corr(18.0))]
+        let covs = [cov(100), cov(100)] // comparable spans
+        let cluster = [0, 1]
+        // Lookup factory: fits keyed by candidate index; missing ⇒ nil (didn't lock).
+        func lookup(_ m: [Int: PairFit]) -> (Int) -> PairFit? { { m[$0] } }
+
+        // (a) rescue: leader rms 4 / runner-up 22, both ≥6 win, margin<zMargin.
+        check("(a) rescue: leader 4 vs runner-up 22 → selects leader",
+              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
+                  fit: lookup([0: fitOf(4, windows: 12), 1: fitOf(22, windows: 12)]),
+                  params: params) == 0)
+
+        // (b) rescue (THE corrected case): runner-up didn't lock (fit nil) → leader.
+        check("(b) rescue: runner-up didn't lock (nil fit) → selects leader",
+              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
+                  fit: lookup([0: fitOf(4, windows: 12)]),
+                  params: params) == 0)
+
+        // (b') same, but runner-up locked too few windows ⇒ also supports the pick.
+        check("(b') rescue: runner-up windows<min → selects leader",
+              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
+                  fit: lookup([0: fitOf(4, windows: 12), 1: fitOf(2, windows: 3)]),
+                  params: params) == 0)
+
+        // (c) hold: leader 6 / runner-up 9 (ratio 1.5 < 3) → nil (comparably clean).
+        check("(c) hold: ratio 1.5 < 3 → nil",
+              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
+                  fit: lookup([0: fitOf(6, windows: 12), 1: fitOf(9, windows: 12)]),
+                  params: params) == nil)
+
+        // (d) hold: leader 12 ms (> floor 9) even if runner-up 40 → nil.
+        check("(d) hold: leader 12 ms > floor → nil",
+              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
+                  fit: lookup([0: fitOf(12, windows: 12), 1: fitOf(40, windows: 12)]),
+                  params: params) == nil)
+
+        // (e) guard: leader windows < min → nil (can't trust the leader).
+        check("(e) guard: leader windows<min → nil",
+              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
+                  fit: lookup([0: fitOf(4, windows: 4), 1: fitOf(40, windows: 12)]),
+                  params: params) == nil)
+
+        // (e') coverage guard: a non-comparable rival is skipped, so a clean
+        // leader with an otherwise-comparable-clean rival on a tiny span still wins.
+        check("(e') coverage guard: non-comparable rival skipped → selects leader",
+              Resolver.rmsEscalate(cluster: cluster, c: c, covs: [cov(100), cov(50)],
+                  fit: lookup([0: fitOf(4, windows: 12), 1: fitOf(5, windows: 12)]),
+                  params: params) == 0)
+
+        // (f) never on simultaneous path: a 1-element "cluster" never escalates;
+        // and the resolver only calls rmsEscalate from the non-simultaneous branch.
+        check("(f) single-element cluster → nil (never fires on simultaneous path)",
+              Resolver.rmsEscalate(cluster: [0], c: c, covs: covs,
+                  fit: lookup([0: fitOf(4, windows: 12)]),
+                  params: params) == nil)
+
+        check("conservative form is the shipped default",
+              Resolver.rmsStrongForm == false)
+
+        print("RMS-TEST summary: \(pass) passed, \(fail) failed")
+    }
+
+    /// COUPLE_VERIFY_DUMP=1 (PLAN-MATCH-CLASSIFIER §4.1/§4.5): the owner's window onto
+    /// the fine-verify signal on real files. Iterates the FULL video×audio matrix and
+    /// runs verify on EVERY cell that has a plausible lag, **bypassing the z-gate** — so
+    /// the z-rejected short clip (the motivating case, absent from the resolver's
+    /// `perVideo` set) is shown. Read-only: changes NO decision; prints to stdout only.
+    /// Per (video, audio): z, lag_ms, overlap_s, locked/expected, lock_fraction, rms_ms,
+    /// ppm, clamped, is_match.
+    private func verifyDump() async {
+        guard let model, let engine = model.engine else { print("VERIFY-DUMP: no engine"); return }
+        // Wait for the pool import + resolution to settle (the dump needs handles).
+        for _ in 0..<1800 {
+            if !model.resolving && (!model.pool.videos.isEmpty || !model.pool.audios.isEmpty) { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let params = model.params
+        let videos = model.pool.videos
+        let audios = model.pool.audios
+        print("VERIFY-DUMP: \(videos.count) video(s) × \(audios.count) audio file(s) — FULL matrix, z-gate bypassed")
+        guard !audios.isEmpty else { print("VERIFY-DUMP: no audio in pool"); return }
+
+        // FULL matrix over the importable videos (a stripped-audio video has no handle).
+        let importable = videos.filter { $0.handle != nil }
+        let matrix = engine.pairCandidates(videos: importable.compactMap(\.handle),
+                                           audios: audios.compactMap(\.handle)) ?? []
+
+        // Build a verify request for EVERY cell with a plausible lag — NO z-gate. The
+        // matrix already holds each cell's coarse z/lag, so the lag is in hand.
+        struct Cell { let vi: Int; let ai: Int; let m: PairCorrelation }
+        var cells: [Cell] = []
+        var pairs: [(TrackHandle, TrackHandle, Double)] = []
+        var mrow = 0
+        for (vi, v) in videos.enumerated() where v.handle != nil {
+            let row = mrow < matrix.count ? matrix[mrow] : []
+            mrow += 1
+            for (ai, m) in row.enumerated() where !m.insufficientOverlap {
+                cells.append(Cell(vi: vi, ai: ai, m: m))
+                pairs.append((v.handle!, audios[ai].handle!, m.lagMs))
+            }
+        }
+        guard !pairs.isEmpty else { print("VERIFY-DUMP: no plausibly-overlapping cells"); return }
+        let fits = engine.verifyBatch(pairs) ?? Array(repeating: nil, count: pairs.count)
+
+        print("VERIFY-DUMP rows (video x audio | z lag_ms overlap_s locked/expected lock_fraction rms_ms ppm clamped is_match):")
+        for (i, cell) in cells.enumerated() {
+            let v = videos[cell.vi].name
+            let a = audios[cell.ai].name
+            guard i < fits.count, let f = fits[i] else {
+                // None ⇒ overlap below the absolute hard floor (no candidate possible).
+                print(String(format: "  %@ x %@ | z %.1f lag %.0f — below verify_min_overlap_s (%.0f s), no fit",
+                             v, a, cell.m.z, cell.m.lagMs, params.verifyMinOverlapS))
+                continue
+            }
+            let match = Resolver.isMatch(f, params: params)
+            print(String(format: "  %@ x %@ | z %.1f lag %.0f overlap %.1f locked %d/%d frac %.2f rms %.2f ppm %.0f clamped %@ is_match %@",
+                         v, a, cell.m.z, cell.m.lagMs, f.overlapS, f.locked, f.expected,
+                         f.lockFraction, f.rmsMs, f.ppm, f.clamped ? "Y" : "n", match ? "YES" : "no"))
+        }
+        print("VERIFY-DUMP: done")
     }
 
     private func capture(to path: String) {

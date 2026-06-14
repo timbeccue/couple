@@ -41,6 +41,31 @@ pub struct PairParams {
     /// restart) rather than `overlapping` (alternates/conflict) [SPEC, TUNE]. Below
     /// the stage-1 floor (20 s) the §3.4 check could not measure anyway.
     pub disjoint_tol_s: f64,
+
+    // ---- match classifier (PLAN-MATCH-CLASSIFIER §4.2/§5) ----
+    // The fine waveform-lock classifier knobs, mirroring the core SyncParams defaults
+    // so BOTH resolvers share identical thresholds (the gates run the CLI). `verify_active`
+    // is the single Phase-1↔Phase-2 boundary switch, default OFF: flag OFF ⇒ candidacy is
+    // exactly today's z-gate (byte-identical); flag ON ⇒ the loose pre-filter + top-K cap +
+    // `is_match` classifier replaces the z-gate candidacy. These NEVER enter a serialized
+    // `Row`/`MatrixCell` (§3 / gate6); they are forwarded to `verify_batch` via `sync_params`.
+    /// Phase-2 master switch [PHASE-2, D2 default OFF].
+    pub verify_active: bool,
+    pub verify_min_overlap_s: f64,
+    pub verify_win_frac: f64,
+    pub verify_half_win_min_s: f64,
+    pub verify_density_per_s: f64,
+    pub verify_min_windows_floor: usize,
+    pub verify_max_windows: usize,
+    pub verify_max_candidates_per_video: usize,
+    pub verify_span_cap_ms: f64,
+    pub drift_lambda_s2: f64,
+    pub drift_max_ppm: f64,
+    pub verify_min_locked: u32,
+    pub verify_lock_fraction_min: f64,
+    pub verify_rms_max_ms: f64,
+    pub verify_prefilter_ncc: f64,
+    pub verify_ncc_window_min: f64,
 }
 
 impl Default for PairParams {
@@ -51,6 +76,22 @@ impl Default for PairParams {
             triangle_tol_ms: 250.0,
             coverage_full: 0.98,
             disjoint_tol_s: 0.5,
+            verify_active: false,
+            verify_min_overlap_s: 8.0,
+            verify_win_frac: 0.5,
+            verify_half_win_min_s: 2.5,
+            verify_density_per_s: 0.20,
+            verify_min_windows_floor: 3,
+            verify_max_windows: 24,
+            verify_max_candidates_per_video: 6,
+            verify_span_cap_ms: 500.0,
+            drift_lambda_s2: 50.0,
+            drift_max_ppm: 600.0,
+            verify_min_locked: 4,
+            verify_lock_fraction_min: 0.66,
+            verify_rms_max_ms: 12.0,
+            verify_prefilter_ncc: 0.15,
+            verify_ncc_window_min: 0.25,
         }
     }
 }
@@ -66,6 +107,24 @@ impl PairParams {
             "triangle-tol-ms" => self.triangle_tol_ms = v,
             "coverage-full" => self.coverage_full = v,
             "disjoint-tol-s" => self.disjoint_tol_s = v,
+            // Match-classifier knobs (PLAN-MATCH-CLASSIFIER §4.2/§5). `verify-active`
+            // takes 0/1 (parsed as f64 like the rest; != 0 ⇒ ON).
+            "verify-active" => self.verify_active = v != 0.0,
+            "verify-min-overlap-s" => self.verify_min_overlap_s = v,
+            "verify-win-frac" => self.verify_win_frac = v,
+            "verify-half-win-min-s" => self.verify_half_win_min_s = v,
+            "verify-density-per-s" => self.verify_density_per_s = v,
+            "verify-min-windows-floor" => self.verify_min_windows_floor = v as usize,
+            "verify-max-windows" => self.verify_max_windows = v as usize,
+            "verify-max-candidates-per-video" => self.verify_max_candidates_per_video = v as usize,
+            "verify-span-cap-ms" => self.verify_span_cap_ms = v,
+            "drift-lambda-s2" => self.drift_lambda_s2 = v,
+            "drift-max-ppm" => self.drift_max_ppm = v,
+            "verify-min-locked" => self.verify_min_locked = v as u32,
+            "verify-lock-fraction-min" => self.verify_lock_fraction_min = v,
+            "verify-rms-max-ms" => self.verify_rms_max_ms = v,
+            "verify-prefilter-ncc" => self.verify_prefilter_ncc = v,
+            "verify-ncc-window-min" => self.verify_ncc_window_min = v,
             other => return Err(CoupleError::invalid(format!("unknown pair param {other}"))),
         }
         Ok(())
@@ -209,6 +268,7 @@ struct TimingMs {
 
 // ---------- the command ----------
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_pair(
     json: bool,
     quiet: bool,
@@ -216,6 +276,7 @@ pub fn run_pair(
     ctx: &Arc<Ctx>,
     dir: &Path,
     params: &PairParams,
+    verify_debug: bool,
     cancel: &CancelToken,
 ) -> Result<()> {
     if !dir.is_dir() {
@@ -308,7 +369,15 @@ pub fn run_pair(
             }
             let row = row_iter.next().expect("matrix row per imported video");
             for (ai, m) in row.into_iter().enumerate() {
-                let candidate = !m.insufficient_overlap && m.z >= params.z_min;
+                // `candidate` = "passed the pre-filter" (ruling D4 — its meaning/shape is
+                // unchanged for a given input, so gate6 stays trivially safe). Flag OFF: the
+                // today z-gate. Flag ON: the loose Stage-A pre-filter (NCC floor only; `z`
+                // no longer rejects) — the fine classifier disposes below.
+                let candidate = if params.verify_active {
+                    !m.insufficient_overlap && m.ncc >= params.verify_prefilter_ncc
+                } else {
+                    !m.insufficient_overlap && m.z >= params.z_min
+                };
                 matrix.push(MatrixCell {
                     video: videos[vi].file.clone(),
                     audio: audios[ai].file.clone(),
@@ -321,7 +390,56 @@ pub fn run_pair(
             }
         }
     }
+
+    // 3a. Match classifier (PLAN-MATCH-CLASSIFIER §5.2 / Stage B) — flag ON only. The loose
+    // pre-filter above can admit O(V×A) cells, so for each video we CAP to the top-K by NCC
+    // (ranked by NCC, NOT z — z's √n term is the short-clip penalty this whole change
+    // removes), run `verify_batch` over the capped set, and keep ONLY cells that pass
+    // `is_match`. That real-match set REPLACES `per_video[vi]` feeding the UNCHANGED §3.3
+    // pipeline (clustering / §3.4 / §3.5 / coverage selection). Flag OFF: this block is
+    // skipped entirely and `per_video` is exactly the z-passing set — byte-identical to today.
+    if params.verify_active {
+        for (vi, id) in video_ids.iter().enumerate() {
+            let Some(vid) = id else { continue };
+            let cands = &mut per_video[vi];
+            if cands.is_empty() {
+                continue;
+            }
+            // Cap by NCC desc (overlap-INDEPENDENT resemblance); ties by file name so the
+            // truncation is deterministic and clock-free (SPEC §1.4).
+            cands.sort_by(|a, b| {
+                b.1.ncc
+                    .total_cmp(&a.1.ncc)
+                    .then_with(|| audios[a.0].file.cmp(&audios[b.0].file))
+            });
+            cands.truncate(params.verify_max_candidates_per_video);
+
+            // One batched verify over the capped candidate pairs.
+            let req: Vec<(u64, u64, f64)> =
+                cands.iter().map(|(ai, m)| (*vid, audio_ids[*ai], m.lag_ms)).collect();
+            let fits = ctx.verify_batch(&req, &sp)?;
+            // Keep only the real matches (is_match). Verify numbers stay OUT of the Row.
+            let mut real: Vec<(usize, PairCorrelation)> = Vec::with_capacity(cands.len());
+            for ((ai, m), fit) in cands.iter().zip(fits) {
+                if let Some(f) = fit {
+                    if couple_core::verify::is_match(&f, &sp) {
+                        real.push((*ai, m.clone()));
+                    }
+                }
+            }
+            *cands = real;
+        }
+    }
     let matrix_ms = t_matrix.elapsed().as_secs_f64() * 1000.0;
+
+    // 3b. --verify-debug (PLAN-MATCH-CLASSIFIER §4.5): READ-ONLY fine-verify over the
+    // FULL V×A matrix with the z-gate BYPASSED, printed to STDERR only (never into the
+    // serialized Row/MatrixCell — gate6 stays byte-stable). This is the owner's window
+    // onto the z-rejected short clip, whose row never clears the z-gate, so it would be
+    // invisible if verify ran only over candidates. Changes no decision.
+    if verify_debug {
+        verify_debug_dump(ctx, &sp, &videos, &video_ids, &audios, &audio_ids, &matrix)?;
+    }
 
     // 4. Resolution (§3.3) per video row.
     let t_resolve = std::time::Instant::now();
@@ -372,10 +490,111 @@ pub fn run_pair(
 }
 
 fn sync_params(p: &PairParams) -> couple_core::sync::SyncParams {
+    // Forward the classifier knobs so BOTH the candidate matrix and `verify_batch` see
+    // the same thresholds the resolver decides on (`verify_active` itself is a CLI-only
+    // switch — SyncParams has no such field; `verify_pair`/`is_match` are pure functions
+    // of the numeric thresholds below). Phase-1 forwarded only z_min; Phase 2 needs the
+    // rest in `verify_batch` to match the resolver's `is_match`.
     couple_core::sync::SyncParams {
         z_min: p.z_min,
+        verify_min_overlap_s: p.verify_min_overlap_s,
+        verify_win_frac: p.verify_win_frac,
+        verify_half_win_min_s: p.verify_half_win_min_s,
+        verify_density_per_s: p.verify_density_per_s,
+        verify_min_windows_floor: p.verify_min_windows_floor,
+        verify_max_windows: p.verify_max_windows,
+        verify_max_candidates_per_video: p.verify_max_candidates_per_video,
+        verify_span_cap_ms: p.verify_span_cap_ms,
+        drift_lambda_s2: p.drift_lambda_s2,
+        drift_max_ppm: p.drift_max_ppm,
+        verify_min_locked: p.verify_min_locked,
+        verify_lock_fraction_min: p.verify_lock_fraction_min,
+        verify_rms_max_ms: p.verify_rms_max_ms,
+        verify_prefilter_ncc: p.verify_prefilter_ncc,
+        verify_ncc_window_min: p.verify_ncc_window_min,
         ..Default::default()
     }
+}
+
+/// READ-ONLY `--verify-debug` dump (PLAN-MATCH-CLASSIFIER §4.5). Runs fine-verify over
+/// EVERY matrix cell with a plausible lag — the z-gate is BYPASSED, so the z-rejected
+/// short clip (whose row never clears the gate) is shown — and prints a per-candidate
+/// table to STDERR. Adds nothing to the serialized Row/MatrixCell, so gate6 byte-stability
+/// is untouched. Changes no decision.
+#[allow(clippy::too_many_arguments)]
+fn verify_debug_dump(
+    ctx: &Arc<Ctx>,
+    sp: &couple_core::sync::SyncParams,
+    videos: &[PoolTrack],
+    video_ids: &[Option<u64>],
+    audios: &[PoolTrack],
+    audio_ids: &[u64],
+    matrix: &[MatrixCell],
+) -> Result<()> {
+    // Map file name → track id (audios all have ids; videos may be stripped ⇒ None).
+    let mut vid_id: HashMap<&str, u64> = HashMap::new();
+    for (v, id) in videos.iter().zip(video_ids) {
+        if let Some(id) = id {
+            vid_id.insert(v.file.as_str(), *id);
+        }
+    }
+    let mut aud_id: HashMap<&str, u64> = HashMap::new();
+    for (a, id) in audios.iter().zip(audio_ids) {
+        aud_id.insert(a.file.as_str(), *id);
+    }
+
+    // Build the verify request from EVERY cell that has a plausible lag (z NOT consulted).
+    // `verify_pair` itself returns None below the absolute overlap floor.
+    let mut req: Vec<(u64, u64, f64)> = Vec::new();
+    let mut req_cells: Vec<&MatrixCell> = Vec::new();
+    for cell in matrix {
+        if cell.m.insufficient_overlap {
+            continue;
+        }
+        let (Some(&vi), Some(&ai)) = (vid_id.get(cell.video.as_str()), aud_id.get(cell.audio.as_str()))
+        else {
+            continue;
+        };
+        req.push((vi, ai, cell.m.lag_ms));
+        req_cells.push(cell);
+    }
+
+    eprintln!(
+        "verify-debug: FULL matrix, z-gate BYPASSED — {} plausibly-overlapping cell(s) of {} total",
+        req.len(),
+        matrix.len()
+    );
+    eprintln!(
+        "verify-debug cols: video x audio | z lag_ms overlap_s locked/expected lock_fraction rms_ms ppm clamped is_match"
+    );
+    if req.is_empty() {
+        return Ok(());
+    }
+    let fits = ctx.verify_batch(&req, sp)?;
+    for (cell, fit) in req_cells.iter().zip(fits) {
+        match fit {
+            None => eprintln!(
+                "  {} x {} | z {:.1} lag {:.0} — below verify_min_overlap_s ({:.0} s), no fit",
+                cell.video, cell.audio, cell.m.z, cell.m.lag_ms, sp.verify_min_overlap_s
+            ),
+            Some(f) => eprintln!(
+                "  {} x {} | z {:.1} lag {:.0} overlap {:.1} locked {}/{} frac {:.2} rms {:.2} ppm {:.0} clamped {} is_match {}",
+                cell.video,
+                cell.audio,
+                cell.m.z,
+                cell.m.lag_ms,
+                f.overlap_s,
+                f.locked,
+                f.expected,
+                f.lock_fraction,
+                f.rms_ms,
+                f.ppm,
+                if f.clamped { "Y" } else { "n" },
+                if couple_core::verify::is_match(&f, sp) { "YES" } else { "no" },
+            ),
+        }
+    }
+    Ok(())
 }
 
 fn import_quiet(

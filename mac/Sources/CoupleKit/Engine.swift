@@ -143,4 +143,35 @@ public final class Engine: @unchecked Sendable {
             }
         }
     }
+
+    /// Drift-fit RMS for contested candidate pairs (PLAN-RMS-TIEBREAKER §4.3
+    /// tie-breaker telemetry). `pairs`: (video, audio, coarseLagMs), where
+    /// `coarseLagMs` is a candidate's `PairCorrelation.lagMs`. The result aligns to
+    /// input order; an element is nil when too few windows locked. Returns `[]` for
+    /// empty input; nil only on a core fault. Pure/deterministic in core (§5.8).
+    public func pairFitBatch(_ pairs: [(TrackHandle, TrackHandle, Double)]) -> [PairFit?]? {
+        guard !pairs.isEmpty else { return [] }
+        // Encode [[videoId, audioId, lagMs], …]; ids are UInt64 (kept integral so
+        // large handles survive), lag is Double.
+        let rows: [[Any]] = pairs.map { [$0.0.id, $0.1.id, $0.2] }
+        guard let data = try? JSONSerialization.data(withJSONObject: rows),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return try? decodeJSON(cpl_pair_fit_batch(ctx, json), as: [PairFit?].self)
+    }
+
+    /// Fine match-verification for candidate pairs (PLAN-MATCH-CLASSIFIER §2.4 / Stage B —
+    /// the classifier contract Stage C consumes). `pairs`: (video, audio, coarseLagMs),
+    /// where `coarseLagMs` is a candidate's `PairCorrelation.lagMs`. The result aligns to
+    /// input order; an element is nil only when the overlap is below the absolute hard
+    /// floor. Returns `[]` for empty input; nil only on a core fault. Pure/deterministic
+    /// in core (§5.8).
+    public func verifyBatch(_ pairs: [(TrackHandle, TrackHandle, Double)]) -> [VerifyFit?]? {
+        guard !pairs.isEmpty else { return [] }
+        // Encode [[videoId, audioId, lagMs], …]; ids are UInt64 (kept integral so large
+        // handles survive), lag is Double.
+        let rows: [[Any]] = pairs.map { [$0.0.id, $0.1.id, $0.2] }
+        guard let data = try? JSONSerialization.data(withJSONObject: rows),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return try? decodeJSON(cpl_verify_batch(ctx, json), as: [VerifyFit?].self)
+    }
 }

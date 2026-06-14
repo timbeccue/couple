@@ -24,6 +24,7 @@ pub mod session;
 pub mod sync;
 pub mod resample;
 pub mod track;
+pub mod verify;
 
 pub use ctx::{Ctx, CtxConfig};
 pub use error::{CoupleError, Result};

@@ -248,11 +248,18 @@ private struct ResolveBanner: View {
         switch couple.state {
         case .noMatch: return "Nothing in the pool correlates with this take's camera audio."
         case .ambiguous:
+            // Phase-1 telemetry (§4.5): when drift-fit RMS was measured for the two
+            // best contested candidates, show the separation — the validation signal.
+            let fitLine = (couple.detail.fitBestRmsMs).flatMap { best in
+                couple.detail.fitSecondRmsMs.map { second in
+                    String(format: " Fit separates them: %.1f ms vs %.1f ms.", best, second)
+                }
+            } ?? ""
             if let m = couple.detail.margin {
-                return String(format: "Two takes are too close to call (margin %.1f < %.1f). A human must pick.",
-                              m, model.params.zMargin)
+                return String(format: "Two takes are too close to call (margin %.1f < %.1f). A human must pick.%@",
+                              m, model.params.zMargin, fitLine)
             }
-            return "Candidates conflict — a human must pick."
+            return "Candidates conflict — a human must pick.\(fitLine)"
         default: return "Pick the audio source for this take."
         }
     }
@@ -292,6 +299,11 @@ private struct ResolveBanner: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(String(format: "z %.1f · lag %.0f ms", cand.z, cand.lagMs))
+        .help(String(format: "z %.1f · lag %.0f ms%@%@", cand.z, cand.lagMs,
+                     cand.fitRmsMs.map { String(format: " · fit %.1f ms (%d win)", $0, cand.fitWindows ?? 0) } ?? "",
+                     // §4.5 fine-verify telemetry (read-only): lock fraction + drift ppm.
+                     cand.lockFraction.map { lf in
+                         String(format: " · %.0f%% lock · %.0f ppm", lf * 100, cand.ppm ?? 0)
+                     } ?? ""))
     }
 }

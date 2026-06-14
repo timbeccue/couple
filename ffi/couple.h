@@ -267,6 +267,26 @@ char *cpl_pair_candidates(uint64_t ctx,
                           uintptr_t n_audios);
 
 /*
+ Per-(video, audio) drift-fit RMS for contested candidate pairs (PLAN-RMS-TIEBREAKER
+ §4.2). pairs_json: `[[video_id, audio_id, coarse_lag_ms], …]` (lag = a candidate's
+ PairCorrelation.lagMs). Returns a JSON array aligned to input order, each element a
+ PairFit (`{"offMs","ppm","rmsMs","windows"}`) or null when too few windows lock.
+ Additive — no ABI bump. Null on error; free with cpl_string_free.
+ */
+ char *cpl_pair_fit_batch(uint64_t ctx, const char *pairs_json);
+
+/*
+ Per-(video, audio) fine MATCH-verification for candidate pairs
+ (PLAN-MATCH-CLASSIFIER §2.4 / Stage B). pairs_json: `[[video_id, audio_id,
+ coarse_lag_ms], …]` (lag = a candidate's PairCorrelation.lagMs). Returns a JSON array
+ aligned to input order, each element a VerifyFit
+ (`{"offMs","ppm","rmsMs","clamped","locked","expected","lockFraction","overlapS"}`) or
+ null when the overlap is below the absolute hard floor. Additive — no ABI bump
+ (`cpl_abi_version` stays 1). Null on error; free with cpl_string_free.
+ */
+ char *cpl_verify_batch(uint64_t ctx, const char *pairs_json);
+
+/*
  LRU-GC the cache down to max_bytes; returns bytes freed.
  */
  uint64_t cpl_cache_gc(uint64_t ctx, uint64_t max_bytes);

@@ -7,12 +7,32 @@ use crate::session::LocalMeasurement;
 
 const SR: f64 = SAMPLE_RATE as f64;
 
+/// Sum of squared deviations of an envelope slice (the `var_a` of the §5.4 gate). A
+/// slice is "measurable" (non-silent) when this is ≥ 1e-9. Shared by `scan` and
+/// [`window_measurable`] so silence is defined ONE way.
+fn envelope_sumsq_dev(a: &[f64]) -> f64 {
+    if a.is_empty() {
+        return 0.0;
+    }
+    let mean_a = a.iter().sum::<f64>() / a.len() as f64;
+    a.iter().map(|x| (x - mean_a) * (x - mean_a)).sum()
+}
+
+/// §5.4 variance gate: is the level-`spb` envelope over bins `[b0, b1)` non-silent
+/// (`Σ(x−x̄)² ≥ 1e-9`)? Same test `scan` applies to the camera window, factored so
+/// `verify_pair` can probe BOTH the camera AND external windows' measurability with the
+/// identical definition (so quiet-passage audio is not unfairly counted as un-locked).
+pub(crate) fn window_measurable(p: &PyramidReader, spb: u32, b0: u64, b1: u64) -> bool {
+    let a = envelope::envelope(p, spb, b0, b1);
+    envelope_sumsq_dev(&a) >= 1e-9
+}
+
 /// NCC of a fixed window `a` against `b_super[shift .. shift+n]` for integer bin shifts.
 /// Returns (best_shift_index, ncc_values). Skips shifts whose window leaves b_super.
 fn scan(a: &[f64], b_super: &[f64], shifts: std::ops::RangeInclusive<i64>, base: i64) -> Vec<f64> {
     let n = a.len();
     let mean_a = a.iter().sum::<f64>() / n as f64;
-    let var_a: f64 = a.iter().map(|x| (x - mean_a) * (x - mean_a)).sum();
+    let var_a: f64 = envelope_sumsq_dev(a);
     if var_a < 1e-9 {
         return Vec::new(); // §5.4 variance gate: silence
     }

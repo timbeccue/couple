@@ -35,6 +35,47 @@ pub struct SyncParams {
     pub stage_spans_ms: [f64; 4],
     /// Parabolic sub-bin clamp [SPEC]
     pub parabolic_clamp: f64,
+
+    // ---- match classifier (PLAN-MATCH-CLASSIFIER §4.2) ----
+    // Knobs for the fine waveform-lock classifier (verify.rs). They do NOT alter the
+    // editor-sync path (drift_pass/auto_sync_tracks read drift_windows/half_win_s/etc.
+    // as today); only verify_pair / is_match consume them.
+    /// Absolute hard floor below which no candidate is possible (s) [TUNE].
+    pub verify_min_overlap_s: f64,
+    /// Window span ≤ this fraction of the overlap (≥ 2 disjoint windows fit) [TUNE].
+    pub verify_win_frac: f64,
+    /// Floor on the verify half-window (s) [TUNE].
+    pub verify_half_win_min_s: f64,
+    /// Windows per second of overlap (density, not fixed count) [TUNE].
+    pub verify_density_per_s: f64,
+    /// Always attempt at least this many windows [TUNE].
+    pub verify_min_windows_floor: usize,
+    /// Long-clip cost ceiling on window count [TUNE].
+    pub verify_max_windows: usize,
+    /// Per-video cost cap: verify at most this many cells (ranked by NCC) [TUNE].
+    pub verify_max_candidates_per_video: usize,
+    /// Per-window lag search cap (ms); tighter than drift_span_cap_ms [TUNE].
+    pub verify_span_cap_ms: f64,
+    /// Ridge weight in s² (added to sxx = Σ(t−t̄)², itself s²; see fit::FitReg) [TUNE].
+    pub drift_lambda_s2: f64,
+    /// Generous physical drift bound (ppm); out-of-bound ⇒ clamped ⇒ not a match [TUNE].
+    pub drift_max_ppm: f64,
+    /// Small absolute floor on locked windows for a match [TUNE].
+    pub verify_min_locked: u32,
+    /// Fraction of measurable windows that must agree for a match [TUNE].
+    pub verify_lock_fraction_min: f64,
+    /// Trust floor on lock RMS (ms) for a match [TUNE].
+    pub verify_rms_max_ms: f64,
+    /// Stage-A loose resemblance floor (NCC) — rejects only obvious garbage [TUNE].
+    pub verify_prefilter_ncc: f64,
+    /// Per-window NCC floor for COUNTING a window as locked in `verify_pair` ONLY. Kept
+    /// SEPARATE from the editor-sync `ncc_window_min` (D5: do not touch drift_pass): a
+    /// degraded camera mic vs a clean recorder yields a *correct* per-window lag at NCC
+    /// well below 0.4 (real-data: tight ~12 ms lag agreement at 0.27–0.47 NCC), so a 0.4
+    /// floor discards the genuine signal on short clips. Lower so those windows count and
+    /// the slope-bounded fit (drift_max_ppm) disposes — a coherent impostor trend then
+    /// clamps and is rejected. [TUNE]
+    pub verify_ncc_window_min: f64,
 }
 
 impl Default for SyncParams {
@@ -59,6 +100,35 @@ impl Default for SyncParams {
             refit_ppm_threshold: 20.0,
             stage_spans_ms: [500.0, 80.0, 14.0, 3.0],
             parabolic_clamp: 0.6,
+            // Match classifier (PLAN-MATCH-CLASSIFIER §4.2 defaults; D1 starting points).
+            verify_min_overlap_s: 8.0,
+            verify_win_frac: 0.5,
+            verify_half_win_min_s: 2.5,
+            // Density 0.20 (1 window / 5 s) gave a 21 s clip only ~4 windows; with the
+            // verify NCC floor lowered, ~1 window / 2 s exposes a short clip's lag
+            // agreement to the fit while staying cheap (gate7) under the per-video cap.
+            verify_density_per_s: 0.5,
+            verify_min_windows_floor: 3,
+            verify_max_windows: 24,
+            verify_max_candidates_per_video: 6,
+            verify_span_cap_ms: 500.0,
+            drift_lambda_s2: 50.0,
+            // Classifier-only drift bound (read solely by verify_pair via fit_ls_reg;
+            // drift_pass uses fit_ls and never reads this). Tightened 2000 → 600: a
+            // genuine same-event match's clock agrees to ≤ a few hundred ppm (real-data
+            // true pairs: +44…−255 ppm after regularization), while a different-recording
+            // impostor that locks a COHERENT envelope trend wants ~1500+ ppm — out of
+            // bound ⇒ clamped ⇒ rejected. 600 clears the true cases with > 2× margin and
+            // is still far above the canonical 24-min pair's +3.57 ppm.
+            drift_max_ppm: 600.0,
+            verify_min_locked: 4,
+            verify_lock_fraction_min: 0.66,
+            // Trust floor on lock RMS. Calibrated on real data: true pairs run up to
+            // ~9.5 ms (Test 1 bach172↔ZOOM0033), so 9.0 false-rejected them; 12.0 admits
+            // the true pair while the drift bound + lock_fraction reject impostors.
+            verify_rms_max_ms: 12.0,
+            verify_prefilter_ncc: 0.15,
+            verify_ncc_window_min: 0.25,
         }
     }
 }
@@ -82,6 +152,22 @@ impl SyncParams {
             "drift-base-span-ms" => self.drift_base_span_ms = v,
             "drift-span-cap-ms" => self.drift_span_cap_ms = v,
             "refit-ppm-threshold" => self.refit_ppm_threshold = v,
+            // Match classifier (PLAN-MATCH-CLASSIFIER §4.2).
+            "verify-min-overlap-s" => self.verify_min_overlap_s = v,
+            "verify-win-frac" => self.verify_win_frac = v,
+            "verify-half-win-min-s" => self.verify_half_win_min_s = v,
+            "verify-density-per-s" => self.verify_density_per_s = v,
+            "verify-min-windows-floor" => self.verify_min_windows_floor = v as usize,
+            "verify-max-windows" => self.verify_max_windows = v as usize,
+            "verify-max-candidates-per-video" => self.verify_max_candidates_per_video = v as usize,
+            "verify-span-cap-ms" => self.verify_span_cap_ms = v,
+            "drift-lambda-s2" => self.drift_lambda_s2 = v,
+            "drift-max-ppm" => self.drift_max_ppm = v,
+            "verify-min-locked" => self.verify_min_locked = v as u32,
+            "verify-lock-fraction-min" => self.verify_lock_fraction_min = v,
+            "verify-rms-max-ms" => self.verify_rms_max_ms = v,
+            "verify-prefilter-ncc" => self.verify_prefilter_ncc = v,
+            "verify-ncc-window-min" => self.verify_ncc_window_min = v,
             other => return Err(CoupleError::invalid(format!("unknown param {other}"))),
         }
         Ok(())
@@ -583,6 +669,47 @@ fn drift_pass(
     })
 }
 
+/// Per-candidate drift-fit projection of [`crate::verify::VerifyFit`]
+/// (PLAN-RMS-TIEBREAKER `PairFit`). `windows == VerifyFit.locked`. Kept as the wire/Swift
+/// telemetry type the Phase-1/Phase-2 tie-breaker reads until Stage C moves the resolver
+/// to `VerifyFit` directly.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairFit {
+    pub off_ms: f64,
+    pub ppm: f64,
+    pub rms_ms: f64,
+    pub windows: u32,
+}
+
+/// Drift-fit RMS for one candidate pair at a known coarse lag — now a thin SHIM over the
+/// match classifier ([`crate::verify::verify_pair`]), of which `PairFit` is a strict
+/// projection (`windows = locked`). The lag convention is unchanged
+/// (`pair_correlate`'s `lag_ms` / `SyncResult.offset_ms`, `pair.rs:18-19`).
+///
+/// Returns `None` when the pair cannot anchor a trustworthy line — either the overlap is
+/// below the hard floor (`verify_pair` ⇒ `None`) OR fewer than 2 windows lock (`VerifyFit`
+/// with a non-finite `rms_ms`) — so a wrong/mis-lagged pair fails safe rather than
+/// reporting a junk RMS, preserving the existing telemetry contract.
+pub fn pair_fit_rms(
+    p_a: &PyramidReader,
+    p_b: &PyramidReader,
+    coarse_lag_ms: f64,
+    params: &SyncParams,
+) -> Option<PairFit> {
+    let v = crate::verify::verify_pair(p_a, p_b, coarse_lag_ms, params)?;
+    // < 2 locked points report a non-finite rms; a junk lock is "no fit" to the shim.
+    if !v.rms_ms.is_finite() {
+        return None;
+    }
+    Some(PairFit {
+        off_ms: v.off_ms,
+        ppm: v.ppm,
+        rms_ms: v.rms_ms,
+        windows: v.locked,
+    })
+}
+
 /// Full auto-sync (§5): offset search + drift pass + status/suggestion heuristics.
 pub fn auto_sync_tracks(
     p_cam: &PyramidReader,
@@ -726,5 +853,186 @@ pub fn overlap_info(dur_cam: f64, dur_ext: f64, offset_ms: f64, drift_ppm: f64) 
         t1,
         seconds,
         fraction_of_video: if dur_cam > 0.0 { seconds / dur_cam } else { 0.0 },
+    }
+}
+
+#[cfg(test)]
+mod pair_fit_tests {
+    use super::*;
+    use crate::pyramid::{PyramidBuilder, PyramidReader, SAMPLE_RATE};
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+
+    const SR: f64 = SAMPLE_RATE as f64;
+
+    // Bursts are generated over this FIXED absolute domain regardless of the slice
+    // `t0`, so two tracks cut at different origins share the identical event plan
+    // (the §9.1 / generate_session invariant — Poisson walks depend on the domain
+    // start, so a t0-dependent walk would desync the envelopes).
+    const PLAN_LO: f64 = -3.0;
+    const PLAN_HI: f64 = 95.0;
+
+    /// Deterministic broadband master on the 48 kHz grid: white-noise carrier
+    /// amplitude-modulated by randomly-placed exponential-decay transient bursts.
+    /// Sharp, well-timed, broadband features (like §9.1 transients) so the §5.4
+    /// envelope NCC locks at sub-window resolution across the whole span. Returns
+    /// `n` samples of `m(t0 + k/SR)`; `m` is a pure function of the absolute grid
+    /// index, so any two slices of the same `seed` agree where they overlap.
+    fn master(seed: u64, t0: f64, n: usize) -> Vec<f32> {
+        let mut rb = ChaCha8Rng::seed_from_u64(seed.wrapping_add(0xb0_57));
+        let mut bursts: Vec<(f64, f64, f64)> = Vec::new(); // (onset, tau, amp)
+        let mut u = PLAN_LO;
+        loop {
+            // ~6 bursts/s (dense enough that every 18 s window is feature-rich).
+            u += -(rb.gen_range(1e-9..1.0f64)).ln() / 6.0;
+            if u >= PLAN_HI {
+                break;
+            }
+            bursts.push((u, rb.gen_range(0.010..0.060), rb.gen_range(0.4..1.0)));
+        }
+        // White carrier keyed to the absolute grid index → t0-independent and O(1)
+        // (splitmix64 finalizer; per-sample ChaCha reseed would be far too slow).
+        let carrier = |idx: i64| {
+            let mut z = (idx as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(seed.wrapping_mul(0xD1B5_4A32_D192_ED03));
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^= z >> 31;
+            // u64 → [-1, 1) f32
+            ((z >> 40) as f32 / (1u32 << 24) as f32) * 2.0 - 1.0
+        };
+        let base = (t0 * SR).round() as i64;
+        (0..n)
+            .map(|k| {
+                let idx = base + k as i64;
+                let t = idx as f64 / SR;
+                let mut env = 0.02f64; // quiet bed so silent gaps still vary a little
+                for &(o, tau, a) in &bursts {
+                    if o <= t && t - o < 8.0 * tau {
+                        let dt = t - o;
+                        env += a * (1.0 - (-dt / 0.0005).exp()) * (-dt / tau).exp();
+                    }
+                }
+                (carrier(idx) as f64 * env).clamp(-0.999, 0.999) as f32
+            })
+            .collect()
+    }
+
+    /// Deterministic additive noise (a degraded camera mic), so a clean true-pair
+    /// fit lands at a realistic small nonzero RMS rather than an idealized 0.
+    fn with_noise(mut samples: Vec<f32>, seed: u64, amp: f32) -> Vec<f32> {
+        let mut r = ChaCha8Rng::seed_from_u64(seed.wrapping_add(0x6e_6f_69_73));
+        for s in &mut samples {
+            *s = (*s + r.gen_range(-1.0f32..1.0) * amp).clamp(-0.999, 0.999);
+        }
+        samples
+    }
+
+    /// Build a pyramid from samples → write to a temp .cpk → open a reader. Keeps the
+    /// TempDir alive (the reader mmaps the file).
+    fn pyramid_of(samples: &[f32], dir: &tempfile::TempDir, name: &str) -> PyramidReader {
+        let mut b = PyramidBuilder::new();
+        b.push(samples);
+        let fin = b.finalize();
+        let path = dir.path().join(name);
+        fin.write(&path).expect("write pyramid");
+        PyramidReader::open(&path).expect("open pyramid")
+    }
+
+    // A clean same-master pair at a known lag locks a tight line across the overlap.
+    #[test]
+    fn clean_pair_low_rms_many_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let dur_cam = 70.0;
+        let dur_ext = 80.0;
+        let lag_ms = 1200.0; // external leads: cam content at t shows at t+1.2 s in ext
+        let off_s = lag_ms / 1000.0;
+        // Camera hears master(t); external index te hears master(te - off_s), so camera
+        // content at t (= master(t)) appears in external at te = t + off_s. The camera
+        // is noise-degraded (real mic) so the lock is tight but not bit-perfect.
+        let cam = with_noise(master(7, 0.0, (dur_cam * SR) as usize), 7, 0.10);
+        let ext = master(7, -off_s, (dur_ext * SR) as usize);
+        let p_cam = pyramid_of(&cam, &dir, "cam.cpk");
+        let p_ext = pyramid_of(&ext, &dir, "ext.cpk");
+
+        let fit = pair_fit_rms(&p_cam, &p_ext, lag_ms, &SyncParams::default())
+            .expect("clean pair must lock a fit");
+        // True identity signal: a clean end-to-end lock (real true-pairs ~5 ms).
+        assert!(
+            fit.rms_ms < 5.0,
+            "clean fit rms {} ms should be a few ms",
+            fit.rms_ms
+        );
+        assert!(
+            fit.windows >= 6,
+            "clean fit should lock >= 6 windows, got {}",
+            fit.windows
+        );
+        // Recovered offset is the seeded lag (single-pass, ppm≈0 here).
+        assert!(
+            (fit.off_ms - lag_ms).abs() < 5.0,
+            "recovered off {} ms vs seeded {} ms",
+            fit.off_ms,
+            lag_ms
+        );
+    }
+
+    // The separation thesis: a wrong pair (independent masters) either fails to lock
+    // 3 windows (None) or scatters far above the trust floor. Same lag fed in.
+    #[test]
+    fn wrong_pair_none_or_high_rms() {
+        let dir = tempfile::tempdir().unwrap();
+        let dur = 70.0;
+        let lag_ms = 1200.0;
+        let off_s = lag_ms / 1000.0;
+        let cam = master(7, 0.0, (dur * SR) as usize);
+        let ext = master(999, -off_s, (dur * SR) as usize); // different master entirely
+        let p_cam = pyramid_of(&cam, &dir, "cam.cpk");
+        let p_ext = pyramid_of(&ext, &dir, "ext.cpk");
+
+        // Trust floor reference (PLAN §5.1 default rmsTrustFloorMs = 9.0).
+        const TRUST_FLOOR_MS: f64 = 9.0;
+        match pair_fit_rms(&p_cam, &p_ext, lag_ms, &SyncParams::default()) {
+            None => {} // too few windows lock — fails safe (independent content)
+            Some(f) => assert!(
+                f.rms_ms > TRUST_FLOOR_MS,
+                "wrong pair rms {} ms must be >> trust floor {} ms (separation)",
+                f.rms_ms,
+                TRUST_FLOOR_MS
+            ),
+        }
+
+        // Sanity: clean vs wrong genuinely separate on identical inputs/lag.
+        let clean = pair_fit_rms(&p_cam, &p_cam, 0.0, &SyncParams::default());
+        if let (Some(c), Some(w)) =
+            (clean, pair_fit_rms(&p_cam, &p_ext, lag_ms, &SyncParams::default()))
+        {
+            assert!(
+                w.rms_ms > c.rms_ms * 3.0,
+                "wrong rms {} should dwarf clean rms {}",
+                w.rms_ms,
+                c.rms_ms
+            );
+        }
+    }
+
+    // Pure function: two calls on the same pyramids + lag + params are bit-identical.
+    #[test]
+    fn deterministic_bit_identical() {
+        let dir = tempfile::tempdir().unwrap();
+        let lag_ms = 800.0;
+        let off_s = lag_ms / 1000.0;
+        let cam = master(42, 0.0, (65.0 * SR) as usize);
+        let ext = master(42, -off_s, (75.0 * SR) as usize);
+        let p_cam = pyramid_of(&cam, &dir, "cam.cpk");
+        let p_ext = pyramid_of(&ext, &dir, "ext.cpk");
+
+        let a = pair_fit_rms(&p_cam, &p_ext, lag_ms, &SyncParams::default());
+        let b = pair_fit_rms(&p_cam, &p_ext, lag_ms, &SyncParams::default());
+        assert_eq!(a, b, "pair_fit_rms must be deterministic");
+        let a = a.expect("clean pair should lock");
+        // Exact bit-equality of every field (PairFit is Copy + PartialEq).
+        assert_eq!(a.off_ms.to_bits(), b.unwrap().off_ms.to_bits());
     }
 }

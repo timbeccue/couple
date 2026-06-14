@@ -239,3 +239,53 @@ public struct Fit: Codable, Sendable {
     public var ppm: Double
     public var rmsMs: Double
 }
+
+/// Drift-fit RMS for one contested candidate pair (PLAN-RMS-TIEBREAKER §4.3).
+/// Telemetry: `rmsMs` is the per-candidate take-identity signal (clean true take
+/// locks ~5 ms end-to-end; a wrong take scatters 20+ ms); `windows` is the
+/// accepted-window count behind the fit. Wire is camelCase verbatim.
+public struct PairFit: Codable, Sendable {
+    public var offMs: Double
+    public var ppm: Double
+    public var rmsMs: Double
+    public var windows: UInt32
+
+    public init(offMs: Double, ppm: Double, rmsMs: Double, windows: UInt32) {
+        self.offMs = offMs
+        self.ppm = ppm
+        self.rmsMs = rmsMs
+        self.windows = windows
+    }
+}
+
+/// Fine waveform-lock match verification of one candidate pair
+/// (PLAN-MATCH-CLASSIFIER §2.3 / Stage B). The classifier signal: a clean true match
+/// locks a low-`rmsMs`, high-`lockFraction`, in-bound-drift line end-to-end; a non-match
+/// scatters (high `rmsMs` / low `lockFraction`) or `clamped`. `expected` counts only
+/// MEASURABLE windows (both tracks non-silent) so quiet passages don't deflate the
+/// fraction. Wire is camelCase verbatim. `PairFit` is a strict projection of this
+/// (`windows == locked`); the resolver still reads `PairFit` until Stage C.
+public struct VerifyFit: Codable, Sendable {
+    public var offMs: Double
+    public var ppm: Double
+    public var rmsMs: Double
+    public var clamped: Bool
+    public var locked: UInt32
+    public var expected: UInt32
+    public var lockFraction: Double
+    public var overlapS: Double
+
+    public init(
+        offMs: Double, ppm: Double, rmsMs: Double, clamped: Bool,
+        locked: UInt32, expected: UInt32, lockFraction: Double, overlapS: Double
+    ) {
+        self.offMs = offMs
+        self.ppm = ppm
+        self.rmsMs = rmsMs
+        self.clamped = clamped
+        self.locked = locked
+        self.expected = expected
+        self.lockFraction = lockFraction
+        self.overlapS = overlapS
+    }
+}

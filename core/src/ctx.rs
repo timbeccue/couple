@@ -251,6 +251,52 @@ impl Ctx {
             .collect())
     }
 
+    /// Per-(video, audio) drift-fit RMS for a set of contested candidate pairs
+    /// (SPEC PLAN-RMS-TIEBREAKER §4.1). `pairs`: (video_id, audio_id, coarse_lag_ms),
+    /// where `coarse_lag_ms` is a candidate's `PairCorrelation.lag_ms`. Runs in
+    /// parallel; each fit is independent and deterministic (§5.8). The result aligns
+    /// to input order, element `None` when too few windows lock.
+    pub fn pair_fit_batch(
+        &self,
+        pairs: &[(TrackId, TrackId, f64)],
+        params: &crate::sync::SyncParams,
+    ) -> Result<Vec<Option<crate::sync::PairFit>>> {
+        // Resolve every handle up front so a bad id fails the whole call (matching
+        // pair_candidates) rather than racing a partial parallel result.
+        let resolved: Vec<(Arc<TrackData>, Arc<TrackData>, f64)> = pairs
+            .iter()
+            .map(|&(v, a, lag)| Ok((self.track(v)?, self.track(a)?, lag)))
+            .collect::<Result<_>>()?;
+        use rayon::prelude::*;
+        Ok(resolved
+            .par_iter()
+            .map(|(v, a, lag)| crate::sync::pair_fit_rms(&v.pyramid, &a.pyramid, *lag, params))
+            .collect())
+    }
+
+    /// Per-(video, audio) fine match-verification for a set of candidate pairs
+    /// (PLAN-MATCH-CLASSIFIER §2.4). `pairs`: (video_id, audio_id, coarse_lag_ms), where
+    /// `coarse_lag_ms` is a candidate's `PairCorrelation.lag_ms`. Runs in parallel; each
+    /// `verify_pair` is independent and deterministic (§5.8). The result aligns to input
+    /// order, element `None` only below the absolute overlap floor.
+    pub fn verify_batch(
+        &self,
+        pairs: &[(TrackId, TrackId, f64)],
+        params: &crate::sync::SyncParams,
+    ) -> Result<Vec<Option<crate::verify::VerifyFit>>> {
+        // Resolve every handle up front so a bad id fails the whole call (matching
+        // pair_candidates) rather than racing a partial parallel result.
+        let resolved: Vec<(Arc<TrackData>, Arc<TrackData>, f64)> = pairs
+            .iter()
+            .map(|&(v, a, lag)| Ok((self.track(v)?, self.track(a)?, lag)))
+            .collect::<Result<_>>()?;
+        use rayon::prelude::*;
+        Ok(resolved
+            .par_iter()
+            .map(|(v, a, lag)| crate::verify::verify_pair(&v.pyramid, &a.pyramid, *lag, params))
+            .collect())
+    }
+
     // ---- sessions (§4.5) ----
 
     pub fn session_new(&self, camera: TrackId, external: TrackId) -> Result<SessionId> {

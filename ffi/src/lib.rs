@@ -822,6 +822,72 @@ pub unsafe extern "C" fn cpl_pair_candidates(
     }
 }
 
+/// Per-(video, audio) drift-fit RMS for contested candidate pairs (PLAN-RMS-TIEBREAKER
+/// §4.2). pairs_json: `[[video_id, audio_id, coarse_lag_ms], …]` (lag = a candidate's
+/// PairCorrelation.lagMs). Returns a JSON array aligned to input order, each element a
+/// PairFit (`{"offMs","ppm","rmsMs","windows"}`) or null when too few windows lock.
+/// Additive — no ABI bump. Null on error; free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_pair_fit_batch(ctx: u64, pairs_json: *const c_char) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    if pairs_json.is_null() {
+        set_error(&couple_core::CoupleError::invalid("null pairs_json"));
+        return std::ptr::null_mut();
+    }
+    let pairs: Vec<(u64, u64, f64)> =
+        match serde_json::from_str(&CStr::from_ptr(pairs_json).to_string_lossy()) {
+            Ok(p) => p,
+            Err(e) => {
+                set_error(&couple_core::CoupleError::invalid(format!("pairs: {e}")));
+                return std::ptr::null_mut();
+            }
+        };
+    match ctx.pair_fit_batch(&pairs, &Default::default()) {
+        Ok(fits) => to_cstring(serde_json::to_string(&fits).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Per-(video, audio) fine MATCH-verification for candidate pairs
+/// (PLAN-MATCH-CLASSIFIER §2.4 / Stage B). pairs_json: `[[video_id, audio_id,
+/// coarse_lag_ms], …]` (lag = a candidate's PairCorrelation.lagMs). Returns a JSON array
+/// aligned to input order, each element a VerifyFit
+/// (`{"offMs","ppm","rmsMs","clamped","locked","expected","lockFraction","overlapS"}`) or
+/// null when the overlap is below the absolute hard floor. Additive — no ABI bump
+/// (`cpl_abi_version` stays 1). Null on error; free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_verify_batch(ctx: u64, pairs_json: *const c_char) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    if pairs_json.is_null() {
+        set_error(&couple_core::CoupleError::invalid("null pairs_json"));
+        return std::ptr::null_mut();
+    }
+    let pairs: Vec<(u64, u64, f64)> =
+        match serde_json::from_str(&CStr::from_ptr(pairs_json).to_string_lossy()) {
+            Ok(p) => p,
+            Err(e) => {
+                set_error(&couple_core::CoupleError::invalid(format!("pairs: {e}")));
+                return std::ptr::null_mut();
+            }
+        };
+    match ctx.verify_batch(&pairs, &Default::default()) {
+        Ok(fits) => to_cstring(serde_json::to_string(&fits).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 // ---------- cache ----------
 
 /// LRU-GC the cache down to max_bytes; returns bytes freed.

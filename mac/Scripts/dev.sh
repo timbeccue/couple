@@ -3,6 +3,7 @@
 # Usage:
 #   Scripts/dev.sh            — build and launch (drag files in yourself)
 #   Scripts/dev.sh example    — build and launch with the example pair preloaded
+#   (the fine-verify match classifier is ON by default; COUPLE_VERIFY_ACTIVE=0 Scripts/dev.sh disables it for A/B)
 set -e
 cd "$(dirname "$0")/.."
 PATH="$HOME/.cargo/bin:$PATH" # rustup install; sh doesn't read the zsh profile
