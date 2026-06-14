@@ -15,15 +15,22 @@ struct QueueRail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    QueueSection(title: "QUEUED FOR EXPORT", couples: model.queued)
-                    QueueSection(title: "TO APPROVE", couples: model.toApprove)
-                    QueueSection(title: "TO FIX", couples: model.toFix)
-                    MediaPoolSection()
+            // Couples sit at the top; the media pool is anchored to the bottom of
+            // the rail. When the list is short, the Spacer expands to leave a gap
+            // between them; when it's long, everything scrolls (Spacer collapses).
+            GeometryReader { geo in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        QueueSection(title: "QUEUED FOR EXPORT", couples: model.queued)
+                        QueueSection(title: "TO APPROVE", couples: model.toApprove)
+                        QueueSection(title: "TO FIX", couples: model.toFix)
+                        Spacer(minLength: 0)
+                        MediaPoolSection()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 14)
+                    .frame(minHeight: geo.size.height, alignment: .top)
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 14)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
