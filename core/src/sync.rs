@@ -8,6 +8,44 @@ use crate::pyramid::{PyramidReader, SAMPLE_RATE};
 use crate::session::DriftMode;
 use realfft::RealFftPlanner;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Count of stage-1 GLOBAL ENVELOPE SCANS run (each [`offset_search`] entry increments it). This is
+/// the §11.3 PROOF instrument: the additive full-sync seed must BYPASS stage-1 rediscovery, so a
+/// seeded sync increments this by 0 while an unseeded sync increments it by ≥ 1. It is a process-wide
+/// relaxed counter — only ever read in tests via [`stage1_scan_count`] / [`reset_stage1_scan_count`]
+/// around a single-threaded call; it adds one relaxed add to the (already heavyweight) offset search
+/// and changes NOTHING about the result bytes.
+static STAGE1_SCANS: AtomicU64 = AtomicU64::new(0);
+
+/// Read the process-wide stage-1 global-scan counter (§11.3 proof). Test-only in practice.
+pub fn stage1_scan_count() -> u64 {
+    STAGE1_SCANS.load(Ordering::Relaxed)
+}
+
+/// Reset the stage-1 global-scan counter to 0 (§11.3 proof). A test calls this before a sync, then
+/// asserts the delta. Process-wide, so the asserting test must not run a competing sync concurrently
+/// — the seed tests are self-contained single calls.
+pub fn reset_stage1_scan_count() {
+    STAGE1_SCANS.store(0, Ordering::Relaxed);
+}
+
+/// An OPTIONAL full-sync seed (PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3). When supplied to
+/// [`auto_sync_tracks_seeded`], the full sync BEGINS from this accepted offset/drift (e.g. a
+/// spectral-landmark `PairEvidence.refined_lag_ms` / `refined_drift_ppm`) instead of rerunning the
+/// stage-1 global envelope scan + its z-acceptance gate. EVERYTHING downstream — the §5.3 refinement
+/// ladder, the §5.5 drift pass, the §5.6 status gates, session write-on-success, editor drift
+/// windows, and export mapping math — is UNCHANGED. The seed is consumed ONLY when explicitly
+/// supplied; absent (`None`) ⇒ [`auto_sync_tracks`] behavior is byte-identical to today (§11.3).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SyncSeed {
+    /// Accepted offset (ms) to seed the refinement ladder with, in lieu of the stage-1 coarse lag.
+    pub offset_ms: f64,
+    /// Accepted drift (ppm). Telemetry/seed only — the drift PASS still re-measures drift exactly as
+    /// the unseeded path does, so the final drift/export math is unchanged; this just records the
+    /// seed's drift in the synthesized coarse peak.
+    pub drift_ppm: f64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -35,47 +73,10 @@ pub struct SyncParams {
     pub stage_spans_ms: [f64; 4],
     /// Parabolic sub-bin clamp [SPEC]
     pub parabolic_clamp: f64,
-
-    // ---- match classifier (PLAN-MATCH-CLASSIFIER §4.2) ----
-    // Knobs for the fine waveform-lock classifier (verify.rs). They do NOT alter the
-    // editor-sync path (drift_pass/auto_sync_tracks read drift_windows/half_win_s/etc.
-    // as today); only verify_pair / is_match consume them.
-    /// Absolute hard floor below which no candidate is possible (s) [TUNE].
-    pub verify_min_overlap_s: f64,
-    /// Window span ≤ this fraction of the overlap (≥ 2 disjoint windows fit) [TUNE].
-    pub verify_win_frac: f64,
-    /// Floor on the verify half-window (s) [TUNE].
-    pub verify_half_win_min_s: f64,
-    /// Windows per second of overlap (density, not fixed count) [TUNE].
-    pub verify_density_per_s: f64,
-    /// Always attempt at least this many windows [TUNE].
-    pub verify_min_windows_floor: usize,
-    /// Long-clip cost ceiling on window count [TUNE].
-    pub verify_max_windows: usize,
-    /// Per-video cost cap: verify at most this many cells (ranked by NCC) [TUNE].
-    pub verify_max_candidates_per_video: usize,
-    /// Per-window lag search cap (ms); tighter than drift_span_cap_ms [TUNE].
-    pub verify_span_cap_ms: f64,
-    /// Ridge weight in s² (added to sxx = Σ(t−t̄)², itself s²; see fit::FitReg) [TUNE].
-    pub drift_lambda_s2: f64,
-    /// Generous physical drift bound (ppm); out-of-bound ⇒ clamped ⇒ not a match [TUNE].
-    pub drift_max_ppm: f64,
-    /// Small absolute floor on locked windows for a match [TUNE].
-    pub verify_min_locked: u32,
-    /// Fraction of measurable windows that must agree for a match [TUNE].
-    pub verify_lock_fraction_min: f64,
-    /// Trust floor on lock RMS (ms) for a match [TUNE].
-    pub verify_rms_max_ms: f64,
-    /// Stage-A loose resemblance floor (NCC) — rejects only obvious garbage [TUNE].
-    pub verify_prefilter_ncc: f64,
-    /// Per-window NCC floor for COUNTING a window as locked in `verify_pair` ONLY. Kept
-    /// SEPARATE from the editor-sync `ncc_window_min` (D5: do not touch drift_pass): a
-    /// degraded camera mic vs a clean recorder yields a *correct* per-window lag at NCC
-    /// well below 0.4 (real-data: tight ~12 ms lag agreement at 0.27–0.47 NCC), so a 0.4
-    /// floor discards the genuine signal on short clips. Lower so those windows count and
-    /// the slope-bounded fit (drift_max_ppm) disposes — a coherent impostor trend then
-    /// clamps and is rejected. [TUNE]
-    pub verify_ncc_window_min: f64,
+    // The fine waveform-lock classifier knobs moved to `PairingParams`
+    // (PLAN-AUDIO-MATCHING-PREWORK §6.3): core now owns every verifier default and the
+    // match predicate. `SyncParams` keeps ONLY editor/full-sync configuration, so
+    // `auto_sync_tracks`/`drift_pass`/audition/export behavior is unchanged.
 }
 
 impl Default for SyncParams {
@@ -100,35 +101,6 @@ impl Default for SyncParams {
             refit_ppm_threshold: 20.0,
             stage_spans_ms: [500.0, 80.0, 14.0, 3.0],
             parabolic_clamp: 0.6,
-            // Match classifier (PLAN-MATCH-CLASSIFIER §4.2 defaults; D1 starting points).
-            verify_min_overlap_s: 8.0,
-            verify_win_frac: 0.5,
-            verify_half_win_min_s: 2.5,
-            // Density 0.20 (1 window / 5 s) gave a 21 s clip only ~4 windows; with the
-            // verify NCC floor lowered, ~1 window / 2 s exposes a short clip's lag
-            // agreement to the fit while staying cheap (gate7) under the per-video cap.
-            verify_density_per_s: 0.5,
-            verify_min_windows_floor: 3,
-            verify_max_windows: 24,
-            verify_max_candidates_per_video: 6,
-            verify_span_cap_ms: 500.0,
-            drift_lambda_s2: 50.0,
-            // Classifier-only drift bound (read solely by verify_pair via fit_ls_reg;
-            // drift_pass uses fit_ls and never reads this). Tightened 2000 → 600: a
-            // genuine same-event match's clock agrees to ≤ a few hundred ppm (real-data
-            // true pairs: +44…−255 ppm after regularization), while a different-recording
-            // impostor that locks a COHERENT envelope trend wants ~1500+ ppm — out of
-            // bound ⇒ clamped ⇒ rejected. 600 clears the true cases with > 2× margin and
-            // is still far above the canonical 24-min pair's +3.57 ppm.
-            drift_max_ppm: 600.0,
-            verify_min_locked: 4,
-            verify_lock_fraction_min: 0.66,
-            // Trust floor on lock RMS. Calibrated on real data: true pairs run up to
-            // ~9.5 ms (Test 1 bach172↔ZOOM0033), so 9.0 false-rejected them; 12.0 admits
-            // the true pair while the drift bound + lock_fraction reject impostors.
-            verify_rms_max_ms: 12.0,
-            verify_prefilter_ncc: 0.15,
-            verify_ncc_window_min: 0.25,
         }
     }
 }
@@ -152,22 +124,6 @@ impl SyncParams {
             "drift-base-span-ms" => self.drift_base_span_ms = v,
             "drift-span-cap-ms" => self.drift_span_cap_ms = v,
             "refit-ppm-threshold" => self.refit_ppm_threshold = v,
-            // Match classifier (PLAN-MATCH-CLASSIFIER §4.2).
-            "verify-min-overlap-s" => self.verify_min_overlap_s = v,
-            "verify-win-frac" => self.verify_win_frac = v,
-            "verify-half-win-min-s" => self.verify_half_win_min_s = v,
-            "verify-density-per-s" => self.verify_density_per_s = v,
-            "verify-min-windows-floor" => self.verify_min_windows_floor = v as usize,
-            "verify-max-windows" => self.verify_max_windows = v as usize,
-            "verify-max-candidates-per-video" => self.verify_max_candidates_per_video = v as usize,
-            "verify-span-cap-ms" => self.verify_span_cap_ms = v,
-            "drift-lambda-s2" => self.drift_lambda_s2 = v,
-            "drift-max-ppm" => self.drift_max_ppm = v,
-            "verify-min-locked" => self.verify_min_locked = v as u32,
-            "verify-lock-fraction-min" => self.verify_lock_fraction_min = v,
-            "verify-rms-max-ms" => self.verify_rms_max_ms = v,
-            "verify-prefilter-ncc" => self.verify_prefilter_ncc = v,
-            "verify-ncc-window-min" => self.verify_ncc_window_min = v,
             other => return Err(CoupleError::invalid(format!("unknown param {other}"))),
         }
         Ok(())
@@ -493,6 +449,9 @@ pub fn offset_search(
     prog: &mut ProgressEmitter,
     cancel: &CancelToken,
 ) -> Result<std::result::Result<OffsetSearch, FailReason>> {
+    // §11.3 proof instrument: this IS the stage-1 global envelope scan + z-gate. The seeded full
+    // sync does NOT call this (it begins from the seed), so this counter stays 0 for a seeded run.
+    STAGE1_SCANS.fetch_add(1, Ordering::Relaxed);
     // Stage 1 @ 9600 spb (0.2 s bins), full ±(dur_cam + dur_ext), z-selection.
     prog.emit(Phase::SyncCoarse, 0.05);
     let a = envelope::envelope_full(p_cam, 9600);
@@ -670,35 +629,42 @@ fn drift_pass(
 }
 
 /// Per-candidate drift-fit projection of [`crate::verify::VerifyFit`]
-/// (PLAN-RMS-TIEBREAKER `PairFit`). `windows == VerifyFit.locked`. Kept as the wire/Swift
-/// telemetry type the Phase-1/Phase-2 tie-breaker reads until Stage C moves the resolver
-/// to `VerifyFit` directly.
+/// (PLAN-RMS-TIEBREAKER `PairFit`). Kept as the wire/Swift telemetry type the
+/// Phase-1/Phase-2 tie-breaker reads until Stage C moves the resolver to `VerifyFit`
+/// directly.
+///
+/// §8.4 MEANING CHANGE: `windows` is now the ROBUST INLIER count (`VerifyFit.inliers` — the
+/// MAD-threshold survivors of the §8.2 robust fit), not the raw locked count. `off_ms`/`ppm`/
+/// `rms_ms` are likewise the robust-fit values over those survivors. So a fit dragged by one
+/// or two false local locks is no longer reported as if every locked window agreed — the
+/// tie-breaker's window count and RMS describe the windows that actually anchor the line.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PairFit {
     pub off_ms: f64,
     pub ppm: f64,
     pub rms_ms: f64,
+    /// Robust inlier count (`VerifyFit.inliers`) — see the type doc for the §8.4 change.
     pub windows: u32,
 }
 
-/// Drift-fit RMS for one candidate pair at a known coarse lag — now a thin SHIM over the
-/// match classifier ([`crate::verify::verify_pair`]), of which `PairFit` is a strict
-/// projection (`windows = locked`). The lag convention is unchanged
+/// Drift-fit RMS for one candidate pair at a known coarse lag — a thin SHIM over the match
+/// classifier ([`crate::verify::verify_pair`]), of which `PairFit` is a projection
+/// (`windows = inliers`, the robust-fit survivors per §8.4). The lag convention is unchanged
 /// (`pair_correlate`'s `lag_ms` / `SyncResult.offset_ms`, `pair.rs:18-19`).
 ///
 /// Returns `None` when the pair cannot anchor a trustworthy line — either the overlap is
-/// below the hard floor (`verify_pair` ⇒ `None`) OR fewer than 2 windows lock (`VerifyFit`
-/// with a non-finite `rms_ms`) — so a wrong/mis-lagged pair fails safe rather than
-/// reporting a junk RMS, preserving the existing telemetry contract.
+/// below the hard floor (`verify_pair` ⇒ `None`) OR fewer than 2 inliers survive the robust
+/// fit (`VerifyFit` with a non-finite `rms_ms`) — so a wrong/mis-lagged pair fails safe rather
+/// than reporting a junk RMS, preserving the existing telemetry contract.
 pub fn pair_fit_rms(
     p_a: &PyramidReader,
     p_b: &PyramidReader,
     coarse_lag_ms: f64,
-    params: &SyncParams,
+    params: &crate::pairing_params::PairingParams,
 ) -> Option<PairFit> {
     let v = crate::verify::verify_pair(p_a, p_b, coarse_lag_ms, params)?;
-    // < 2 locked points report a non-finite rms; a junk lock is "no fit" to the shim.
+    // < 2 robust inliers report a non-finite rms; a junk lock is "no fit" to the shim.
     if !v.rms_ms.is_finite() {
         return None;
     }
@@ -706,7 +672,7 @@ pub fn pair_fit_rms(
         off_ms: v.off_ms,
         ppm: v.ppm,
         rms_ms: v.rms_ms,
-        windows: v.locked,
+        windows: v.inliers,
     })
 }
 
@@ -746,6 +712,138 @@ pub fn auto_sync_tracks(
         DriftMode::None
     };
     // §5.6 status gates.
+    let status = if search.fine_ncc >= params.synced_fine_ncc
+        && drift.accepted >= params.synced_min_windows
+        && fit_rms_ms.map(|r| r < params.synced_max_rms_ms).unwrap_or(false)
+    {
+        SyncStatus::Synced
+    } else {
+        SyncStatus::LowConfidence
+    };
+
+    Ok(SyncResult {
+        offset_ms,
+        drift_ppm,
+        drift_measurable,
+        coarse: search.coarse,
+        runner_up_z: search.runner_up_z,
+        fine_ncc: search.fine_ncc,
+        windows: drift.windows,
+        fit_rms_ms,
+        end_to_end_drift_ms,
+        overlap,
+        status,
+        suggested_drift_mode: suggested,
+        compute_ms: started.elapsed().as_secs_f64() * 1000.0,
+    })
+}
+
+/// The §5.3 refinement ladder (stages 2–5) starting from `start_lag_ms`, returning an
+/// [`OffsetSearch`] WITHOUT running the stage-1 global scan / z-gate (PLAN §11.3 seed path). This is
+/// the EXACT ladder `offset_search` runs after stage 1 — same `refine_stage` calls, same spbs/spans
+/// — so a seeded offset is refined identically to a discovered one; only the discovery + acceptance
+/// gate are skipped. The synthesized `coarse` peak echoes the seed (`lag_ms = seed.offset_ms`,
+/// `ncc = fine_ncc` from the first refined stage, `z = 0` since no stage-1 z was computed,
+/// `overlap_bins = 0`); `runner_up_z = 0`. `coarse`/`runner_up_z` are telemetry in `SyncResult`
+/// and feed NEITHER the status gate (which keys on `fine_ncc`, recomputed here identically) NOR
+/// export mapping math (§11.3), so synthesizing them changes nothing about the proven outcome.
+fn seeded_offset_search(
+    p_cam: &PyramidReader,
+    p_ext: &PyramidReader,
+    seed: SyncSeed,
+    params: &SyncParams,
+    prog: &mut ProgressEmitter,
+    cancel: &CancelToken,
+) -> Result<OffsetSearch> {
+    // Begin from the accepted seed offset instead of the stage-1 coarse lag. Stages 2–5 are the
+    // identical ladder (2400/480/96/24 spb over ±500/±80/±14/±3 ms, max NCC) used by offset_search.
+    let mut lag_ms = seed.offset_ms;
+    // Seed fine_ncc with the seed's drift-free expectation; the ladder overwrites it on the first
+    // stage that locks. If NOTHING locks (degenerate audio) it stays 0 ⇒ LowConfidence, the honest
+    // outcome — never a fabricated Synced.
+    let mut fine_ncc = 0.0;
+    for (i, (&spb, &span)) in [2400u32, 480, 96, 24]
+        .iter()
+        .zip(&params.stage_spans_ms)
+        .enumerate()
+    {
+        cancel.check()?;
+        if let Some((l, n)) = refine_stage(p_cam, p_ext, spb, lag_ms, span, params.parabolic_clamp)
+        {
+            lag_ms = l;
+            fine_ncc = n;
+        }
+        prog.emit(Phase::SyncRefine, (i + 1) as f64 / 4.0);
+    }
+
+    let coarse = StagePeak {
+        lag_ms: seed.offset_ms,
+        ncc: fine_ncc,
+        // No stage-1 z is computed on the seed path (z is the global-scan selection score). 0.0 is
+        // the honest "not measured" value; it is telemetry only and gates nothing on this path.
+        z: 0.0,
+        overlap_bins: 0,
+    };
+    Ok(OffsetSearch {
+        coarse,
+        runner_up_z: 0.0,
+        offset_stage_ms: lag_ms,
+        fine_ncc,
+    })
+}
+
+/// Full auto-sync seeded by an OPTIONAL accepted offset/drift (PLAN §11.3). The ADDITIVE seed entry:
+///
+/// - `seed: None` ⇒ delegates verbatim to [`auto_sync_tracks`]; the result is BYTE-IDENTICAL to
+///   today (the proven path is literally unchanged — this is the no-seed contract of §11.3, proven
+///   by the stage-1 counter and the byte-equality test);
+/// - `seed: Some(s)` ⇒ BYPASSES the stage-1 global envelope scan (no [`offset_search`] call, so the
+///   §11.3 proof counter does not advance) and instead refines from the seed via
+///   [`seeded_offset_search`], THEN runs the IDENTICAL §5.5 drift pass + §5.6 status gates +
+///   `SyncResult` assembly. Final status thresholds, session write-on-success (owned by the Ctx
+///   caller), editor drift windows, and export mapping math are all UNCHANGED.
+///
+/// NOTE (boundary cut): NOTHING in this boundary calls this with `Some` outside the §11.3 tests —
+/// the FFI/CLI/Swift seed wiring is boundary 8+. The default full-sync path (`auto_sync_tracks`) is
+/// untouched and opt-in to the seed only.
+pub fn auto_sync_tracks_seeded(
+    p_cam: &PyramidReader,
+    p_ext: &PyramidReader,
+    params: &SyncParams,
+    seed: Option<SyncSeed>,
+    prog: &mut ProgressEmitter,
+    cancel: &CancelToken,
+) -> Result<SyncResult> {
+    // No seed ⇒ the proven path verbatim. Byte-identical to today (§11.3 no-seed contract).
+    let Some(seed) = seed else {
+        return auto_sync_tracks(p_cam, p_ext, params, prog, cancel);
+    };
+
+    // Seeded: skip stage-1 rediscovery; refine from the seed, then run the UNCHANGED tail. The body
+    // below mirrors `auto_sync_tracks` exactly EXCEPT the offset source — duplicated (not factored)
+    // so the proven `auto_sync_tracks` stays literally untouched.
+    let started = std::time::Instant::now();
+    let dur_cam = p_cam.duration_s();
+    let dur_ext = p_ext.duration_s();
+    // The seed REPLACES stage-1 rediscovery. (offset_search is NOT called — the §11.3 proof.)
+    let search = seeded_offset_search(p_cam, p_ext, seed, params, prog, cancel)?;
+
+    let drift = drift_pass(p_cam, p_ext, search.offset_stage_ms, params, prog, cancel)?;
+    prog.emit(Phase::SyncFit, 1.0);
+
+    // §5.5: the fit replaces the stage offset when drift is measurable. (IDENTICAL to auto_sync.)
+    let (offset_ms, drift_ppm, drift_measurable, fit_rms_ms) = match drift.fit {
+        Some(f) => (f.off_ms, f.ppm, true, Some(f.rms_ms)),
+        None => (search.offset_stage_ms, 0.0, false, None),
+    };
+    let overlap = overlap_info(dur_cam, dur_ext, offset_ms, drift_ppm);
+    let end_to_end_drift_ms = drift_ppm.abs() * overlap.seconds / 1000.0;
+    let suggested = if end_to_end_drift_ms > params.suggest_resample_ms {
+        DriftMode::Resample
+    } else {
+        DriftMode::None
+    };
+    // §5.6 status gates. UNCHANGED thresholds — keyed on the recomputed fine_ncc + drift windows.
     let status = if search.fine_ncc >= params.synced_fine_ncc
         && drift.accepted >= params.synced_min_windows
         && fit_rms_ms.map(|r| r < params.synced_max_rms_ms).unwrap_or(false)
@@ -956,7 +1054,7 @@ mod pair_fit_tests {
         let p_cam = pyramid_of(&cam, &dir, "cam.cpk");
         let p_ext = pyramid_of(&ext, &dir, "ext.cpk");
 
-        let fit = pair_fit_rms(&p_cam, &p_ext, lag_ms, &SyncParams::default())
+        let fit = pair_fit_rms(&p_cam, &p_ext, lag_ms, &crate::PairingParams::default())
             .expect("clean pair must lock a fit");
         // True identity signal: a clean end-to-end lock (real true-pairs ~5 ms).
         assert!(
@@ -993,7 +1091,7 @@ mod pair_fit_tests {
 
         // Trust floor reference (PLAN §5.1 default rmsTrustFloorMs = 9.0).
         const TRUST_FLOOR_MS: f64 = 9.0;
-        match pair_fit_rms(&p_cam, &p_ext, lag_ms, &SyncParams::default()) {
+        match pair_fit_rms(&p_cam, &p_ext, lag_ms, &crate::PairingParams::default()) {
             None => {} // too few windows lock — fails safe (independent content)
             Some(f) => assert!(
                 f.rms_ms > TRUST_FLOOR_MS,
@@ -1004,9 +1102,9 @@ mod pair_fit_tests {
         }
 
         // Sanity: clean vs wrong genuinely separate on identical inputs/lag.
-        let clean = pair_fit_rms(&p_cam, &p_cam, 0.0, &SyncParams::default());
+        let clean = pair_fit_rms(&p_cam, &p_cam, 0.0, &crate::PairingParams::default());
         if let (Some(c), Some(w)) =
-            (clean, pair_fit_rms(&p_cam, &p_ext, lag_ms, &SyncParams::default()))
+            (clean, pair_fit_rms(&p_cam, &p_ext, lag_ms, &crate::PairingParams::default()))
         {
             assert!(
                 w.rms_ms > c.rms_ms * 3.0,
@@ -1028,8 +1126,8 @@ mod pair_fit_tests {
         let p_cam = pyramid_of(&cam, &dir, "cam.cpk");
         let p_ext = pyramid_of(&ext, &dir, "ext.cpk");
 
-        let a = pair_fit_rms(&p_cam, &p_ext, lag_ms, &SyncParams::default());
-        let b = pair_fit_rms(&p_cam, &p_ext, lag_ms, &SyncParams::default());
+        let a = pair_fit_rms(&p_cam, &p_ext, lag_ms, &crate::PairingParams::default());
+        let b = pair_fit_rms(&p_cam, &p_ext, lag_ms, &crate::PairingParams::default());
         assert_eq!(a, b, "pair_fit_rms must be deterministic");
         let a = a.expect("clean pair should lock");
         // Exact bit-equality of every field (PairFit is Copy + PartialEq).
