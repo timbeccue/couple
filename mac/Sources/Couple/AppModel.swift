@@ -21,11 +21,71 @@ final class AppModel {
     /// One audio engine / output / fullscreen window across N couples (§5.3),
     /// injected into every PairSession; only the selected couple is attached.
     let audition = AuditionController()
+    /// Single source of truth for the media-pool audio preview (§V2.7, TODO-002):
+    /// one active entry, play/pause, position, duration; surfaced in the pool's
+    /// sticky bottom bar. Owned here so the teardown lifecycle can release it (see
+    /// `willTerminate` below).
+    let preview = PoolPreviewController()
+
+    /// Media-pool Finder-style selection (owner decision 3; TODO-001 foundation).
+    /// `poolSelection` is the multi-select highlight set (reused verbatim by the
+    /// future remove-media feature); `poolPrimary` is the single last-clicked entry
+    /// the sticky player follows; `poolAnchor` is the ⇧-range start. The pure
+    /// transition lives in CoupleKit.PoolSelection; `selectPool` applies it and
+    /// drives the preview (load-paused on primary change, stop when nil).
+    var poolSelection: Set<String> = []
+    var poolPrimary: String?
+    @ObservationIgnored private var poolAnchor: String?
+    /// The primary entry as a pool Entry (sticky bar reads name/url/duration off it).
+    var poolPrimaryEntry: MediaPool.Entry? { poolPrimary.flatMap { pool.entry(key: $0) } }
 
     var couples: [CoupleRow] = []
     var selectedID: CoupleRow.ID?
     /// True while the candidate matrix + resolution runs (off-main).
-    var resolving = false
+    var resolving = false {
+        didSet { if resolving != oldValue { activity.refresh() } }
+    }
+    /// True for a resolve that runs AFTER an earlier import already produced couples
+    /// (so the activity strip reads `Updating matches after import...` rather than the
+    /// first-analysis count line, TODO-005). Set per `resolveQueue` call.
+    @ObservationIgnored private var resolveIsUpdate = false
+    /// Strip-facing read of `resolveIsUpdate` (TODO-005).
+    var resolveIsUpdateForStrip: Bool { resolveIsUpdate }
+
+    /// The unified long-running activity strip (TODO-005). Owns the debounced summary
+    /// of every background job (import / pairing / queued sync / export) shown beneath
+    /// the queue header. Driven by `activity.refresh()` whenever a feeding signal
+    /// changes; the honest single-line decision is the pure `ActivitySummaryPolicy`.
+    @ObservationIgnored lazy var activity = ActivityStrip(model: self)
+
+    /// A pending approved-replacement confirmation (TODO-013). Set when a manual
+    /// audio drop targets an APPROVED couple with a different source; replacing it
+    /// removes it from the export queue and clears the current pair session, so the
+    /// drop asks first. Both drop targets (queue row + center workspace) route
+    /// through the SAME `requestRepairDrop`, so they cannot diverge — and a single
+    /// `.confirmationDialog` in RootView presents this regardless of which gesture
+    /// armed it. `nil` ⇒ no dialog showing. The pure outcome decision is
+    /// `RepairDropPolicy.decide`; this struct only carries the confirmed action.
+    struct PendingRepairConfirmation: Identifiable {
+        let id = UUID()
+        let coupleID: CoupleRow.ID
+        let audioKey: String
+        let videoName: String
+        let audioName: String
+    }
+    var pendingRepairConfirmation: PendingRepairConfirmation?
+
+    /// The pool AUDIO key currently being dragged (TODO-013), recorded when a pool
+    /// audio row starts a drag and cleared when it ends. Lets the center-workspace
+    /// drop overlay name the dragged file in its copy (`Pair selected video with
+    /// audio.wav`) DURING the hover — SwiftUI's `.dropDestination` exposes the payload
+    /// only in its action closure, not while targeting, so this is the only honest
+    /// source for the live name. Purely cosmetic: the actual repair always reads the
+    /// dropped payload, never this, so a stale value can never mis-pair.
+    var poolDraggingKey: String?
+    /// The dragged audio's display name for the live overlay copy, or nil when no
+    /// pool audio drag is in flight.
+    var poolDraggingName: String? { poolDraggingKey.flatMap { pool.entry(key: $0)?.name } }
     var params: PairParams = {
         var p = PairParams()
         // App default: the fine-verify match classifier is ON (the CLI/gates keep
@@ -81,6 +141,13 @@ final class AppModel {
     // Per-couple serialized sync queue (§5.2).
     @ObservationIgnored private var syncPending: [CoupleRow] = []
     @ObservationIgnored private var syncRunning = false
+    /// Activity-strip view of the sync queue (TODO-005): the running couple's 1-based
+    /// position, the batch total (running + queued at the time the batch started), and
+    /// the running couple's video name — so the strip can read `Syncing couple X of N:
+    /// video.mov` without exposing the internal queue. Reset to (0,0) when idle.
+    @ObservationIgnored private(set) var syncIndex = 0
+    @ObservationIgnored private(set) var syncTotal = 0
+    @ObservationIgnored private(set) var syncVideoName: String?
     /// Set during the restore path so couples take their saved alignment instead
     /// of a fresh auto-sync (§5.4).
     @ObservationIgnored private var suppressAutoSync = false
@@ -104,9 +171,15 @@ final class AppModel {
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.saveAll() }
+            MainActor.assumeIsolated {
+                self?.preview.stop() // release pool-preview playback before exit (TODO-002)
+                self?.saveAll()
+            }
         }
         DebugDrive.shared.configure(model: self)
+        // Feed the unified activity strip from the pool's import progress (TODO-005);
+        // the other signals refresh it from their own change points.
+        pool.onImportChange = { [weak self] in self?.activity.refresh() }
         offerRestoreOnLaunch()
     }
 
@@ -153,6 +226,9 @@ final class AppModel {
     /// then build/update couples — pinned/approved selections survive (§3.6).
     func resolveQueue() async {
         guard let engine, !pool.videos.isEmpty || !pool.audios.isEmpty else { return }
+        // A resolve over an already-populated queue is an UPDATE (the strip reads
+        // "Updating matches after import..."); the first resolve is the analysis pass.
+        resolveIsUpdate = !couples.isEmpty
         resolving = true
         let videos = pool.videos.map {
             ResolverVideo(key: $0.id, name: $0.name, durationS: $0.durationS,
@@ -187,6 +263,10 @@ final class AppModel {
         // so `rows` always covers every video; `order` is the authoritative list.
         couples = order
         if selectedID == nil { select(orderedCouples.first?.id) }
+        // Keep the pool selection consistent with the live pool (owner decision 3;
+        // TODO-001 foundation). Files only get added today, so this is a no-op now,
+        // but the future remove-media feature relies on it pruning vanished keys.
+        prunePoolSelection()
     }
 
     /// §3.6 stability + TODO-007. Fold a fresh resolution into an existing couple.
@@ -214,6 +294,11 @@ final class AppModel {
             couple.detail = row.detail
             couple.candidates = fresh
             if plan.clearForced { couple.forced = false }
+            // TODO-009: an adopted resolution is the resolver's pick — provenance is
+            // AUTOMATIC (its quality is the resolver verdict), or `.none` with no
+            // selection. Drop any stale manual evidence so the dot is evidence-fresh.
+            couple.selectionProvenance = row.selected != nil ? .automatic : .none
+            couple.manualMatchConfident = nil
         } else {
             // Protected: preserve display + selection; surface only genuinely-new
             // candidates as alternates (existing candidate objects kept verbatim;
@@ -251,21 +336,37 @@ final class AppModel {
     // MARK: - Serialized per-couple sync (§5.2)
 
     private func enqueueSync(_ couple: CoupleRow) {
-        if !syncPending.contains(where: { $0 === couple }) { syncPending.append(couple) }
+        if !syncPending.contains(where: { $0 === couple }) {
+            syncPending.append(couple)
+            // Grow the activity-strip batch total as work is queued (high-water mark
+            // across the run, so a couple enqueued mid-batch bumps "of N", TODO-005).
+            syncTotal += 1
+        }
         pumpSync()
     }
 
     private func pumpSync() {
         guard !syncRunning, !syncPending.isEmpty else { return }
         syncRunning = true
+        // Starting a fresh batch: this couple is position 1 of the batch (any
+        // mid-batch additions raise `syncTotal` via enqueueSync).
+        syncIndex = 0
+        activity.refresh()
         Task {
             while let next = syncPending.first {
                 syncPending.removeFirst()
                 guard next.pair.session != nil else { continue }
+                syncIndex += 1
+                syncVideoName = next.video.name
+                activity.refresh()           // advance the strip's "couple X of N: name"
                 next.pair.runAutoSync(announce: false) // ambient (§V2.4); dots carry the result
                 await next.pair.awaitSync()
             }
             syncRunning = false
+            syncIndex = 0
+            syncTotal = 0
+            syncVideoName = nil
+            activity.refresh()               // queue drained ⇒ clear the sync summary
         }
     }
 
@@ -293,6 +394,255 @@ final class AppModel {
                         videoDuration: cam.durationS)
     }
 
+    // MARK: - Media-pool selection (owner decision 3; TODO-001 foundation)
+
+    /// Finder-style pool click (owner decision 3). Maps the live `NSEvent`
+    /// modifiers to the pure `PoolSelection` transition (plain replace / ⌘ toggle /
+    /// ⇧ contiguous range over the displayed pool order), applies the resulting
+    /// (selection, primary, anchor), then follows the SINGLE primary: a changed
+    /// primary loads it into the sticky bar PAUSED (owner decision 1 — SELECT =
+    /// load-paused; video entries feed `entry.url` so the bar plays the movie's
+    /// embedded audio, decision 2); a nil primary stops the preview. Space is left
+    /// to the global audition transport (decision 4) — no pool key binding here.
+    func selectPool(key: String, modifiers: NSEvent.ModifierFlags) {
+        let modifier: PoolSelectModifier
+        if modifiers.contains(.shift) { modifier = .shift }
+        else if modifiers.contains(.command) { modifier = .command }
+        else { modifier = .plain }
+
+        let result = PoolSelection.select(
+            current: poolSelection, primary: poolPrimary, anchor: poolAnchor,
+            clicked: key, ordered: pool.entries.map(\.id), modifier: modifier)
+
+        let primaryChanged = result.primary != poolPrimary
+        poolSelection = result.selection
+        poolPrimary = result.primary
+        poolAnchor = result.anchor
+        guard primaryChanged else { return }
+        followPrimary()
+    }
+
+    /// Drive the sticky preview to the current primary: load-paused (decision 1) for
+    /// a real entry, stop when there is none. The single place primary→player flows,
+    /// so multi-select never splits the preview.
+    private func followPrimary() {
+        guard let entry = poolPrimaryEntry else {
+            preview.stop()
+            return
+        }
+        preview.select(key: entry.id, url: entry.url)
+    }
+
+    /// Drop selection/primary/anchor that no longer name a live pool entry (files
+    /// only ever get added today, but the future remove-media feature relies on this
+    /// pruning, and a restore could in principle reshuffle keys). Re-homes the
+    /// player if the primary vanished.
+    func prunePoolSelection() {
+        let live = Set(pool.entries.map(\.id))
+        let prunedSelection = poolSelection.intersection(live)
+        let prunedPrimary = poolPrimary.flatMap { live.contains($0) ? $0 : nil }
+            ?? pool.entries.first { prunedSelection.contains($0.id) }?.id
+        let prunedAnchor = poolAnchor.flatMap { live.contains($0) ? $0 : nil } ?? prunedPrimary
+        let primaryChanged = prunedPrimary != poolPrimary
+        poolSelection = prunedSelection
+        poolPrimary = prunedPrimary
+        poolAnchor = prunedAnchor
+        if primaryChanged { followPrimary() }
+    }
+
+    // MARK: - Remove media / clear session (TODO-001)
+
+    /// A pending per-file removal confirmation (TODO-001). Set when the selected media
+    /// to remove participates in ≥1 couple — removal then regenerates those couples
+    /// (a removed video's row disappears; a removed audio's row re-resolves), so the
+    /// batch asks ONCE first with the affected counts. `nil` ⇒ no dialog. The pure
+    /// decision is `MediaRemovalPolicy.plan`; this carries the confirmed keys + counts.
+    struct PendingMediaRemoval: Identifiable {
+        let id = UUID()
+        let keys: Set<String>
+        let affectedCouples: Int
+        let affectedApproved: Int
+    }
+    var pendingMediaRemoval: PendingMediaRemoval?
+
+    /// A pending Clear Session confirmation (TODO-001), carrying the counts the dialog
+    /// states. `nil` ⇒ no dialog. Clearing always confirms (it discards the whole queue).
+    struct PendingClearSession: Identifiable {
+        let id = UUID()
+        let media: Int
+        let couples: Int
+        let approved: Int
+    }
+    var pendingClearSession: PendingClearSession?
+
+    /// The couples projected for the pure removal/clear policies (CoupleKit can't see
+    /// the app `CoupleRow`).
+    private var coupleRefs: [CoupleRef] {
+        couples.map { CoupleRef(videoKey: $0.id, selectedAudioKey: $0.selectedAudioKey,
+                                approved: $0.approved) }
+    }
+
+    /// Remove the currently selected pool media from the open session (TODO-001), the
+    /// SHARED entry point for both the media-pool trash button and the Delete key. The
+    /// pure `MediaRemovalPolicy.plan` decides over the live pool + couples: an empty
+    /// plan no-ops; an UNUSED-only removal happens IMMEDIATELY (no dialog); a removal
+    /// touching ≥1 referenced file arms ONE confirmation stating the affected couple /
+    /// approved counts, and removes only on confirm. Removal affects ONLY this session
+    /// and NEVER deletes source media from disk.
+    func removeSelectedMedia() {
+        let plan = MediaRemovalPolicy.plan(selectedKeys: poolSelection,
+                                           poolKeys: Set(pool.entries.map(\.id)),
+                                           couples: coupleRefs)
+        guard !plan.isEmpty else { return }
+        if plan.needsConfirmation {
+            pendingMediaRemoval = PendingMediaRemoval(
+                keys: plan.removableKeys, affectedCouples: plan.affectedCouples,
+                affectedApproved: plan.affectedApproved)
+        } else {
+            performMediaRemoval(plan.removableKeys)
+        }
+    }
+
+    /// Confirm the pending per-file removal (TODO-001): remove the keys decided when the
+    /// dialog was armed.
+    func confirmMediaRemoval() {
+        guard let pending = pendingMediaRemoval else { return }
+        pendingMediaRemoval = nil
+        performMediaRemoval(pending.keys)
+    }
+
+    /// Cancel the pending per-file removal (TODO-001): make no change.
+    func cancelMediaRemoval() { pendingMediaRemoval = nil }
+
+    /// Apply a removal of `keys` from the open session (TODO-001). Strategy: removal ≡
+    /// "imported without these files". We (1) stop every bit of work that touches a
+    /// removed key cleanly, (2) drop removed couples + reset rows whose SELECTED audio
+    /// vanished to a clean unresolved state, (3) free the pool handles, then (4) re-run
+    /// the SAME resolver path the importer uses, so affected couples are regenerated
+    /// exactly as a fresh import would produce them (we never hand-edit individual
+    /// couples). Finally selection/persistence are pruned so no content key survives.
+    private func performMediaRemoval(_ keys: Set<String>) {
+        guard !keys.isEmpty else { return }
+
+        // (1) Stop work touching the removed keys BEFORE any handle is freed.
+        // The pool-preview primary: stop the player if it follows a removed entry
+        // (the §TODO-002 seam — `controller.stop()` before freeing a pool handle).
+        if let active = preview.state.activeKey, keys.contains(active) { preview.stop() }
+        // Any in-flight import touching these would re-add them; an import that has not
+        // yet published an entry can't be named here, but a resolve over the old pool
+        // must not race the removal — `resolveQueue` below runs over the NEW pool.
+
+        // Tear down each couple whose video OR selected audio is leaving, so its core
+        // session (and the shared audition stream, if it is the selected couple) is
+        // closed before the underlying tracks are freed. A removed-video couple is
+        // dropped entirely; a removed-audio couple is reset to a clean unresolved row
+        // (stale candidate data, selection, pin/forced, approval, provenance, and pair
+        // session all discarded) so the re-resolve treats it as never-paired.
+        var survivingCouples: [CoupleRow] = []
+        for couple in couples {
+            if keys.contains(couple.id) {
+                // Removing a VIDEO removes its couple row.
+                if couple.id == selectedID { audition.teardown() }
+                couple.pair.teardown()
+                continue
+            }
+            let audioRemoved = couple.selectedAudioKey.map { keys.contains($0) } ?? false
+            if audioRemoved {
+                if couple.id == selectedID { audition.teardown() }
+                couple.pair.teardown()
+                couple.selectedAudioKey = nil
+                couple.pinned = false
+                couple.forced = false
+                couple.selectionProvenance = .none
+                couple.manualMatchConfident = nil
+                // Drop EVERY candidate that names a removed key; the resolver will
+                // repopulate the survivors. (Stale candidates can't linger on the row.)
+            }
+            // Drop any candidate (selected or alternate) that names a removed key, so a
+            // removed content key never survives on a couple even before the re-resolve.
+            couple.candidates.removeAll { keys.contains($0.audioKey) }
+            survivingCouples.append(couple)
+        }
+        couples = survivingCouples
+        // If the selected couple was removed, drop the selection (re-pick after resolve).
+        if let sel = selectedID, keys.contains(sel) { selectedID = nil }
+
+        // (3) Free the pool handles for the removed entries (releases the cache-GC pin;
+        // not a cache purge). Source files on disk are untouched.
+        pool.remove(keys: keys)
+
+        // Drop removed keys from the pool selection/primary/anchor + re-home the player.
+        prunePoolSelection()
+
+        // (4) Re-resolve over the REMAINING media via the normal resolver path, so every
+        // affected couple is regenerated exactly as if the survivors had been imported
+        // without the removed file. `applyResolution` rebuilds `couples` (a removed
+        // video has no row; a reset audio row re-resolves) and re-prunes selection.
+        if pool.isEmpty {
+            // Nothing left to resolve: empty the queue and wipe the restore record so the
+            // emptied session is not offered for restore (same end state as Clear Session
+            // reached by removing the last file).
+            couples = []
+            selectedID = nil
+            QueueStore.clear()
+        } else {
+            Task { await resolveQueue(); saveQueue() }
+        }
+    }
+
+    /// Request Clear Session (TODO-001): always confirms, stating the media / couple /
+    /// approved counts. The button is only meaningful with content; an empty session
+    /// no-ops. Blocked while a batch export is running (it owns the couples' files).
+    func requestClearSession() {
+        guard hasContent, !batch.isRunning else { return }
+        let counts = MediaRemovalPolicy.clearCounts(mediaCount: pool.entries.count,
+                                                    couples: coupleRefs)
+        pendingClearSession = PendingClearSession(media: counts.media, couples: counts.couples,
+                                                  approved: counts.approved)
+    }
+
+    /// Cancel the pending Clear Session (TODO-001): make no change.
+    func cancelClearSession() { pendingClearSession = nil }
+
+    /// Clear the whole session (TODO-001) and return to the initial import screen. Stops
+    /// active work, releases every pooled track, clears queue/export state, REMOVES the
+    /// persisted restore record, and resets to the empty state (`hasContent == false` ⇒
+    /// RootView shows the LoadSurface). Source files and previously exported files are
+    /// untouched; the cleared state does NOT reappear on relaunch (the restore record is
+    /// gone and the empty state is never re-persisted by the save guard).
+    func confirmClearSession() {
+        pendingClearSession = nil
+        // Stop active work: pool preview, the selected couple's audition stream, and
+        // every couple's core session + sync.
+        preview.stop()
+        audition.teardown()
+        for couple in couples { couple.pair.teardown() }
+        // Clear queue + selection + export state.
+        couples = []
+        selectedID = nil
+        resetExportSettings()
+        // Release every pooled track (frees handles; not a cache purge).
+        pool.teardown()
+        pool.skipped = []
+        // Clear the pool selection entirely (no key survives).
+        poolSelection = []
+        poolPrimary = nil
+        poolAnchor = nil
+        poolDraggingKey = nil
+        // Remove the persisted restore record so the cleared queue is not offered again.
+        QueueStore.clear()
+    }
+
+    /// Reset session-level export state on Clear Session (TODO-001). Per-couple
+    /// `exportStatus` lives on the couples (already dropped above); this resets the
+    /// session destination back to auto-tracking so a fresh import re-defaults it.
+    private func resetExportSettings() {
+        exportDestination = nil
+        destinationAuto = true
+        globalFormat = .auto
+        globalKeepCameraAudio = false
+    }
+
     // MARK: - Approve (§V2.5) + manual re-pair (§V2.6)
 
     /// Approve ≡ queue for export. No audition gate (§11.4). Only a couple with a
@@ -312,6 +662,11 @@ final class AppModel {
               let cam = couple.video.handle else { return }
         couple.pinned = true
         couple.selectedAudioKey = audioKey
+        // TODO-009: a deliberate pick is a MANUAL selection. Its match quality is NOT
+        // assumed from the click — it stays questionable until this pair's evidence is
+        // re-evaluated below (nil ⇒ not-yet-confident, so the dot does not flip green).
+        couple.selectionProvenance = .manual
+        couple.manualMatchConfident = nil
         if !couple.candidates.contains(where: { $0.audioKey == audioKey }) {
             couple.candidates.append(RowCandidate(
                 audioKey: audioKey, audioName: audioEntry.name, z: 0, lagMs: 0,
@@ -326,7 +681,19 @@ final class AppModel {
         let z = couple.candidates.first { $0.audioKey == audioKey }?.z ?? 0
         couple.forced = z > 0 && z < params.zMin
         couple.chip = couple.forced ? "forced — below floor" : couple.state.chip
+        let engine = self.engine
+        let params = self.params
         Task {
+            // EVIDENCE for the dot (TODO-009): run the SAME confident classifier the
+            // resolver uses on THIS exact pair, off-main. Only this can green a manual
+            // pick — never the click, the sync, or approval. Independent of the
+            // alignment fit below (a clean RMS does not imply a match).
+            let confident = await Task.detached(priority: .userInitiated) { () -> Bool in
+                guard let engine else { return false }
+                return Resolver.manualPairIsConfident(video: cam, audio: audioHandle,
+                                                       engine: engine, params: params)
+            }.value
+            couple.manualMatchConfident = confident
             couple.pair.runAutoSync(announce: false) // ambient; the dot/chip carry it
             await couple.pair.awaitSync()
             // A below-floor pool drag (z unknown until now) surfaces as forced
@@ -336,6 +703,101 @@ final class AppModel {
             saveQueue()
         }
         saveQueue()
+    }
+
+    /// Whether a dragged content key names an AUDIO pool entry (TODO-013). The pool
+    /// publishes audio entries only once importable (a handle is the precondition),
+    /// so this is the single source of truth both drop targets ask before pairing —
+    /// a video key, the empty sentinel a non-audio `.draggable` carries, or junk all
+    /// answer false.
+    func payloadIsAudio(_ key: String) -> Bool {
+        pool.audios.contains { $0.id == key }
+    }
+
+    /// The SHARED entry point for a manual audio drop onto a couple (TODO-013), used
+    /// by BOTH the queue-row drop and the center-workspace drop so the two gestures
+    /// cannot diverge. Decides the outcome with the pure `RepairDropPolicy`, then:
+    ///   - `.reject`/`.noOp` ⇒ no state change (a non-audio/no-video/no-couple drop,
+    ///     or re-dropping the already-selected source);
+    ///   - `.accept` ⇒ replace now via the same `repair` (unresolved / unapproved);
+    ///   - `.needsConfirmation` ⇒ arm the approved-replacement dialog (RootView shows
+    ///     it); the replace happens only when the user confirms.
+    /// Returns whether the drop was consumed (so `.dropDestination` reports the right
+    /// value): true for accept/no-op/confirmation-armed, false for a rejected drop.
+    @discardableResult
+    func requestRepairDrop(_ couple: CoupleRow, audioKey: String) -> Bool {
+        let outcome = RepairDropPolicy.decide(
+            hasSelectedCouple: true,
+            payloadIsAudio: payloadIsAudio(audioKey),
+            videoAvailable: couple.video.handle != nil,
+            currentSelectedKey: couple.selectedAudioKey,
+            droppedKey: audioKey,
+            approved: couple.approved)
+        switch outcome {
+        case .reject:
+            return false
+        case .noOp:
+            return true
+        case .accept:
+            performRepairReplace(couple, audioKey: audioKey)
+            return true
+        case .needsConfirmation:
+            let audioName = pool.entry(key: audioKey)?.name ?? audioKey
+            pendingRepairConfirmation = PendingRepairConfirmation(
+                coupleID: couple.id, audioKey: audioKey,
+                videoName: couple.video.name, audioName: audioName)
+            return true
+        }
+    }
+
+    /// Apply an accepted replacement (TODO-013): clear stale approval/export status
+    /// FIRST (replacing an approved couple removes it from the export queue), then run
+    /// the SAME `repair` as every other manual pick — which selects+pins the audio,
+    /// rebuilds the pair session, and runs full sync/classification. The verdict stays
+    /// evidence-based (TODO-009): `repair` does NOT green the dot on the drop; only the
+    /// re-run classifier can. Centralized so the queue-row and center drops are
+    /// byte-identical.
+    private func performRepairReplace(_ couple: CoupleRow, audioKey: String) {
+        if couple.approved { couple.pair.toggleVerified() } // un-queue: clears export approval
+        couple.exportStatus = .idle                          // drop any stale per-couple export result
+        repair(couple, audioKey: audioKey)
+    }
+
+    /// Confirm the pending approved-replacement (TODO-013): replace the source. The
+    /// couple is re-looked-up by id (it never moves, but this keeps the model the
+    /// source of truth) and re-validated through the SAME pure policy, so a state
+    /// change between arming and confirming can still cancel cleanly.
+    func confirmPendingRepair() {
+        guard let pending = pendingRepairConfirmation else { return }
+        pendingRepairConfirmation = nil
+        guard let couple = couples.first(where: { $0.id == pending.coupleID }),
+              couple.video.handle != nil, payloadIsAudio(pending.audioKey),
+              pending.audioKey != couple.selectedAudioKey else { return }
+        performRepairReplace(couple, audioKey: pending.audioKey)
+    }
+
+    /// Cancel the pending approved-replacement (TODO-013): make no change.
+    func cancelPendingRepair() {
+        pendingRepairConfirmation = nil
+    }
+
+    /// TODO-009: (re)evaluate a MANUAL pick's match evidence off-main and update its
+    /// dot, reusing the SAME confident classifier as `repair`/the resolver. Used by
+    /// restore for a pre-009 manual pin whose evidence wasn't persisted, so a
+    /// round-tripped questionable manual pick that DOES match still shows green
+    /// without forcing a full re-sync. No-op when the pair's handles are gone.
+    private func reevaluateManualMatch(_ couple: CoupleRow) {
+        guard let engine, let cam = couple.video.handle,
+              let key = couple.selectedAudioKey, let audio = pool.entry(key: key)?.handle else { return }
+        let params = self.params
+        Task {
+            let confident = await Task.detached(priority: .userInitiated) {
+                Resolver.manualPairIsConfident(video: cam, audio: audio, engine: engine, params: params)
+            }.value
+            guard couple.selectionProvenance == .manual, couple.selectedAudioKey == key else { return }
+            couple.manualMatchConfident = confident
+            saveQueue()
+        }
     }
 
     // MARK: - Keyboard (UX §2.9 + j/k/v/Enter queue triage)
@@ -369,6 +831,16 @@ final class AppModel {
         guard !isEditingText else { return false }
         let mods = event.modifierFlags
         let chars = event.charactersIgnoringModifiers ?? ""
+
+        // Delete / forward-delete: remove the selected media from the open session
+        // (TODO-001) — only when the media pool has a selection, so Delete never fights
+        // another context (and never deletes source files). Routes through the SAME
+        // `removeSelectedMedia` the trash button uses (unused ⇒ immediate; referenced ⇒
+        // one confirmation). Consumed only when it acts.
+        if (event.keyCode == 51 || event.keyCode == 117), !poolSelection.isEmpty {
+            removeSelectedMedia()
+            return true
+        }
 
         switch event.keyCode {
         case 123, 124: // ← → — move the EXTERNAL content in the arrow's direction
@@ -503,11 +975,23 @@ final class AppModel {
                     }
                     ensureSession(for: c)
                 }
+                // TODO-009: restore selection provenance + the manual pair's match
+                // evidence so the dot color round-trips. A pre-009 file lacks
+                // provenance → infer it from `pinned` (a pinned pick is manual). The
+                // saved evidence is trusted when present; an unknown manual evidence
+                // (nil) is re-evaluated off-main below so the dot is never stale.
+                let provenance = sc.selectionProvenance
+                    ?? (c.selectedAudioKey == nil ? .none : (c.pinned ? .manual : .automatic))
+                c.selectionProvenance = provenance
+                c.manualMatchConfident = provenance == .manual ? sc.manualMatchConfident : nil
                 // Prefer the user's saved per-pair alignment; else sync this couple.
                 if !c.pair.restoreSavedAlignment(), c.pair.session != nil {
                     enqueueSync(c)
                 }
                 if sc.approved, c.pair.session != nil, !c.approved { c.pair.toggleVerified() }
+                // Recompute a manual pick's evidence verdict only when it wasn't saved
+                // (a back-compat restore), reusing the SAME classifier as `repair`.
+                if provenance == .manual, c.manualMatchConfident == nil { reevaluateManualMatch(c) }
             }
             if let dest = saved.export.destination {
                 exportDestination = URL(fileURLWithPath: dest)

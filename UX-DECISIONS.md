@@ -98,9 +98,12 @@ Sign intuition: increasing offset shows later external content at the same video
 
 ### 2.2 Anchors
 
-- **Auto-proposal** (on load and after every auto-sync): three anchors at the *sharpest attack* inside each of three zones of the overlap — [1%, 30%], [38%, 62%], [70%, 99%] of the overlap span (falls back to the camera duration when overlap is unknown/short). "Sharpest attack" = highest onset score from the engine's ranked onset list (§4.5). Validated on the real recording: all three picks were attacks out of near-silence (envelope ~20–60 → ~180–240 of 254).
+- **Auto-proposal** (on load and after every auto-sync): automatic anchors must **always lie inside the current video/external overlap** — an anchor outside the overlap has no corresponding content in one lane and is not honest evidence. The count is decided on **usable overlap duration**, NOT the camera clip's total duration (REVISED 2026-06-15, TODO-011 — the old "falls back to the camera duration when overlap is unknown/short" rule placed anchors where the external source had no content; removed):
+  - **Overlap ≥ 30 s** ⇒ three anchors at the *sharpest attack* inside each of three zones — [1%, 30%], [38%, 62%], [70%, 99%] of the **overlap** span. "Sharpest attack" = highest onset score from the engine's ranked onset list (§4.5). Validated on the real recording: all three picks were attacks out of near-silence (envelope ~20–60 → ~180–240 of 254).
+  - **0 < usable overlap < 30 s** ⇒ **two** well-separated, human-readable anchors chosen from the ranked onsets (sharpest first as the proxy for a clear shape), each non-degenerate (non-silent structure in **both** mapped lanes), kept **≥ ~25% of the overlap** apart, preferably one earlier / one later. Not arbitrary fractions or midpoints.
+  - **No usable overlap** (or two non-degenerate candidate windows can't be found) ⇒ **zero** automatic anchors and the **manual-rescue state** ("place anchors manually"). Never a misleading midpoint. This preserves the core invariant: the automatic set is either **zero or 2–4** anchors (never exactly one).
 - **Manual placement:** drag a pin along the overview (live loupe update while dragging); on release it snaps to the strongest transient within ±4 s. **⌖ snap** in a loupe header re-snaps in place. Rationale (DECIDED early and load-bearing): anchors on silence or sustained tones are unjudgeable — a held cello note is near-periodic and can alias a full cycle; transients are the only honest evidence.
-- **Add/remove:** "+ anchor" adds the best unused onset in the overlap keeping ≥8% of-overlap separation, capped at 4; anchors keep chronological order; minimum 2. Each loupe header has ×.
+- **Add/remove:** "+ anchor" adds the best unused **usable** onset **inside the overlap** keeping ≥8% of-overlap separation, capped at 4 (TODO-011: automatic "+ anchor" never chooses an onset outside the overlap; it adds nothing when none qualifies); anchors keep chronological order; minimum 2. Each loupe header has ×. (A deliberate **manual** anchor drag may still leave the overlap — only the automatic paths are bounded.)
 - Moving or re-snapping an anchor invalidates and re-runs that anchor's local measurement.
 
 ### 2.3 Loupe windows: auto-framing and zoom lock
@@ -479,10 +482,38 @@ Demotion specifics (SPEC-V2 §1/V2-F6, ratified):
   imported file** (video and audio), each with a **usage indicator** ("take N"
   / "alt · take N" / "unused · best match z"). Hovering a file highlights the
   couples that reference it. Nothing the user dropped ever silently disappears.
-- **Audio files get a low-key preview** affordance (owner) — built-in playback
-  or macOS Quick Look in the real app.
 - **"+ import"** button; per SPEC §2.1 the whole window also stays a drop
   target. Items are two-line so the rail never needs a horizontal scrollbar.
+- **REVISED (owner 2026-06-15) — sticky bottom player + Finder-style selection.**
+  The original "low-key preview" affordance was specified (and first built) as a
+  **per-row** play icon + an inline seek bar that expanded the active row, plus a
+  per-row info (ⓘ) glyph. That per-row inline preview/info is **superseded**:
+  - **Rows are now selectable, with no trailing buttons.** Selection is
+    **Finder-style multi-select**: a plain click replaces, **⌘-click** toggles one
+    entry, **⇧-click** selects a contiguous range over the displayed pool order.
+    (The selection *set* is the foundation the remove-media feature reuses —
+    **REALIZED 2026-06-15, TODO-001**: when ≥1 entry is selected a trash button in
+    the pool header and the Delete key remove the whole selection from the open
+    session; unused media goes immediately, a referenced file shows one consequence
+    confirmation, and affected couples re-resolve as if imported without the removed
+    file. Removal never deletes source media from disk. A **`Clear Session…`** control
+    in the session header resets to the import screen and wipes the restore record.
+    See PROGRESS 2026-06-15.)
+  - A **single sticky transport bar is pinned to the bottom of the pool box**
+    (~one row tall, always visible): a **seek slider + elapsed/total + play/pause +
+    info (ⓘ)**. It follows a single **primary** = the last-clicked entry; a disabled
+    **"Select a file to preview"** placeholder holds the bar's height when nothing
+    is selected, so the box never jumps. The ⓘ opens the same metadata popover,
+    re-targeted to the primary.
+  - **SELECT = load-paused.** Clicking a file loads it into the bar and shows its
+    duration but does **not** auto-play; the user presses play to hear it.
+  - **Video entries are previewable too** — the bar plays the movie's **embedded
+    audio** through the same player. (The ⓘ shows video metadata as usual.)
+  - **Only the pool items scroll**, inside their own bounded region; the couples
+    list scrolls **independently** above, and the sticky bar stays put. (The old
+    single shared rail scroll is gone.)
+  - **`Space` is unchanged**: it drives the main audition transport, **not** the
+    pool — pool play/pause is **button-only** in this version (no pool key binding).
 
 ## V2.8 Export rail (DECIDED — realizes SPEC-V2 §6)
 

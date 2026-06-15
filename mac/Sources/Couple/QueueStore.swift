@@ -24,6 +24,15 @@ struct SavedQueue: Codable {
         var forced: Bool
         var approved: Bool
         var stemOverride: String?
+        // TODO-009: selection provenance + the manual pair's evidence verdict, so a
+        // restored manual pick keeps both WHICH source it used and WHETHER that pair
+        // independently matched (its dot color). OPTIONAL for back-compat: a pre-009
+        // queue file lacks them and decodes to nil; `applyRestore` then infers
+        // provenance from `pinned` (a pinned pick is manual) and leaves the evidence
+        // to be recomputed, so the schema stays `couple-queue/1` (no version bump,
+        // mirroring how RowCandidate-era optionals were added).
+        var selectionProvenance: SelectionProvenance?
+        var manualMatchConfident: Bool?
     }
 
     struct Export: Codable {
@@ -60,7 +69,9 @@ enum QueueStore {
         let couples = model.couples.map {
             SavedQueue.Couple(videoKey: $0.id, selectedAudioKey: $0.selectedAudioKey,
                               pinned: $0.pinned, forced: $0.forced, approved: $0.approved,
-                              stemOverride: $0.stemOverride)
+                              stemOverride: $0.stemOverride,
+                              selectionProvenance: $0.selectionProvenance,
+                              manualMatchConfident: $0.manualMatchConfident)
         }
         let saved = SavedQueue(
             schema: schema,
@@ -74,6 +85,15 @@ enum QueueStore {
         if let data = try? enc.encode(saved) {
             try? data.write(to: url(), options: .atomic)
         }
+    }
+
+    /// Remove the persisted restore record (TODO-001 Clear Session). Deleting the file
+    /// IS persisting the cleared state: `load()` then returns nil, so the cleared queue
+    /// is never offered for restore on relaunch. The `save` guard already refuses to
+    /// write an empty session, so a teardown `saveAll()` after a clear cannot recreate
+    /// it. Source files and previously exported files are untouched. Idempotent.
+    static func clear() {
+        try? FileManager.default.removeItem(at: url())
     }
 
     /// The saved queue, if one exists whose files are all still on disk.

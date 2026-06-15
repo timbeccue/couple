@@ -36,7 +36,39 @@ struct CenterColumn: View {
     /// row + bottom toolbar reachable at the minimum supported height.
     @State private var containerHeight: CGFloat = 0
 
+    /// True while a valid audio drag hovers the center workspace (TODO-013), driving
+    /// the highlight + copy overlay. Only armed when a couple is selected (the drop is
+    /// scoped to the selected couple — no couple ⇒ no target).
+    @State private var dropTargeted = false
+
     var body: some View {
+        content
+            .padding(.horizontal, 14)
+            .padding(.top, 26) // traffic-light clearance
+            .padding(.bottom, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(GeometryReader { geo in
+                Color.clear.onAppear { containerHeight = geo.size.height }
+                    .onChange(of: geo.size.height) { _, h in containerHeight = h }
+            })
+            // ONE coherent audio drop target spanning the whole central content
+            // region — video preview, resolve banner, waveform row, and sync-tools
+            // area (TODO-013, §V2.6). Scoped to the selected couple: with none
+            // selected there is no couple to attach the modifier to, so the region is
+            // inert. Routes through the SHARED `requestRepairDrop` (the same path the
+            // queue-row drop uses) so the two gestures produce identical results —
+            // no-op on the current source, immediate replace when unapproved, confirm
+            // before clearing an APPROVED couple's export. A non-audio payload / an
+            // unavailable video is rejected there without changing state.
+            .modifier(CenterDropTarget(
+                couple: model.selectedCouple,
+                isTargeted: $dropTargeted,
+                draggingName: model.poolDraggingName))
+    }
+
+    /// The center stack (extracted so the drop modifier + highlight overlay wrap the
+    /// whole region as one unit). Layout is unchanged from before TODO-013.
+    private var content: some View {
         VStack(spacing: 8) {
             if let couple = model.selectedCouple {
                 titleBar(couple)
@@ -61,14 +93,6 @@ struct CenterColumn: View {
 
             BottomBar()
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 26) // traffic-light clearance
-        .padding(.bottom, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(GeometryReader { geo in
-            Color.clear.onAppear { containerHeight = geo.size.height }
-                .onChange(of: geo.size.height) { _, h in containerHeight = h }
-        })
     }
 
     private var loupeStackHeight: CGFloat {
@@ -98,6 +122,79 @@ struct CenterColumn: View {
             Spacer()
         }
         .lineLimit(1)
+    }
+}
+
+// MARK: - Center-workspace drop target (TODO-013, §V2.6)
+
+/// Makes the selected couple's central content region one coherent AUDIO drop
+/// target (TODO-013): drag an audio file from the media pool anywhere over the video
+/// preview / resolve banner / waveform row / sync-tools area to re-pair the take.
+/// During a valid drag it highlights the region in the app's accent language (a soft
+/// accent wash + an accent stroke, NOT a yellow box) and shows a chip reading
+/// `Pair selected video with <audio>` using the dragged file's display name. The
+/// drop itself goes through `AppModel.requestRepairDrop` — the SAME shared path the
+/// queue-row target uses — so the two gestures cannot diverge.
+///
+/// Scoped to the selected couple: with `couple == nil` the modifier attaches no drop
+/// destination at all, so the region is inert (no highlight, no target) — satisfying
+/// "no selected couple rejects the drop without changing state". The repair op's own
+/// guards reject a non-audio payload or an unavailable video.
+private struct CenterDropTarget: ViewModifier {
+    @Environment(AppModel.self) private var model
+    let couple: CoupleRow?
+    @Binding var isTargeted: Bool
+    /// The dragged audio's display name (for the live copy), or nil when unknown.
+    let draggingName: String?
+
+    func body(content: Content) -> some View {
+        if let couple {
+            content
+                .overlay { if isTargeted { highlight } }
+                .dropDestination(for: String.self) { items, _ in
+                    isTargeted = false
+                    model.poolDraggingKey = nil
+                    guard let key = items.first else { return false }
+                    return model.requestRepairDrop(couple, audioKey: key)
+                } isTargeted: { hovering in
+                    isTargeted = hovering
+                }
+        } else {
+            content // no selected couple ⇒ no drop target (inert region)
+        }
+    }
+
+    /// The valid-drop highlight: an accent wash + stroke (the app's selection/accent
+    /// language, consistent with the queue-row drop affordance) and a centered chip
+    /// naming the action. Reuses the panel/chip vocabulary; never a yellow box.
+    private var highlight: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Theme.accent.opacity(0.10))
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Theme.accent.opacity(0.7), lineWidth: 2)
+            HStack(spacing: 8) {
+                Image(systemName: "waveform.badge.plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                Text(copy)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(Theme.panelBg.opacity(0.95), in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.accent.opacity(0.45)))
+        }
+        .allowsHitTesting(false) // the drop destination underneath owns the hit-test
+        .padding(2)
+    }
+
+    /// `Pair selected video with <audio>.wav` (TODO-013), using the dragged file's
+    /// display name when known; a graceful fallback when the live name is unavailable.
+    private var copy: String {
+        if let name = draggingName { return "Pair selected video with \(name)" }
+        return "Pair selected video with this audio"
     }
 }
 

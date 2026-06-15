@@ -290,6 +290,18 @@ struct OverviewStrip: View {
         let pair = model.pair
         return HStack(spacing: 6) {
             overlapChip
+            if pair.anchorsUnavailable {
+                // TODO-011 manual-rescue state: automatic proposal placed no anchor
+                // because there is no usable overlap (or no two non-degenerate
+                // candidates). Explain why, instead of inserting misleading midpoints.
+                Text("place anchors manually")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Theme.warn)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2.5)
+                    .background(Theme.warn.opacity(0.14), in: Capsule())
+                    .help("Anchors need shared content in both tracks. There isn't enough overlap to propose them automatically — drag the external lane to align, or add anchors by hand.")
+            }
             Spacer()
             Picker("", selection: Binding(
                 get: { pair.loupeLayout },

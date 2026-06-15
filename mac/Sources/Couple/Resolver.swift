@@ -105,7 +105,32 @@ enum RowState: String, Sendable, Codable {
 }
 
 /// Three-category pairing quality (UX-DECISIONS-V2 §V2.3) — not a continuous score.
+/// This is the UI-facing color; the EVIDENCE decision is the pure CoupleKit
+/// `MatchQuality` (TODO-009), which this maps 1:1 to/from.
 enum Verdict: Sendable { case good, questionable, none }
+
+extension Verdict {
+    /// Map the pure-evidence `MatchQuality` (CoupleKit) to the UI verdict color.
+    init(_ q: MatchQuality) {
+        switch q {
+        case .confident: self = .good
+        case .questionable: self = .questionable
+        case .none: self = .none
+        }
+    }
+}
+
+extension MatchQuality {
+    /// Lift a UI `Verdict` (e.g. the resolver's `RowState.verdict`) into the pure
+    /// `MatchQuality` the decision policy consumes.
+    init(_ v: Verdict) {
+        switch v {
+        case .good: self = .confident
+        case .questionable: self = .questionable
+        case .none: self = .none
+        }
+    }
+}
 
 /// One candidate audio source for a video, with its measured fit and coverage.
 /// `audioKey` is the pool content key (stable identity); `audioName` drives the
@@ -1050,6 +1075,31 @@ enum Resolver {
     /// `verify::is_match`.
     static func isMatch(_ fit: VerifyFit) -> Bool {
         fit.matched
+    }
+
+    /// TODO-009: does ONE manually-selected video/audio pair independently clear the
+    /// SAME confident-match classifier an automatic confident pairing uses? Reuses
+    /// the EXISTING per-pair evidence path — no new matching math, no re-derived
+    /// threshold (invariant 8): under the fingerprint-primary default the authority is
+    /// core's `PairEvidence.classification == .match` (`matchPair`); under the legacy
+    /// override it is the fine verifier's `VerifyFit.matched` (`isMatch`), exactly as
+    /// `resolveFingerprint`/`classifyMatches` decide candidacy. A core fault (nil) is
+    /// NOT confident — a manual pick never greens on absent evidence. Pure measurement;
+    /// safe off-main (Engine/TrackHandle Sendable).
+    static func manualPairIsConfident(video: TrackHandle, audio: TrackHandle,
+                                      engine: Engine, params: PairParams) -> Bool {
+        if params.matcherFingerprintPrimary {
+            // Fingerprint identity is lag-independent (core builds its own
+            // correspondence), so the cell's classification is the whole answer.
+            return engine.matchPair(video, audio)?.classification == .match
+        }
+        // Legacy verifier: it only locks within ±span of the SEED lag (core
+        // verify.rs), so seed it with the same Stage-1 coarse lag `classifyMatches`
+        // feeds `verifyBatch` (`pairCorrelate.lagMs`) — passing 0 would miss any
+        // offset pair. No plausible overlap ⇒ not confident.
+        guard let coarse = engine.pairCorrelate(video, audio), !coarse.insufficientOverlap,
+              let fit = engine.verifyBatch([(video, audio, coarse.lagMs)])?.first ?? nil else { return false }
+        return isMatch(fit)
     }
 
     /// Two overlap spans are comparable when within 20% (§5.2 coverage guard).

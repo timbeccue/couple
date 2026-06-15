@@ -37,6 +37,20 @@ final class CoupleRow: Identifiable {
     var pinned = false   // 📌 manual choice; re-runs never override (§3.6)
     var forced = false   // kept below-floor manual pairing (honest, §3.6 / §V2.6)
 
+    /// TODO-009: how the current `selectedAudioKey` came to be selected. Match
+    /// quality (the verdict dot) is derived from EVIDENCE for the selected pair, not
+    /// from the act of selecting, so a manual pick is treated differently from an
+    /// auto-resolved one. `.automatic` when the resolver selected this source;
+    /// `.manual` after a candidate pick or pool drag (`repair`); `.none` when nothing
+    /// is selected. Persisted so a restored manual pick keeps its provenance.
+    var selectionProvenance: SelectionProvenance
+    /// TODO-009: for a `.manual` selection, whether THIS specific video/audio pair
+    /// independently cleared the SAME confident classifier an automatic confident
+    /// match uses (the resolver's `matchPair`/`verify` path, re-run by `repair`).
+    /// `nil` ⇒ not yet evaluated (treated as not-confident, so a manual pick is never
+    /// green until evidence says so). Meaningless for non-manual selections.
+    var manualMatchConfident: Bool?
+
     /// The drill-down editor for the current selection. Created empty; gets a
     /// session via `pair.load(...)` whenever a selection exists.
     let pair: PairSession
@@ -65,6 +79,9 @@ final class CoupleRow: Identifiable {
         self.detail = row.detail
         self.candidates = (row.selected.map { [$0] } ?? []) + row.alternates
         self.selectedAudioKey = row.selected?.audioKey
+        // A resolver-supplied selection is AUTOMATIC (its quality is the resolver's
+        // verdict); no selection is `.none` (TODO-009).
+        self.selectionProvenance = row.selected != nil ? .automatic : .none
         self.pair = PairSession(engine: engine, toasts: toasts, audition: audition)
     }
 
@@ -84,13 +101,20 @@ final class CoupleRow: Identifiable {
 
     var hasSession: Bool { pair.session != nil }
 
-    /// Three-category verdict (§V2.3). A real selection above floor is good; a
-    /// below-floor manual pairing is kept but questionable; ambiguous/no-match
-    /// without a selection carry the resolver verdict (never a coin-flip).
+    /// Three-category verdict (§V2.3), evidence-based per TODO-009. Match quality
+    /// derives ONLY from classifier/resolver evidence for the *selected* pair —
+    /// never from the act of selecting. The decision is the pure
+    /// `MatchQualityPolicy`: `forced` ⇒ questionable; an automatic selection (or no
+    /// selection) takes the resolver's verdict; a MANUAL pick is good ONLY when that
+    /// exact pair independently cleared the same confident classifier
+    /// (`manualMatchConfident`), else it stays questionable. Approval and alignment
+    /// RMS are deliberately not inputs.
     var verdict: Verdict {
-        if forced { return .questionable }
-        if selectedAudioKey == nil { return state.verdict }
-        return .good
+        Verdict(MatchQualityPolicy.decide(
+            forced: forced,
+            selection: selectedAudioKey == nil ? .none : selectionProvenance,
+            autoVerdict: MatchQuality(state.verdict),
+            manualMatchConfident: manualMatchConfident))
     }
 
     /// The short word that rides along only when action is needed (§V2.3).

@@ -59,7 +59,7 @@ Resolve the questions first, then record the resulting decision.
 
 ## TODO-001: Remove imported media or reset the session
 
-**Status:** Ready  
+**Status:** Done
 **Type:** Feature  
 **Area:** Media pool, queue lifecycle, persistence
 
@@ -80,40 +80,89 @@ queued sync work, and persisted queue state can all reference it.
 
 Add standard media-pool selection using click, Command-click, and Shift-click.
 When one or more entries are selected, show a trash button in the media-pool
-header and support the Delete key. Also add a `Clear Session...` action for a
-complete reset.
+header and support the Delete key.
+
+Unused media should be removed immediately with no confirmation. If a selected
+file participates in one or more couples, show one consequence-focused
+confirmation before removal.
 
 Removal must affect only the open Couple session. It must never delete the source
 media from disk. Releasing a track handle may make it eligible for normal cache
 garbage collection, but removal should not synchronously purge the cache.
 
-Use a confirmation dialog only when removal has consequences:
+After removing referenced media, regenerate every affected couple exactly as if
+the current remaining files had been imported without the removed file:
 
 - Removing a video removes its couple row.
-- Removing selected audio clears that source from affected couples, removes it
-  from candidate/alternate lists, cancels their active work, clears approval and
-  export state, and re-resolves them against the remaining audio.
-- Removing an unused file needs no warning beyond normal undo/confirmation
-  conventions.
-- `Clear Session...` always confirms with counts of media files, couples, and
-  approved exports that will be cleared.
+- Removing audio discards affected rows' stale candidate data, selected source,
+  pin/forced state, approval/export state, and pair session, then runs normal
+  resolution over the remaining media.
+- A video whose selected audio was removed remains as a newly resolved,
+  ambiguous, or no-match row; removing audio does not delete the video row.
+- Existing stability rules must not preserve a selection whose file no longer
+  exists.
 
-This is preferable to always deleting a whole couple when audio is removed. The
-video remains a valid unit of work and may resolve to another source.
+Also add a clearly visible `Clear Session...` button in the media-pool/session
+controls. It confirms with counts of media files, couples, and approved exports,
+then stops active work, releases every pooled track, clears queue/export state,
+removes the persisted restore record, and returns to the initial import screen.
 
 ### Acceptance criteria
 
 - Multiple media entries can be selected and removed in one action.
-- The confirmation names the number of affected couples and approved rows.
+- Removing unused media happens immediately without a confirmation dialog.
+- Removing referenced media confirms with the number of affected couples and
+  approved rows.
 - Active preview, audition, import, resolve, and sync work touching removed
   entries stops cleanly.
 - No couple, candidate, selection, or persisted queue record retains a removed
   content key.
-- Removing selected audio leaves the video row unresolved or re-resolved rather
-  than deleting the row.
-- `Clear Session...` returns the app to the initial empty state.
+- Couples affected by audio removal equal the result of freshly resolving the
+  remaining pool, with stale pair-specific state cleared.
+- Removing selected audio leaves the video row newly resolved, ambiguous, or
+  unmatched rather than deleting it.
+- A visible `Clear Session...` button returns the app to the initial import
+  screen and prevents the cleared queue from being offered for restore.
 - Source files and previously exported files are untouched.
 - The cleared state is persisted and does not reappear on relaunch.
+
+### Implementation notes
+
+Realizes the §V2.7 planned remove-media feature (the selection set was built for
+it); doc updated there + a PROGRESS 2026-06-15 entry. No Rust/core change.
+
+The "what should this removal do?" / "what are the clear counts?" decisions are a
+PURE `CoupleKit/MediaRemovalPolicy` (style-matched to `RepairDropPolicy`/
+`PoolSelection`): `plan(selectedKeys:poolKeys:couples:)` → `MediaRemovalPlan`
+(removable keys after intersecting the live pool, `needsConfirmation`, and the
+affected-couple / affected-approved counts) and `clearCounts(...)` →
+`ClearSessionCounts`. A couple is AFFECTED only by its video (row removed) or its
+SELECTED audio (row re-resolves) — a removed non-selected alternate is not a
+consequence. So the trash button and the Delete key on the same selection decide
+identically.
+
+Removal == "imported without that file": `AppModel.performMediaRemoval` stops work
+touching the removed keys (`preview.stop()` when the removed entry is the pool-preview
+primary; `pair.teardown()` + `audition.teardown()` for affected couples), resets each
+row whose selected audio vanished to a clean unresolved state (selection / pin /
+forced / approval / provenance / stale candidates dropped), drops removed-video rows,
+frees the pool handles (`MediaPool.remove` — releases the cache-GC pin, never a
+synchronous purge; source untouched), then re-runs the SAME `resolveQueue()` the
+importer uses so affected videos regenerate exactly as a fresh import would. Selection
++ persistence are pruned (`prunePoolSelection` + `saveQueue`) so no couple, candidate,
+selection, or persisted queue record retains a removed key. Unused media skips the
+dialog; a referenced removal shows ONE consequence confirmation (RootView). Clear
+Session (`confirmClearSession`) stops work, releases every pooled track, clears queue/
+export state, and removes the restore record (`QueueStore.clear()`), returning to the
+LoadSurface; the empty-session `save` guard keeps a teardown save from recreating it.
+
+Verified: pure `MediaRemovalPolicyTests` (9 — zero/partial/full reference, immediate
+vs confirm, counts, removed-alternate-not-affected, stale-key dropping, cross-call-site
+parity, clear counts). App-layer end-to-end via the env-gated `COUPLE_REMOVE_TEST`
+DebugDrive hook over a real `COUPLE_PAIR_DIR` (audio removal re-resolves + drops the
+key everywhere; video removal drops its row; Clear Session empties the model + removes
+the restore record). `swift build` clean; `swift test` 69 passed (was 60); `git diff
+--check` clean.
 
 ---
 
@@ -191,6 +240,14 @@ mirroring the TODO-006 `COUPLE_LAYOUT_TEST` pattern) asserting every transition
 incl. play/pause/resume, scrub-while-playing, scrub-while-paused, file-switch,
 tick-vs-scrub no-fight, natural-end rewind, and stop/cleanup — 25 passed /
 0 failed. `git diff --check` clean.
+
+**UI relocated (2026-06-15, media-pool redesign):** the per-row play button + the
+inline expanding scrubber were removed; this controller is now driven by the pool's
+**sticky bottom player** following the single selected primary (the per-row
+preview is superseded — see UX-DECISIONS §V2.7 and PROGRESS 2026-06-15). The
+controller/state-machine CORE is retained and reused; it additionally gained a
+load-paused path (SELECT = load without auto-play) and now plays VIDEO entries'
+embedded audio. Still Done.
 
 ---
 
@@ -288,11 +345,19 @@ provide is omitted rather than faked (e.g. a container with no creation
 timestamp, a stream with no `bitsPerSample`, or a stripped-audio video — which
 the pool already surfaces as `skipped`, never reaching a row).
 
+**UI relocated (2026-06-15, media-pool redesign):** the per-row `info.circle`
+glyph was removed; the same `MediaMetaPopover` (rendering the retained
+`MediaMetaCard`) is now opened from the **sticky bottom player's** info button,
+re-targeted to the selected primary entry (per-row info is superseded — see
+UX-DECISIONS §V2.7 and PROGRESS 2026-06-15). The projection CORE
+(`MediaMetaCard` / `MediaMeta.swift`) is unchanged and still covered by
+`MediaMetaTests`. Still Done.
+
 ---
 
 ## TODO-005: Add a unified long-running activity indicator
 
-**Status:** Ready  
+**Status:** Done
 **Type:** Feature  
 **Area:** Import, analysis, pairing, sync, export
 
@@ -305,17 +370,56 @@ answer to "is the app working, and what is it doing?"
 ### Current behavior
 
 Core jobs expose useful phase/fraction updates for import, sync, and export.
-Media import stores a text label, queue resolution exposes only a Boolean, and
-background couple syncs are intentionally ambient. There is no single,
-consistent activity surface.
+Media import stores a phase label and percentage. Per-couple sync reports
+`Searching`, `Refining`, `Measuring drift`, and `Fitting` phases. Batch export
+shows batch and per-row progress.
+
+Pairing is the weak spot. `AppModel` currently exposes only a `resolving`
+Boolean, rendered as a tiny indeterminate spinner in the queue header. The
+resolver runs off the main actor, but its graph-adjusted candidate-matrix call is
+one synchronous core/FFI operation with no progress callback or cancellation.
+That call may prepare fingerprints, build one batch index, compare the media
+graph, refine candidate mappings, and then resolve queue rows, but the shell
+cannot currently tell which phase or pair is active. A percentage displayed
+today would therefore be fabricated.
 
 ### Proposed solution
 
-Add a compact global activity strip near the session header. Show it only after
-an operation lasts roughly 200-300 ms so quick tasks do not flash. Use a
-determinate bar when the work reports a trustworthy fraction and an indeterminate
-bar otherwise. Keep row-level progress where it adds useful detail, but let the
-global strip summarize the current foreground task and queued work.
+Place a compact global activity strip directly beneath the counts/approval text
+in the queue/session header, replacing the current resolver-only spinner. This is
+the preferred location because import, pairing, queued sync, and export are
+session-level work, and the header remains visible while either queue list
+scrolls. Keep the existing inline import progress on the initial empty import
+screen, since the queue header does not exist yet.
+
+Alternatives considered:
+
+- An app-wide strip above the footer would be visible everywhere, but it is far
+  from the session controls and consumes valuable center/export width.
+- Context-only indicators beside the media pool, selected couple, and export
+  button are useful secondary details, but relying on them alone preserves the
+  current fragmented experience.
+- Toasts or overlays are inappropriate for continuous progress because they
+  obscure work and are easy to miss.
+
+Show the header strip only after an operation lasts roughly 200-300 ms so quick
+tasks do not flash. Use a determinate bar when the underlying operation reports a
+trustworthy fraction and an indeterminate bar otherwise. Existing local
+indicators should remain when they add detail; the header is a summary rather
+than their replacement.
+
+For pairing, implement honest progress in two levels:
+
+1. With the current API, show an indeterminate summary such as
+   `Analyzing 12 files for matches...` or
+   `Comparing 4 videos with 8 audio files...`, followed by
+   `Resolving matches...`. Include file/pair counts but no percentage.
+2. If pairing duration warrants finer feedback, add real progress reporting
+   through core, FFI, and `CoupleKit` rather than simulating a Swift loop.
+   Useful phases are `Preparing fingerprints (x/y)`, `Building match index`,
+   `Comparing files (x/y)`, `Refining candidates (x/y)`, and
+   `Resolving video rows (x/y)`. A cancellable job API would be preferable if
+   this path becomes long enough to need determinate progress.
 
 Recommended text states:
 
@@ -325,7 +429,10 @@ Recommended text states:
 - `Decoding audio - 42%`
 - `Building waveform - 68%`
 - `Analyzing transients - 91%`
-- `Comparing 24 video/audio pairs...`
+- `Analyzing 12 files for matches...`
+- `Comparing 4 videos with 8 audio files...`
+- `Preparing fingerprints - 7/12`
+- `Refining candidates - 3/9`
 - `Resolving matches...`
 - `Updating matches after import...`
 - `Syncing couple 2 of 7: video.mov`
@@ -344,19 +451,65 @@ rather than showing fabricated precision.
 
 - Import, analysis/extraction, candidate pairing, queued auto-sync, and export
   all produce visible activity when they take meaningful time.
+- During a populated session, the summary activity strip lives in the
+  queue/session header and remains visible while the queue or media pool scrolls.
+- The initial import screen retains appropriate inline progress before the
+  session header exists.
 - Text identifies both the operation and the current file/couple when useful.
 - Determinate progress is monotonic within a phase.
 - Indeterminate work does not display a fake percentage.
+- Pairing shows useful media/pair counts with indeterminate progress until the
+  underlying API exposes real completed/total updates.
 - Multiple queued operations show an item count or queue position.
 - The indicator clears on success, cancellation, and failure.
 - Failure transitions to an actionable error instead of leaving a stuck bar.
 - Existing cancellation controls remain available for cancellable jobs.
 
+### Implementation notes
+
+The four scattered signals are unified into ONE honest strip beneath the
+counts/approval text in the queue header (`QueueRail.ActivityStripView`),
+REPLACING the resolver-only `resolving` spinner (consistent with §1.2; PROGRESS
+2026-06-15 UX-CHANGE notes the unification). LoadSurface keeps its own inline
+import progress (the header doesn't exist on the empty screen).
+
+The "current signals → single summary (text + optional fraction)" decision is a
+PURE `CoupleKit/ActivitySummary.swift` (`ActivitySummaryPolicy.summarize`,
+mirroring MatchQuality/RepairDrop/MediaRemoval/AnchorProposal). It takes an
+`ActivitySignals` snapshot + `elapsedMs` + a per-phase `phaseFloor` and returns
+one line, or nil. HONESTY is enforced there: a determinate `fraction` is returned
+ONLY for import (core job phase %) and export (per-row %); pairing is ALWAYS
+indeterminate — counts only (`Comparing V videos with A audio files…` /
+`Analyzing N files for matches…` → `Resolving matches…`), never a percentage,
+no simulated loop (Level-2 core pairing progress deliberately NOT implemented).
+Queued sync is summary-level indeterminate with position (`Syncing couple X of
+N: video.mov`); the per-couple `syncActivity` line keeps the phase detail.
+Determinate fractions are MONOTONIC within a phase (clamped up to `phaseFloor`)
+and clamped to 0…1. A `.failure` is shown immediately (skips the debounce) as an
+error with no bar; idle ⇒ nil (no stuck bar on success/cancellation/failure).
+Priority when several run: failure ▸ export ▸ import ▸ pairing ▸ sync.
+
+The app side is a thin `@Observable ActivityStrip` controller (Couple target)
+mirroring PoolPreviewController-over-PoolPreviewState: it owns the ~250 ms
+debounce TIMER + the per-phase floor and publishes `summary`, fed by
+`activity.refresh()` from the EXISTING change points — MediaPool's new structured
+`importActivity` (+ `onImportChange`), `AppModel.resolving`, the §5.2 sync
+queue pump (new observable index/total/name), and `BatchExport.phase`/per-row
+progress (+ `runningRowFraction`). No new jobs; no Rust/core change.
+
+Verified: pure `ActivitySummaryTests` (11 — idle⇒nil, debounce window,
+pairing⇒indeterminate+counts, import⇒determinate+phase text, queued sync
+position, export determinate+preflight/finishing edges, failure⇒error not bar,
+monotonic-within-phase clamp, 0…1 clamp, priority, hasActiveWork). Live
+controller (debounce timer + floor carry-forward + failure→error→clear) via the
+env-gated `COUPLE_ACTIVITY_TEST` DebugDrive hook (11 passed). `swift build`
+clean; `swift test` 92 passed (was 81); `git diff --check` clean.
+
 ---
 
 ## TODO-009: Keep match quality independent from manual source selection
 
-**Status:** Ready  
+**Status:** Done
 **Type:** Behavior fix  
 **Area:** Pairing verdicts, resolve banner, queue colors
 
@@ -382,18 +535,23 @@ Model these concepts separately:
   resolver/classifier evidence for that specific video/audio pair;
 - **approval:** whether the user queued the couple for export.
 
-A manual choice should remain questionable when the resolver could not
-distinguish it or when it is below the evidence floor. A full re-analysis may
-promote it to confident only if the pairing classifier now independently clears
-the confident threshold. Successful alignment or a low fit RMS alone must not
-erase source ambiguity; alignment quality can stay green in its own fit display.
+A manual choice remains questionable unless the selected video/audio pair
+independently satisfies the same confident-match classifier used for an
+automatic confident pairing. Re-run or reuse that pair's evidence after manual
+selection; promote it to green only when that evidence clears the normal
+confident threshold.
+
+Manual choice, successful auto-sync, low alignment RMS, or user approval must
+never promote match quality by themselves. Alignment quality can remain green in
+its own fit display while pairing quality stays amber.
 
 ### Acceptance criteria
 
 - Clicking a candidate does not by itself change an amber/questionable verdict
   to green.
 - Green means the selected video/audio pair independently meets the confident
-  matching criteria.
+  matching criteria used for automatic confident matches; manual and automatic
+  selections use the same evidence standard.
 - Below-floor forced pairs remain visibly questionable.
 - Pairing verdict color, alignment fit, and approval state use distinct UI
   signals and cannot overwrite one another.
@@ -402,6 +560,48 @@ erase source ambiguity; alignment quality can stay green in its own fit display.
 - Persistence restores selection provenance and match quality correctly.
 - Tests cover ambiguous manual selection, confident automatic selection,
   below-floor forcing, and evidence-based promotion after re-analysis.
+
+### Implementation notes
+
+Bug mechanism: `CoupleRow.verdict` returned `.good` for ANY non-nil
+`selectedAudioKey` (after the `forced` check), so a manual pick via `repair`
+(which set `selectedAudioKey` but left `state == .ambiguous`) flipped the dot
+green from the click alone — conflating selection with match evidence.
+
+Fix models the three signals separately. The verdict decision is now a PURE,
+testable `MatchQualityPolicy.decide` in `CoupleKit/MatchQuality.swift` (mirroring
+the `RowMergePolicy`/`PoolSelection` idiom) over `forced`, a new
+`SelectionProvenance` (`.none`/`.automatic`/`.manual`), the resolver's own
+`RowState.verdict`, and a manual pair's evidence verdict. Rules: `forced` ⇒
+questionable; no selection or an AUTOMATIC selection ⇒ the resolver verdict (the
+resolver already classified that pair); a MANUAL pick ⇒ green ONLY when that exact
+pair independently cleared the SAME confident classifier, else questionable.
+Approval and alignment RMS are not inputs. `CoupleRow` gained
+`selectionProvenance` + `manualMatchConfident: Bool?` and maps the policy's
+`MatchQuality` 1:1 to the UI `Verdict`.
+
+Evidence reuses the EXISTING per-pair path (no new matching math, invariant 8):
+`Resolver.manualPairIsConfident` returns core's `PairEvidence.classification ==
+.match` via `matchPair` under the fingerprint-primary default, or the fine
+verifier's `VerifyFit.matched` via `verifyBatch` (seeded with the `pairCorrelate`
+coarse lag, since the legacy verifier only locks within ±span of the seed) under
+`COUPLE_MATCHER=legacy`. `AppModel.repair` sets `.manual`/nil then computes
+evidence off-main (the only thing that greens a manual pick — never the click,
+sync, or approval); `mergeResolution` resets an adopted row to
+`.automatic`/`.none` and clears stale evidence; restore round-trips both new
+fields (added OPTIONAL to `SavedQueue.Couple`, schema still `couple-queue/1`,
+back-compat: a pre-009 file infers provenance from `pinned` and recomputes a
+manual pick's evidence via `reevaluateManualMatch`).
+
+Verification: pure `MatchQualityTests` (6 tests) cover the four required cases
+(ambiguous manual stays questionable, confident automatic green, below-floor
+forced questionable, evidence-based promotion) plus no-selection fallback and
+approval/fit independence. App-target end-to-end via DebugDrive
+`COUPLE_QUALITY_TEST=1` (7 checks on the real `CoupleRow.verdict`, passing under
+both matchers). `swift build` clean; `swift test` 51 passed (was 45);
+`git diff --check` clean. Most likely a bug-fix toward the existing §V2.3
+decision (which already says quality is evidence-based), so no spec/decision doc
+change.
 
 ---
 
@@ -424,23 +624,27 @@ does not change the overview timeline.
 
 ### Proposed solution
 
-Give the overview its own visible time range, independent of loupe window sizes:
+Give the overview its own visible time range, independent of loupe window sizes.
+Match the established loupe interaction: vertical scrolling over the overview
+zooms in or out around the pointer location. No modifier key should be required.
 
-- pinch over the overview to zoom around the pointer;
-- horizontal trackpad scrolling pans the visible range;
-- provide a small `Fit` action to restore the full union;
-- support an accessible mouse/keyboard equivalent, such as
-  Command-scroll and Command-0;
-- keep anchors, overlap shading, playhead, ticks, seeking, and coarse alignment
-  gestures mapped through the visible range.
+Horizontal trackpad scrolling pans the visible range. Provide a small `Fit`
+action and a keyboard equivalent such as Command-0 to restore the full union.
+Keep anchors, overlap shading, playhead, ticks, seeking, and coarse alignment
+gestures mapped through the visible range.
 
 Do not couple overview zoom to `lock zoom`; that control describes loupe scale.
 Clamp the viewport to meaningful track extents and enforce a minimum span so it
-cannot collapse to an unusable range.
+cannot collapse to an unusable range. Route scroll events by pointer location so
+overview scrolling changes only the overview and loupe scrolling retains its
+existing behavior.
 
 ### Acceptance criteria
 
 - Users can zoom in, zoom out, pan, and return to the full-duration fit.
+- Vertical scrolling over the overview changes its zoom level with the same
+  direction and general sensitivity as vertical scrolling over a loupe.
+- Horizontal scrolling over the overview pans without changing zoom.
 - Zoom is centered on the pointer/playhead rather than always on the midpoint.
 - Anchor dragging, playhead seeking, and external-lane offset dragging remain
   accurate while zoomed.
@@ -452,7 +656,7 @@ cannot collapse to an unusable range.
 
 ## TODO-011: Keep automatically proposed anchors inside true overlap
 
-**Status:** Ready  
+**Status:** Done
 **Type:** Behavior fix  
 **Area:** Anchor proposal
 
@@ -469,14 +673,31 @@ anchors where the external source has no content.
 
 ### Proposed solution
 
-Automatic anchors must always lie within the current video/external overlap.
-Adapt the number and spacing of anchors to short overlaps rather than falling
-back outside them:
+Automatic anchors must always lie within the current video/external overlap. The
+threshold is based on usable overlap duration, not merely the camera clip's total
+duration:
 
-- use three zoned anchors when the overlap can support them;
-- use two well-separated anchors for a shorter but still measurable overlap;
-- use no automatic anchors when there is no usable overlap, and surface the
-  manual rescue state instead.
+- For overlap of at least 30 seconds, retain the existing default of three
+  zoned anchors selected from useful waveform events.
+- For usable overlap shorter than 30 seconds, default to two anchors.
+- For no usable overlap, propose no automatic anchors and surface the manual
+  rescue state.
+
+The two short-overlap anchors should be chosen for human readability, not placed
+at arbitrary fractions or midpoints. Use the existing onset ranking as the
+primary proxy for a clear shape, then prefer candidates that:
+
+- contain a strong, isolated transient or distinctive local contour;
+- contain non-silent, non-degenerate structure in both mapped waveform lanes;
+- avoid flat silence and sustained/periodic passages that are visually
+  ambiguous;
+- are well separated in time, preferably one in the earlier part and one in the
+  later part of the overlap.
+
+Choose the best pair of usable candidates while maintaining at least roughly
+25% of the overlap between them. If two non-degenerate candidate windows cannot
+be found, propose no automatic anchors rather than inserting misleading
+midpoints. This preserves the core invariant of either zero or 2-4 anchors.
 
 This constraint applies to automatic proposal and automatic `+ anchor`
 selection. It does not prevent a deliberate manual anchor move, though the UI
@@ -486,17 +707,52 @@ should make an out-of-overlap anchor visibly non-evidentiary.
 
 - Every automatically proposed anchor is inside the current overlap.
 - Automatic `+ anchor` never chooses an onset outside the overlap.
-- Short overlaps produce a valid reduced anchor set or none; they never fall
-  back to camera-only regions.
+- Overlap of at least 30 seconds defaults to three zoned anchors.
+- Usable overlap below 30 seconds defaults to two well-separated,
+  human-readable waveform events.
+- Short-overlap anchor selection rejects silence/degenerate windows and avoids
+  arbitrary midpoint fallback.
+- If two useful windows cannot be found, the state uses zero anchors rather than
+  an invalid one-anchor or misleading two-anchor set.
 - No-overlap state avoids invalid measurements and explains why anchors cannot
   be proposed.
 - Tests cover full, partial, short, and zero overlap.
+
+### Implementation notes
+
+Bug mechanism: `PairSession.proposeAnchors()` set `span = 0...cam.durationS` and
+replaced it with the overlap ONLY when `overlap != nil && len > 30`, so a ≤30 s or
+absent overlap took the three zones over the FULL camera clip (placing anchors where
+the external source has no content; `bestOnset(in:)` even fell back to a raw zone
+MIDPOINT). `addAnchor()` shared the same `overlap ?? 0...cam.durationS` fallback.
+
+Fix bounds all automatic paths to the overlap via a PURE
+`CoupleKit/AnchorProposal` (mirrors `MatchQualityPolicy`/`RepairDropPolicy`/
+`MediaRemovalPolicy`): `propose(overlap:candidates:)` → anchor times and
+`addAnchorCandidate(overlap:existing:candidates:)` → one time/nil, over the overlap
+span + ranked onset `Candidate`s (`t`, `score`, `usable`). It enforces the count on
+USABLE OVERLAP: ≥30 s ⇒ 3 zoned ([1,30]/[38,62]/[70,99]% of overlap); <30 s ⇒ 2
+separated (≥25% of overlap) non-degenerate; else 0; "+ anchor" never outside the
+overlap; never exactly one. `PairSession` reuses the existing engine onset list
+(`TrackHandle.onsets`) and marks `usable` from an `rms()` probe of BOTH lanes (camera
+at the onset, external at `u(t)`, ≥ −55 dBFS) — no new matching math (invariant 8).
+WaveformStage shows a "place anchors manually" chip when none were placed
+(`anchorsUnavailable`); a deliberate MANUAL drag may still leave the overlap.
+
+Verified: pure `AnchorProposalTests` (12 — full ⇒ 3 in-overlap; partial shorter than
+camera ⇒ 3 still in-overlap; short ⇒ 2 separated; zero/degenerate/one-usable/bunched/
+long-all-degenerate ⇒ 0 never 1; strongest-outside ignored; "+ anchor"
+inside/separated/cap/nil; count-never-one sweep). Live path (onsets + per-lane RMS,
+overlap shrunk <30 s and to zero) via env-gated `COUPLE_ANCHOR_TEST` DebugDrive hook
+over a real `COUPLE_PAIR_DIR`. `swift build` clean; `swift test` 81 passed (was 69);
+`git diff --check` clean. UX-DECISIONS §2.2 updated (removes the camera-duration
+fallback) + PROGRESS 2026-06-15 SPEC-CHANGE. No Rust/core change.
 
 ---
 
 ## TODO-013: Allow drag-to-pair over the central workspace
 
-**Status:** Ready  
+**Status:** Done
 **Type:** Feature  
 **Area:** Manual pairing, drag and drop
 
@@ -520,14 +776,27 @@ covering the video preview, resolve banner, waveform row, and sync-tools area.
 During a valid drag, highlight the region and show copy such as
 `Pair selected video with audio.wav`.
 
-For an unresolved couple, dropping immediately selects and pins the audio, builds
-the session, and runs full sync/classification. If the selected couple already
-has a source, ask for confirmation before replacing it when the row is approved
-or has user edits; otherwise make replacement a direct, reversible action.
+Keep replacement rules deliberately simple:
+
+- Dropping the already selected audio is a no-op.
+- An unresolved couple accepts the drop immediately.
+- An unapproved couple with a different source replaces it immediately without a
+  confirmation dialog. The old audio remains in the pool and can be selected
+  again.
+- An approved couple asks for confirmation because replacement removes it from
+  the export queue. The dialog states that approval/export status and the current
+  pair session will be cleared. On confirmation, replace the source; on cancel,
+  make no change.
+
+Every accepted replacement selects and pins the audio, clears stale export
+status, rebuilds the pair session, and runs full sync/classification. Pair-specific
+autosaves for the previous video/audio combination may remain available if that
+source is selected again; this action must not delete source files or cache data.
 
 Use the same underlying repair operation as the existing queue-row target so the
-two gestures cannot diverge. Match color must follow TODO-009: a forced selection
-does not become green merely because the drop succeeded.
+two gestures cannot diverge, including the approved-row confirmation. Match
+color must follow TODO-009: a forced selection does not become green merely
+because the drop succeeded.
 
 ### Acceptance criteria
 
@@ -537,10 +806,61 @@ does not become green merely because the drop succeeded.
 - No selected couple, a non-audio payload, or an unavailable video rejects the
   drop without changing state.
 - The new source is selected/pinned, the session is rebuilt, and sync runs.
-- Replacing an approved or edited pairing requires confirmation and clears or
-  preserves downstream state according to the confirmed action.
+- Replacing an unapproved source is immediate; dropping the current source is a
+  no-op.
+- Replacing an approved source requires confirmation and, when confirmed, clears
+  approval and stale export status before rebuilding.
 - Queue-row and center-workspace drops produce identical pairing results.
 - Pairing verdict remains evidence-based as specified by TODO-009.
+
+### Implementation notes
+
+Realizes the §V2.6-DECIDED gesture (drag pool audio onto a couple) over the center
+workspace, with NO doc change (an existing decision).
+
+Pre-existing state characterized first: the queue-row drop
+(`QueueRail.CoupleRowView`) called `model.repair(couple, audioKey:)` DIRECTLY, and
+`AppModel.repair` had **no** approved-couple confirmation and did **not** clear
+approval/export — so confirmation lived in NEITHER the view nor the model. TODO-013
+therefore had to introduce the shared confirmation/clear path, not just reuse one.
+
+Shared, non-divergent design (mirrors the RowMergePolicy/PoolSelection/MatchQuality
+idiom). The "what should this drop do?" decision is a PURE
+`CoupleKit/RepairDropPolicy.decide` → `RepairDropOutcome` (`noOp`/`accept`/
+`needsConfirmation`/`reject`) over (selected-couple?, payload-is-audio?,
+video-available?, current-vs-dropped key, approved). BOTH drop targets call ONE app
+seam, `AppModel.requestRepairDrop(couple, audioKey:)`, which maps the outcome:
+reject ⇒ false (no change); no-op ⇒ true; accept ⇒ `performRepairReplace`;
+needs-confirmation ⇒ arm `pendingRepairConfirmation`. `performRepairReplace` clears
+stale approval (`pair.toggleVerified` when approved — removes it from the export
+queue) + `exportStatus = .idle`, then calls the SAME `repair` (selects+pins,
+rebuilds the session, runs full sync + the TODO-009 evidence classifier). The
+approved confirmation is one `.confirmationDialog` in `RootView` (shared ancestor),
+stating that approval/export status and the current pair session will be cleared;
+confirm ⇒ `confirmPendingRepair` (re-validates via the same policy), cancel ⇒
+`cancelPendingRepair` (no change). The queue-row drop was switched from calling
+`repair` directly to `requestRepairDrop`, so it now ALSO gets the no-op/confirm/clear
+behavior — the two gestures are byte-identical by construction.
+
+Center target: `CenterColumn` extracts its stack into `content` and attaches ONE
+`CenterDropTarget` ViewModifier spanning the whole region (video preview + resolve
+banner + waveform row + sync-tools/bottom bar). It is scoped to the selected couple
+(nil couple ⇒ no `.dropDestination` attached ⇒ inert region). The valid-drag
+highlight uses the app's ACCENT language (soft accent wash + accent stroke + a panel
+chip), never a yellow box; copy reads `Pair selected video with <name>` using the
+dragged file's display name via a lightweight `AppModel.poolDraggingKey` recorded at
+drag start (the `.draggable` payload closure) — cosmetic only, the repair always
+reads the dropped payload. Verdict stays evidence-based: `repair` never greens the
+dot on drop (TODO-009 unchanged).
+
+Verification: pure `RepairDropPolicyTests` (9 tests) cover same-audio no-op,
+unresolved immediate, unapproved-different immediate, approved needs-confirmation,
+and the three rejects (no couple / non-audio / unavailable video) + cross-call-site
+input parity. App-layer end-to-end via DebugDrive `COUPLE_REPAIRDROP_TEST=1` (7
+checks on the real `requestRepairDrop`/`payloadIsAudio`/confirmation state machine,
+ran live: 7 passed). `swift build` clean (only the pre-existing `VideoThumbnail`
+`NSImage`-Sendable warnings); `swift test` 60 passed (was 51); `git diff --check`
+clean. This item touched no Rust/core.
 
 ---
 

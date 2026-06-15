@@ -346,38 +346,72 @@ final class PairSession {
 
     // MARK: - Anchors (UX §2.2)
 
-    /// Three anchors at the sharpest attack inside each overlap zone
-    /// [1,30] [38,62] [70,99] %, falling back to the camera duration.
+    /// Automatic anchor proposal (TODO-011): anchors must ALWAYS lie inside the
+    /// current video/external overlap. The count is decided on USABLE OVERLAP
+    /// duration by the pure `AnchorProposal.propose` — overlap ≥ 30 s ⇒ three
+    /// zoned anchors; 0 < overlap < 30 s ⇒ two well-separated non-degenerate
+    /// onsets; no usable overlap (or no two usable candidates) ⇒ ZERO (the
+    /// manual-rescue state), never a misleading midpoint and never exactly one.
+    /// (Removes the old fall-back to the full camera duration, which placed
+    /// anchors where the external source had no content.)
     func proposeAnchors() {
-        guard let cam = camera.track else { return }
-        var span = 0.0...cam.durationS
-        if let ov = overlap, ov.upperBound - ov.lowerBound > 30 {
-            span = ov
-        }
-        let len = span.upperBound - span.lowerBound
-        var picks: [Double] = []
-        for zone in [(0.01, 0.30), (0.38, 0.62), (0.70, 0.99)] {
-            let a = span.lowerBound + zone.0 * len
-            let b = span.lowerBound + zone.1 * len
-            picks.append(cam.bestOnset(in: a, b)?.t ?? (a + b) / 2)
-        }
-        picks.sort()
+        let picks = AnchorProposal.propose(overlap: overlap,
+                                           candidates: anchorCandidates())
         anchors = picks
         frames = picks.map { _ in Frame(winMs: Self.defaultWinMs, auto: true) }
         measurements = picks.map { _ in nil }
         measurementCenters = picks.map { _ in nil }
     }
 
-    /// "+ anchor": best unused onset keeping ≥ 8%-of-overlap separation, cap 4.
+    /// `true` when automatic proposal could not place any anchor inside the
+    /// overlap (no usable overlap, or no two non-degenerate candidates). The UI
+    /// surfaces this as the manual-rescue state (anchors must be placed by hand).
+    var anchorsUnavailable: Bool { bothLoaded && anchors.isEmpty }
+
+    /// Automatic "+ anchor" (TODO-011 / UX §2.2): the strongest usable onset
+    /// inside the overlap, ≥ 8%-of-overlap from existing anchors, cap 4. NEVER
+    /// chooses an onset outside the overlap; adds nothing when none qualifies.
     func addAnchor() {
-        guard anchors.count < 4, let cam = camera.track else { return }
-        let span = overlap ?? 0...cam.durationS
-        let len = span.upperBound - span.lowerBound
-        let minSep = 0.08 * len
-        let candidates = cam.onsets(t0: span.lowerBound, t1: span.upperBound, limit: 400)
-        guard let pick = candidates.first(where: { c in anchors.allSatisfy { abs($0 - c.t) >= minSep } }) else { return }
-        insertAnchor(at: pick.t)
+        guard anchors.count < 4 else { return }
+        guard let t = AnchorProposal.addAnchorCandidate(overlap: overlap,
+                                                        existing: anchors,
+                                                        candidates: anchorCandidates())
+        else { return }
+        insertAnchor(at: t)
     }
+
+    /// Build the ranked onset candidates for the proposer, marking each `usable`
+    /// iff it has non-silent structure in BOTH mapped lanes — the camera lane at
+    /// the onset time and the external lane at the mapped time `u(t)` (TODO-011:
+    /// reject flat silence / one-sided content). Reuses the engine's existing
+    /// score-ranked onset list (UX §4.5); no new matching math. With no overlap
+    /// or no camera track there are no candidates (⇒ the proposer returns []).
+    private func anchorCandidates() -> [AnchorProposal.Candidate] {
+        guard let cam = camera.track, let ov = overlap else { return [] }
+        let ext = external.track
+        let onsets = cam.onsets(t0: ov.lowerBound, t1: ov.upperBound, limit: 400)
+        return onsets.map { o in
+            AnchorProposal.Candidate(t: o.t, score: o.score,
+                                     usable: laneHasContent(cam, at: o.t)
+                                         && (ext.map { laneHasContent($0, at: mapping.u(o.t)) } ?? false))
+        }
+    }
+
+    /// A lane has judgeable content around a candidate when its short-window RMS
+    /// is above a silence floor (a held/periodic passage still has level, so this
+    /// is the cheap "not flat silence / not one-sided" gate; the onset score
+    /// already favors sharp, isolated transients over sustained wiggles).
+    private func laneHasContent(_ track: TrackHandle, at t: Double) -> Bool {
+        guard t >= 0, t <= track.durationS else { return false }
+        let half = 0.25 // 0.5 s window centered on the candidate
+        guard let dbfs = track.rms(t0: max(0, t - half), t1: min(track.durationS, t + half))
+        else { return false }
+        return dbfs > Self.anchorSilenceFloorDb
+    }
+
+    /// RMS floor (dBFS) below which a lane window is treated as silence for anchor
+    /// usability. −55 dBFS clears noise floors while rejecting genuine silence.
+    static let anchorSilenceFloorDb = -55.0
 
     private func insertAnchor(at t: Double) {
         let idx = anchors.firstIndex(where: { $0 > t }) ?? anchors.count

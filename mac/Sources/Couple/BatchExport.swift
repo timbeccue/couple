@@ -20,8 +20,15 @@ final class BatchExport {
         case finished(exported: Int, failed: Int)
     }
 
-    var phase: Phase = .idle
+    var phase: Phase = .idle {
+        didSet { if phase != oldValue { model.activity.refresh() } }
+    }
     var lastError: String?
+    /// The 1-based row being exported and the running couple's display name, for the
+    /// activity strip's `Exporting i of N: name - %` line (TODO-005). The per-row
+    /// `exportStatus(.running)` carries the fraction; this carries the position/name.
+    private(set) var exportRowIndex = 0
+    private(set) var exportRowName: String?
 
     init(model: AppModel) {
         self.model = model
@@ -31,6 +38,18 @@ final class BatchExport {
         if case .running = phase { return true }
         if case .preflight = phase { return true }
         return false
+    }
+
+    /// The 0…1 progress of the row currently exporting, for the activity strip's
+    /// determinate bar (TODO-005). Read off the running couple's per-row `exportStatus`
+    /// so the strip and the per-row indicator can never disagree. 0 when no row is
+    /// mid-export.
+    var runningRowFraction: Double {
+        guard exportRowIndex > 0 else { return 0 }
+        for couple in model.queued {
+            if case .running(let f) = couple.exportStatus { return f }
+        }
+        return 0
     }
 
     /// Export every approved couple, serially, into the destination folder.
@@ -64,13 +83,16 @@ final class BatchExport {
 
             for (i, couple) in couples.enumerated() {
                 let url = uniqueURL(dest: dest, couple: couple, used: &usedNames)
+                exportRowIndex = i + 1
+                exportRowName = couple.video.name
                 couple.exportStatus = .running(0)
+                model.activity.refresh()   // strip: new row → "Exporting i of N: name"
                 do {
                     try await couple.pair.exportAwait(
                         to: url,
                         format: model.globalFormat,
                         keepCameraAudio: model.globalKeepCameraAudio,
-                        onProgress: { couple.exportStatus = .running($0) })
+                        onProgress: { couple.exportStatus = .running($0); self.model.activity.refresh() })
                     couple.exportStatus = .done(url)
                     exported += 1
                 } catch {
@@ -83,6 +105,8 @@ final class BatchExport {
             }
 
             model.saveQueue() // persist per-couple status/approval before announcing done
+            exportRowIndex = 0
+            exportRowName = nil
             phase = .finished(exported: exported, failed: failed)
             lastError = firstError
             let title = failed == 0
@@ -93,6 +117,12 @@ final class BatchExport {
                 detail: failed == 0 ? dest.lastPathComponent : (firstError ?? ""),
                 actionLabel: "Reveal in Finder",
                 action: { NSWorkspace.shared.activateFileViewerSelecting([dest]) }), seconds: 12)
+            // Activity strip (TODO-005): a finished batch clears (phase→finished), but a
+            // batch with failures transitions to an actionable error line rather than
+            // silently vanishing. The toast above carries the Reveal action.
+            if failed > 0 {
+                model.activity.reportFailure("\(exported) exported, \(failed) failed — \(firstError ?? "see details")")
+            }
         }
     }
 
