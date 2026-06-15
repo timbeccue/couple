@@ -92,14 +92,14 @@ final class AuditionController {
         extGain = 1
         camMuted = false
         extMuted = false
-        hasUserSeek = false
         let item = AVPlayerItem(url: videoURL)
         player.replaceCurrentItem(with: item)
         player.isMuted = true
-        // Poster frame; the playhead starts where the poster sits.
-        playheadT = 1.0
-        player.seek(to: CMTime(seconds: 1.0, preferredTimescale: 48000),
-                    toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
+        // A newly attached couple parks the playhead and poster at 0:00 (TODO-004).
+        // There is no per-couple saved playback position in the current design, so
+        // the visible playhead is the authoritative start for the first play.
+        playheadT = 0
+        player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
     }
 
     func teardown() {
@@ -121,19 +121,39 @@ final class AuditionController {
 
     // MARK: - Transport
 
-    func toggle(defaultStart: Double) {
-        if isPlaying {
-            pause()
-        } else if stream == nil {
-            // First play: from the playhead if the user parked it somewhere,
-            // else the default (first anchor − 0.8 s).
-            play(from: hasUserSeek ? playheadT : defaultStart)
-        } else {
-            play(from: nil)
-        }
+    /// What `toggle()` does for a given transport state (TODO-004). Pure and
+    /// `Equatable` so the play/Space policy is unit-testable with no AVPlayer or
+    /// audio device, in the same spirit as `PoolPreviewAction`.
+    enum TransportPlan: Equatable {
+        case pause
+        /// First play: open the stream and start at the visible playhead `at`
+        /// (never an anchor fallback). Carries the value so a test can assert it.
+        case playFromPlayhead(at: Double)
+        /// Resume from the existing stream cursor (a paused seek already moved it).
+        case resume
     }
 
-    @ObservationIgnored private var hasUserSeek = false
+    /// Pure transport decision shared by Space and the main play/pause button.
+    /// Both produce the same plan from the same state, so the two controls cannot
+    /// diverge.
+    static func transportPlan(isPlaying: Bool, hasStream: Bool, playheadT: Double) -> TransportPlan {
+        if isPlaying { return .pause }
+        if !hasStream { return .playFromPlayhead(at: playheadT) }
+        return .resume
+    }
+
+    /// The single shared transport path for Space and the main play/pause button
+    /// (TODO-004). Both always start or resume at the visible playhead: the first
+    /// play opens the stream at `playheadT` (never an anchor fallback), and a
+    /// resume continues from the stream cursor, which a paused seek has already
+    /// moved to `playheadT`.
+    func toggle() {
+        switch Self.transportPlan(isPlaying: isPlaying, hasStream: stream != nil, playheadT: playheadT) {
+        case .pause: pause()
+        case let .playFromPlayhead(at): play(from: at)
+        case .resume: play(from: nil)
+        }
+    }
 
     /// Start playback; `from` nil resumes at the stream cursor. The engine
     /// bring-up is asynchronous with a timeout: a wedged audio HAL (locked
@@ -299,12 +319,12 @@ final class AuditionController {
         }
         let clamped = max(0, min(t, videoDuration))
         playheadT = clamped
-        hasUserSeek = true
         if stream == nil {
             if isPlaying {
                 return
             }
-            // Not opened yet: just move the video poster.
+            // Not opened yet: just move the video poster. A paused seek here
+            // redefines the next start because the first play uses `playheadT`.
             seekVideo(to: clamped)
             return
         }

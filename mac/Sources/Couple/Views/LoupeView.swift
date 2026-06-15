@@ -23,6 +23,24 @@ struct LoupeView: View {
 
     @State private var buffers = LoupeBuffers()
     @State private var lastDragX: CGFloat = 0
+    /// Set while a drag actually moves so a completed offset/drift drag can never
+    /// also fire the tap seek (TODO-012). The tap and drag are already mutually
+    /// exclusive (`.exclusively`), but at the 1-px drag threshold this guard makes
+    /// "a slight movement seeks AND mutates alignment" impossible.
+    @State private var didDrag = false
+
+    /// Pure x→camera-time mapping for a loupe click (TODO-012): the canvas draws
+    /// the camera lane linearly from `t0 = anchor − winMs/2` at x=0 to
+    /// `t1 = anchor + winMs/2` at x=width (the playhead uses the same frac), so a
+    /// click maps the local x onto that same window. Camera time only — the shared
+    /// seek path clamps to the playable duration. Factored out so the mapping has
+    /// deterministic, media-free coverage.
+    static func cameraTime(forLocalX x: CGFloat, width: CGFloat, anchor: Double, winMs: Double) -> Double {
+        guard width > 0 else { return anchor }
+        let winS = winMs / 1000
+        let frac = max(0, min(1, Double(x / width)))
+        return (anchor - winS / 2) + frac * winS
+    }
 
     private var accent: Color { Theme.anchorColors[index % 4] }
 
@@ -131,7 +149,11 @@ struct LoupeView: View {
         .background(Theme.canvasBg, in: RoundedRectangle(cornerRadius: 5))
         .clipShape(RoundedRectangle(cornerRadius: 5))
         .contentShape(Rectangle())
-        .gesture(dragGesture)
+        // Drag wins over tap (`.exclusively`): an offset/pivot drag never also
+        // seeks, and a plain click (no drag) seeks the playhead (TODO-012). The
+        // `didDrag` guard inside the tap is the belt-and-suspenders at the 1-px
+        // drag threshold.
+        .gesture(dragGesture.exclusively(before: tapGesture))
     }
 
     /// Plain drag slides offset (ms/px follows zoom); ⇧-drag is the pivot drift
@@ -143,6 +165,7 @@ struct LoupeView: View {
                 guard pair.inputsEnabled,
                       pair.frames.indices.contains(index),
                       let rect = model.loupeRects[index], rect.width > 0 else { return }
+                didDrag = true // a moved drag must not also fire the tap seek
                 let dx = g.translation.width - lastDragX
                 lastDragX = g.translation.width
                 let msPerPx = pair.frames[index].winMs / rect.width
@@ -155,7 +178,31 @@ struct LoupeView: View {
             }
             .onEnded { _ in
                 lastDragX = 0
+                didDrag = false
                 pair.commitDrift()
+            }
+    }
+
+    /// A plain click in the loupe seeks the playhead to the clicked camera time
+    /// and focuses this loupe (TODO-012). `SpatialTapGesture` gives the local x,
+    /// which maps onto this loupe's camera-time window; the shared
+    /// `seek(to:focusAnchor:)` clamps to the playable duration and keeps the
+    /// paused/playing transport behavior (paused: park poster + redefine next
+    /// start; playing: continue from the new position).
+    private var tapGesture: some Gesture {
+        SpatialTapGesture(coordinateSpace: .local)
+            .onEnded { value in
+                // A drag that moved already mutated alignment — never also seek.
+                if didDrag { didDrag = false; return }
+                let pair = model.pair
+                guard pair.session != nil,
+                      pair.anchors.indices.contains(index),
+                      pair.frames.indices.contains(index),
+                      let rect = model.loupeRects[index], rect.width > 0 else { return }
+                let t = Self.cameraTime(forLocalX: value.location.x, width: rect.width,
+                                        anchor: pair.anchors[index],
+                                        winMs: pair.frames[index].winMs)
+                pair.audition.seek(to: t, focusAnchor: index)
             }
     }
 

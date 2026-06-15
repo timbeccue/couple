@@ -189,23 +189,43 @@ final class AppModel {
         if selectedID == nil { select(orderedCouples.first?.id) }
     }
 
-    /// §3.6 stability: a pinned/approved couple keeps its selection and state;
-    /// new files only append genuinely-new alternates. An unresolved couple takes
-    /// the fresh row wholesale.
+    /// §3.6 stability + TODO-007. Fold a fresh resolution into an existing couple.
+    /// The WHAT (selection, candidate list, whether to adopt the fresh display,
+    /// whether the session must be rebuilt, whether a stale `forced` clears) is the
+    /// PURE `RowMergePolicy.plan`; this method only applies the resulting mutations
+    /// together so the row is never left half-updated. An unapproved, unpinned
+    /// unresolved row therefore adopts a newly confident result WHOLESALE — exactly
+    /// as if both files had been imported together — while an approved/pinned row
+    /// only gains new alternates (its chosen source is never silently changed).
     private func mergeResolution(into couple: CoupleRow, row: ResolvedRow) {
         let fresh = (row.selected.map { [$0] } ?? []) + row.alternates
-        if couple.pinned || couple.approved {
-            let known = Set(couple.candidates.map(\.audioKey))
-            couple.candidates.append(contentsOf: fresh.filter { !known.contains($0.audioKey) })
-        } else {
+        let plan = RowMergePolicy.plan(
+            protected: couple.pinned || couple.approved,
+            currentSelectedKey: couple.selectedAudioKey,
+            currentCandidateKeys: couple.candidates.map(\.audioKey),
+            freshSelectedKey: row.selected?.audioKey,
+            freshCandidateKeys: fresh.map(\.audioKey))
+
+        if plan.adoptFreshDisplay {
+            // Unprotected: take the resolver's full result (state/chip/detail +
+            // candidate VALUES, not just keys), so the row equals a fresh build.
             couple.state = row.state
             couple.chip = row.chip
             couple.detail = row.detail
             couple.candidates = fresh
-            if couple.selectedAudioKey != row.selected?.audioKey {
-                couple.selectedAudioKey = row.selected?.audioKey
-                ensureSession(for: couple)
-            }
+            if plan.clearForced { couple.forced = false }
+        } else {
+            // Protected: preserve display + selection; surface only genuinely-new
+            // candidates as alternates (existing candidate objects kept verbatim;
+            // the policy's key order is current-then-new, so this is append-only).
+            let known = Set(couple.candidates.map(\.audioKey))
+            couple.candidates.append(contentsOf: fresh.filter { !known.contains($0.audioKey) })
+        }
+        // Session lifecycle fires AT MOST ONCE, and only when the selection
+        // actually changed (no duplicate teardown/sync on a re-pick).
+        if plan.rebuildSession {
+            couple.selectedAudioKey = plan.selectedAudioKey
+            ensureSession(for: couple)
         }
     }
 
@@ -368,10 +388,9 @@ final class AppModel {
             guard selectedCouple != nil else { return true }
             syncToolsExpanded.toggle()
             return true
-        case 49: // space: play/pause audition + preview
+        case 49: // space: play/pause audition from the visible playhead (TODO-004)
             guard pair.session != nil else { return true }
-            let start = max(0, (pair.anchors.first ?? 0.8) - 0.8)
-            audition.toggle(defaultStart: start)
+            audition.toggle()
             return true
         default:
             break

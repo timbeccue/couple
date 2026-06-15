@@ -32,8 +32,7 @@ struct VideoHero: View {
 
             HStack(spacing: 8) {
                 Button {
-                    let start = max(0, (pair.anchors.first ?? 0.8) - 0.8)
-                    audition.toggle(defaultStart: start)
+                    audition.toggle() // shared transport: starts/resumes at the playhead (TODO-004)
                 } label: {
                     Image(systemName: audition.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 11))

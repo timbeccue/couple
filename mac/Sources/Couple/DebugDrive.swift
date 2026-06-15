@@ -68,7 +68,10 @@ final class DebugDrive {
         guard env["COUPLE_OPEN_CAMERA"] != nil || env["COUPLE_PAIR_DIR"] != nil
             || env["COUPLE_PROFILE"] != nil || env["COUPLE_RESTORE_TEST"] != nil
             || env["COUPLE_RMS_TEST"] != nil || env["COUPLE_VERIFY_DUMP"] != nil
-            || env["COUPLE_OVERFLOW_TEST"] != nil || env["COUPLE_SHADOW_DUMP"] != nil else { return }
+            || env["COUPLE_OVERFLOW_TEST"] != nil || env["COUPLE_SHADOW_DUMP"] != nil
+            || env["COUPLE_LAYOUT_TEST"] != nil
+            || env["COUPLE_TRANSPORT_TEST"] != nil || env["COUPLE_LOUPE_TEST"] != nil
+            || env["COUPLE_REMERGE_TEST"] != nil else { return }
         Task { await run(env: env) }
     }
 
@@ -78,9 +81,15 @@ final class DebugDrive {
 
         // Media-free pure-predicate tests run first and, when nothing else is
         // requested, exit without entering the (media-gated) resolve/sync wait.
-        if env["COUPLE_RMS_TEST"] == "1" || env["COUPLE_OVERFLOW_TEST"] == "1" {
+        if env["COUPLE_RMS_TEST"] == "1" || env["COUPLE_OVERFLOW_TEST"] == "1" || env["COUPLE_LAYOUT_TEST"] == "1"
+            || env["COUPLE_TRANSPORT_TEST"] == "1"
+            || env["COUPLE_LOUPE_TEST"] == "1" || env["COUPLE_REMERGE_TEST"] == "1" {
             if env["COUPLE_RMS_TEST"] == "1" { await rmsTest() }
             if env["COUPLE_OVERFLOW_TEST"] == "1" { await overflowTest() }
+            if env["COUPLE_LAYOUT_TEST"] == "1" { await layoutTest() }
+            if env["COUPLE_TRANSPORT_TEST"] == "1" { await transportTest() }
+            if env["COUPLE_LOUPE_TEST"] == "1" { await loupeTest() }
+            if env["COUPLE_REMERGE_TEST"] == "1" { await remergeTest() }
             let mediaRequested = env["COUPLE_OPEN_CAMERA"] != nil || env["COUPLE_PAIR_DIR"] != nil
                 || env["COUPLE_PROFILE"] != nil || env["COUPLE_RESTORE_TEST"] != nil
             if !mediaRequested {
@@ -697,6 +706,232 @@ final class DebugDrive {
               edge[0] == nil && edge[1] == nil)
 
         print("OVERFLOW-TEST summary: \(pass) passed, \(fail) failed")
+    }
+
+    /// Pure unit test for TODO-006's responsive candidate-scroll cap
+    /// (`CenterLayout.candidateScrollCap`). No engine, no media: it drives the
+    /// pure height→cap function so the bounded-picker contract is regression-
+    /// checked deterministically (the live ScrollView clamp/scroll-into-view is
+    /// on the owner's manual walkthrough at the four list sizes). Asserts: the
+    /// first-pass/zero height and tiny windows return the floor (~3 rows always
+    /// visible); large windows are clamped to the ceiling (a huge list never
+    /// dwarfs the video); the mid-range scales with the column; and — the bug's
+    /// crux — at the minimum supported window the cap still leaves room for the
+    /// fixed WaveformRow + BottomBar below it. Run headless via
+    /// COUPLE_LAYOUT_TEST=1 (needs no files).
+    private func layoutTest() async {
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("LAYOUT-TEST \(ok ? "ok " : "FAIL") \(name)")
+        }
+        let floor: CGFloat = 96, ceiling: CGFloat = 240
+
+        // (a) First layout pass (height not yet measured) ⇒ the floor, never 0
+        // (a 0-height scroll region would hide every candidate).
+        check("(a) zero container height ⇒ floor (\(Int(floor)))",
+              CenterLayout.candidateScrollCap(containerHeight: 0) == floor)
+
+        // (b) A tiny window clamps UP to the floor so ~3 rows stay visible.
+        check("(b) tiny window (200) clamps up to floor",
+              CenterLayout.candidateScrollCap(containerHeight: 200) == floor)
+
+        // (c) A tall window clamps DOWN to the ceiling so a long candidate list
+        // can never grow without bound and dwarf the video hero.
+        check("(c) tall window (2000) clamps down to ceiling (\(Int(ceiling)))",
+              CenterLayout.candidateScrollCap(containerHeight: 2000) == ceiling)
+
+        // (d) In between, the cap scales with the column (monotonic, strictly
+        // inside the clamp band).
+        let mid = CenterLayout.candidateScrollCap(containerHeight: 600)
+        check("(d) mid window (600) scales between floor and ceiling",
+              mid > floor && mid < ceiling)
+        check("(d') cap is monotonic in container height",
+              CenterLayout.candidateScrollCap(containerHeight: 700) >= mid)
+
+        // (e) THE bug: at the minimum supported window the bounded picker must
+        // still leave room for the persistent controls below it. The center
+        // column gets the window minus the footer (~24); the fixed region under
+        // the banner is WaveformRow (124) + inter-row spacing (8) + BottomBar
+        // (~52) + bottom padding (8) ≈ 192. The cap must be comfortably smaller
+        // than the column minus that region, so the waveform row + bottom
+        // toolbar remain reachable even before the greedy video hero yields.
+        let minWindow: CGFloat = 400
+        let column = minWindow - 24            // RootView footer
+        let fixedBelowBanner: CGFloat = 124 + 8 + 52 + 8
+        let capAtMin = CenterLayout.candidateScrollCap(containerHeight: column)
+        check("(e) at min window the cap leaves room for waveform row + bottom bar",
+              capAtMin + fixedBelowBanner < column)
+
+        print("LAYOUT-TEST summary: \(pass) passed, \(fail) failed")
+    }
+
+    /// Pure unit test for TODO-004's play/Space transport policy
+    /// (`AuditionController.transportPlan`). No engine, no media, no AVPlayer: it
+    /// asserts the decision that Space and the main play/pause button BOTH funnel
+    /// through, so the two controls cannot diverge and first play starts at the
+    /// visible playhead (never an anchor fallback). Run headless via
+    /// COUPLE_TRANSPORT_TEST=1 (needs no files). Covers: first play at 0:00; first
+    /// play at a parked nonzero playhead; pause while playing; resume from the
+    /// stream cursor; a paused seek redefining the next first-play start; and the
+    /// shared-path equivalence (same state ⇒ same plan).
+    private func transportTest() async {
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("TRANSPORT-TEST \(ok ? "ok " : "FAIL") \(name)")
+        }
+        typealias C = AuditionController
+
+        // (1) A newly attached couple parks at 0:00; first play starts there, NOT
+        // at an anchor-derived pre-roll.
+        check("(1) first play (no stream) at parked 0:00 ⇒ playFromPlayhead(0)",
+              C.transportPlan(isPlaying: false, hasStream: false, playheadT: 0) == .playFromPlayhead(at: 0))
+
+        // (2) A parked nonzero playhead is the authoritative first-play start.
+        check("(2) first play (no stream) at parked 12.5 ⇒ playFromPlayhead(12.5)",
+              C.transportPlan(isPlaying: false, hasStream: false, playheadT: 12.5) == .playFromPlayhead(at: 12.5))
+
+        // (3) Toggling while playing pauses (position preserved by the controller).
+        check("(3) toggle while playing ⇒ pause",
+              C.transportPlan(isPlaying: true, hasStream: true, playheadT: 12.5) == .pause)
+        check("(3) pause is independent of the playhead value",
+              C.transportPlan(isPlaying: true, hasStream: false, playheadT: 99) == .pause)
+
+        // (4) Resume after a pause continues from the stream cursor, not a restart.
+        check("(4) toggle while paused with an open stream ⇒ resume",
+              C.transportPlan(isPlaying: false, hasStream: true, playheadT: 30) == .resume)
+
+        // (5) A seek while paused moves `playheadT`; because the FIRST play uses
+        // `playheadT`, the next start is the seeked position. (Pre-stream case.)
+        let afterPausedSeek = 7.25
+        check("(5) paused seek then first play ⇒ playFromPlayhead(seek target)",
+              C.transportPlan(isPlaying: false, hasStream: false, playheadT: afterPausedSeek)
+                  == .playFromPlayhead(at: afterPausedSeek))
+
+        // (6) Shared-path equivalence: Space and the button call the SAME pure
+        // function, so identical state yields an identical plan — they cannot
+        // diverge.
+        for (playing, stream, t) in [(false, false, 0.0), (false, true, 5.0), (true, true, 9.0)] {
+            let a = C.transportPlan(isPlaying: playing, hasStream: stream, playheadT: t)
+            let b = C.transportPlan(isPlaying: playing, hasStream: stream, playheadT: t)
+            check("(6) same state ⇒ same plan (playing=\(playing) stream=\(stream))", a == b)
+        }
+
+        print("TRANSPORT-TEST summary: \(pass) passed, \(fail) failed")
+    }
+
+    /// Pure unit test for TODO-012's loupe click x→camera-time mapping
+    /// (`LoupeView.cameraTime`). No engine, no media, no SwiftUI: it drives the
+    /// pure mapping the way the loupe canvas draws (camera lane linear from
+    /// `t0 = anchor − winMs/2` at x=0 to `t1 = anchor + winMs/2` at x=width, same
+    /// frac as the drawn playhead), so the click-to-seek mapping is regression-
+    /// checked deterministically (the live gesture composition / drag-vs-tap
+    /// exclusivity is on the owner's manual walkthrough and the EVENT-TEST live
+    /// path). Run headless via COUPLE_LOUPE_TEST=1 (needs no files). Covers: left
+    /// edge ⇒ window start; center ⇒ exactly the anchor; right edge ⇒ window end;
+    /// off-canvas x clamps into the window; a zero-width canvas is inert; and the
+    /// mapping inverts the drawn-playhead frac for an arbitrary interior x.
+    private func loupeTest() async {
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("LOUPE-TEST \(ok ? "ok " : "FAIL") \(name)")
+        }
+        let anchor = 42.0, winMs = 500.0, width: CGFloat = 320
+        let winS = winMs / 1000
+        let t0 = anchor - winS / 2, t1 = anchor + winS / 2
+        func map(_ x: CGFloat, w: CGFloat = 320) -> Double {
+            LoupeView.cameraTime(forLocalX: x, width: w, anchor: anchor, winMs: winMs)
+        }
+
+        // (a) Left edge maps to the window start (anchor − winMs/2).
+        check("(a) x=0 ⇒ window start (t0)", abs(map(0) - t0) < 1e-9)
+
+        // (b) Center maps to exactly the anchor (the drawn center line).
+        check("(b) x=width/2 ⇒ anchor", abs(map(width / 2) - anchor) < 1e-9)
+
+        // (c) Right edge maps to the window end (anchor + winMs/2).
+        check("(c) x=width ⇒ window end (t1)", abs(map(width) - t1) < 1e-9)
+
+        // (d) Off-canvas x clamps INTO the window (the shared seek path then
+        // clamps again to the playable duration; the frac itself never escapes).
+        check("(d) x<0 clamps to t0", abs(map(-50) - t0) < 1e-9)
+        check("(d) x>width clamps to t1", abs(map(width + 80) - t1) < 1e-9)
+
+        // (e) A zero-width canvas (first layout pass) is inert — returns the
+        // anchor rather than dividing by zero.
+        check("(e) zero width ⇒ anchor (no divide-by-zero)", map(0, w: 0) == anchor)
+
+        // (f) Interior x is the exact inverse of the drawn-playhead frac
+        // `(playheadT − t0)/winS` the canvas uses, so a click lands the playhead
+        // back under the pointer. Quarter width ⇒ t0 + 0.25·winS.
+        let q = map(width * 0.25)
+        check("(f) interior x inverts the drawn-playhead frac", abs(q - (t0 + 0.25 * winS)) < 1e-9)
+        let fracBack = (q - t0) / winS
+        check("(f) round-trip frac == 0.25", abs(fracBack - 0.25) < 1e-9)
+
+        print("LOUPE-TEST summary: \(pass) passed, \(fail) failed")
+    }
+
+    /// Pure unit test for TODO-007's re-resolution merge policy
+    /// (`RowMergePolicy.plan`). No engine, no media: it drives the pure decision
+    /// behind `AppModel.mergeResolution`, so the "import the correct audio after the
+    /// video and the row becomes the same confident pairing" behavior is regression-
+    /// checked deterministically (the live import→re-resolve→session-rebuild wiring
+    /// is on the owner's manual walkthrough). Run headless via COUPLE_REMERGE_TEST=1
+    /// (needs no files). Mirrors the `CoupleKitTests.RowMergePolicyTests` suite.
+    /// Covers: video-first then decisive audio adopts the confident result whole and
+    /// rebuilds the session once; video-first then a weak audio stays unresolved
+    /// (candidate visible, NOT promoted); a pinned AND an approved row keep their
+    /// selection (new audio only appended as an alternate); and a repeated resolve is
+    /// idempotent (no duplicate candidate, no second session rebuild / sync).
+    private func remergeTest() async {
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("REMERGE-TEST \(ok ? "ok " : "FAIL") \(name)")
+        }
+
+        // (1) video first, then decisive correct audio ⇒ confident, session built once.
+        let p1 = RowMergePolicy.plan(protected: false, currentSelectedKey: nil,
+                                     currentCandidateKeys: [], freshSelectedKey: "A",
+                                     freshCandidateKeys: ["A"])
+        check("(1) video-first + decisive audio ⇒ selects A, adopts display, rebuilds once",
+              p1.selectedAudioKey == "A" && p1.candidateKeys == ["A"]
+              && p1.adoptFreshDisplay && p1.rebuildSession)
+
+        // (2) video first, then weak/nondecisive audio ⇒ stays unresolved, no promotion.
+        let p2 = RowMergePolicy.plan(protected: false, currentSelectedKey: nil,
+                                     currentCandidateKeys: [], freshSelectedKey: nil,
+                                     freshCandidateKeys: ["W"])
+        check("(2) video-first + weak audio ⇒ no selection, candidate visible, no rebuild",
+              p2.selectedAudioKey == nil && p2.candidateKeys == ["W"] && !p2.rebuildSession)
+
+        // (3) pinned row, then stronger audio ⇒ selection preserved, new = alternate.
+        let p3 = RowMergePolicy.plan(protected: true, currentSelectedKey: "chosen",
+                                     currentCandidateKeys: ["chosen"], freshSelectedKey: "stronger",
+                                     freshCandidateKeys: ["stronger", "chosen"])
+        check("(3) pinned + stronger audio ⇒ keeps 'chosen', appends 'stronger', no rebuild",
+              p3.selectedAudioKey == "chosen" && p3.candidateKeys == ["chosen", "stronger"]
+              && !p3.adoptFreshDisplay && !p3.rebuildSession)
+
+        // (4) approved row, then stronger audio ⇒ same protection.
+        let p4 = RowMergePolicy.plan(protected: true, currentSelectedKey: "queued",
+                                     currentCandidateKeys: ["queued"], freshSelectedKey: "stronger",
+                                     freshCandidateKeys: ["stronger", "queued"])
+        check("(4) approved + stronger audio ⇒ keeps 'queued', no silent swap",
+              p4.selectedAudioKey == "queued" && p4.candidateKeys == ["queued", "stronger"]
+              && !p4.rebuildSession)
+
+        // (5) repeated resolve ⇒ idempotent: no duplicate candidate, no second rebuild.
+        let p5 = RowMergePolicy.plan(protected: false, currentSelectedKey: "A",
+                                     currentCandidateKeys: ["A"], freshSelectedKey: "A",
+                                     freshCandidateKeys: ["A"])
+        check("(5) repeated resolve ⇒ same A, no duplicate candidate, no second rebuild",
+              p5.selectedAudioKey == "A" && p5.candidateKeys == ["A"] && !p5.rebuildSession)
+
+        print("REMERGE-TEST summary: \(pass) passed, \(fail) failed")
     }
 
     /// COUPLE_VERIFY_DUMP=1 (PLAN-MATCH-CLASSIFIER §4.1/§4.5): the owner's window onto

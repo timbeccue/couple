@@ -529,3 +529,140 @@ struct CoupleKitTests {
         ext.free()
     }
 }
+
+// MARK: - Re-resolution merge policy (TODO-007)
+
+/// Deterministic, media-free coverage of `RowMergePolicy.plan` — the pure core of
+/// `AppModel.mergeResolution`. These lock the TODO-007 acceptance set: an
+/// unapproved/unpinned unresolved row adopts a newly decisive result wholesale
+/// (selection + candidates + session/sync); a weak candidate is surfaced without
+/// promotion; approved/pinned rows never have their selection changed silently;
+/// and repeated re-resolves never duplicate candidates or sync work. AppModel only
+/// applies the plan, so testing the plan tests the behavior at the smallest layer
+/// (the executable target's DebugDrive `COUPLE_REMERGE_TEST` mirrors these live).
+@Suite struct RowMergePolicyTests {
+    // (1) Video first, then the decisive correct audio: an unresolved (no-match /
+    //     ambiguous, nil selection) UNPINNED/UNAPPROVED row adopts the confident
+    //     result whole — the new source is selected, the display is taken fresh,
+    //     and the session is (re)built exactly once so auto-sync is queued. Equal
+    //     to a couple built fresh from the same resolution.
+    @Test func videoFirstThenDecisiveAudioAdoptsConfident() {
+        let plan = RowMergePolicy.plan(
+            protected: false,
+            currentSelectedKey: nil, currentCandidateKeys: [],
+            freshSelectedKey: "A", freshCandidateKeys: ["A"])
+        #expect(plan.selectedAudioKey == "A")
+        #expect(plan.candidateKeys == ["A"])
+        #expect(plan.adoptFreshDisplay)        // state/chip/detail become the fresh confident row
+        #expect(plan.rebuildSession)           // nil → A ⇒ build session + queue sync, once
+        #expect(plan.clearForced)
+    }
+
+    // (2) Video first, then a weak/nondecisive audio: the resolver leaves the row
+    //     unresolved (no selection), so the candidate is surfaced in the list
+    //     WITHOUT promoting the row — no selection, no session rebuild.
+    @Test func videoFirstThenWeakAudioStaysUnresolved() {
+        let plan = RowMergePolicy.plan(
+            protected: false,
+            currentSelectedKey: nil, currentCandidateKeys: [],
+            freshSelectedKey: nil, freshCandidateKeys: ["W"])
+        #expect(plan.selectedAudioKey == nil)  // never a coin-flip
+        #expect(plan.candidateKeys == ["W"])   // the weak candidate is still visible
+        #expect(plan.adoptFreshDisplay)        // takes the (still ambiguous/no-match) fresh display
+        #expect(!plan.rebuildSession)          // nil → nil ⇒ no session, no sync
+    }
+
+    // (3) A manually PINNED row, then a stronger audio arrives: the user's chosen
+    //     source is preserved; the new audio appears only as an appended alternate;
+    //     no session rebuild.
+    @Test func pinnedRowKeepsSelectionWhenStrongerAudioArrives() {
+        let plan = RowMergePolicy.plan(
+            protected: true,                              // pinned
+            currentSelectedKey: "chosen", currentCandidateKeys: ["chosen"],
+            freshSelectedKey: "stronger", freshCandidateKeys: ["stronger", "chosen"])
+        #expect(plan.selectedAudioKey == "chosen")        // selection NOT changed silently
+        #expect(plan.candidateKeys == ["chosen", "stronger"]) // existing first, new appended
+        #expect(!plan.adoptFreshDisplay)                  // display preserved
+        #expect(!plan.rebuildSession)                     // no teardown/reattach
+        #expect(!plan.clearForced)                        // a forced chip stays honest
+    }
+
+    // (4) An APPROVED row, then a stronger audio arrives: identical protection —
+    //     selection preserved, new evidence only adds an alternate.
+    @Test func approvedRowKeepsSelectionWhenStrongerAudioArrives() {
+        let plan = RowMergePolicy.plan(
+            protected: true,                              // approved
+            currentSelectedKey: "queued", currentCandidateKeys: ["queued"],
+            freshSelectedKey: "stronger", freshCandidateKeys: ["stronger", "queued"])
+        #expect(plan.selectedAudioKey == "queued")
+        #expect(plan.candidateKeys == ["queued", "stronger"])
+        #expect(!plan.rebuildSession)
+    }
+
+    // (5) Repeated resolve over the same evidence must not duplicate candidates,
+    //     sessions, or sync work. Applying the SAME fresh resolution twice: the
+    //     second application changes nothing and asks for NO session rebuild.
+    @Test func repeatedResolveIsIdempotentNoDuplicateWork() {
+        // First merge: unresolved → confident A (rebuild once).
+        let first = RowMergePolicy.plan(
+            protected: false,
+            currentSelectedKey: nil, currentCandidateKeys: [],
+            freshSelectedKey: "A", freshCandidateKeys: ["A"])
+        #expect(first.rebuildSession)
+        // Second merge with the SAME resolution, now from the post-first state.
+        let second = RowMergePolicy.plan(
+            protected: false,
+            currentSelectedKey: first.selectedAudioKey, currentCandidateKeys: first.candidateKeys,
+            freshSelectedKey: "A", freshCandidateKeys: ["A"])
+        #expect(second.selectedAudioKey == "A")
+        #expect(second.candidateKeys == ["A"])   // no duplicate candidate
+        #expect(!second.rebuildSession)          // same source ⇒ no re-teardown / no re-sync
+
+        // Protected idempotency: re-applying a fully-known fresh set appends nothing.
+        let pinnedAgain = RowMergePolicy.plan(
+            protected: true,
+            currentSelectedKey: "chosen", currentCandidateKeys: ["chosen", "stronger"],
+            freshSelectedKey: "stronger", freshCandidateKeys: ["stronger", "chosen"])
+        #expect(pinnedAgain.candidateKeys == ["chosen", "stronger"]) // unchanged, no dupes
+        #expect(!pinnedAgain.rebuildSession)
+    }
+
+    // Extra invariants behind the five scenarios.
+
+    // An unprotected re-pick to a DIFFERENT source rebuilds the session once and
+    // swaps the selection (e.g. a better take supersedes a provisional auto-pick).
+    @Test func unprotectedRepickSwapsSelectionOnce() {
+        let plan = RowMergePolicy.plan(
+            protected: false,
+            currentSelectedKey: "old", currentCandidateKeys: ["old", "new"],
+            freshSelectedKey: "new", freshCandidateKeys: ["new", "old"])
+        #expect(plan.selectedAudioKey == "new")
+        #expect(plan.candidateKeys == ["new", "old"]) // unprotected takes fresh order
+        #expect(plan.rebuildSession)
+    }
+
+    // A confident unprotected row that re-resolves to AMBIGUOUS (selection lost,
+    // e.g. a rival take now muddies it) drops the session exactly once.
+    @Test func unprotectedConfidentToAmbiguousTearsDownOnce() {
+        let plan = RowMergePolicy.plan(
+            protected: false,
+            currentSelectedKey: "A", currentCandidateKeys: ["A"],
+            freshSelectedKey: nil, freshCandidateKeys: ["A", "B"])
+        #expect(plan.selectedAudioKey == nil)
+        #expect(plan.candidateKeys == ["A", "B"])
+        #expect(plan.rebuildSession)   // A → nil ⇒ tear the session down (once)
+    }
+
+    // A protected row whose fresh resolution re-picks the SAME already-known source
+    // appends nothing and never rebuilds — the common "re-import unrelated file"
+    // case must be free.
+    @Test func protectedNoOpWhenNothingNew() {
+        let plan = RowMergePolicy.plan(
+            protected: true,
+            currentSelectedKey: "chosen", currentCandidateKeys: ["chosen", "alt"],
+            freshSelectedKey: "chosen", freshCandidateKeys: ["chosen", "alt"])
+        #expect(plan.candidateKeys == ["chosen", "alt"])
+        #expect(!plan.adoptFreshDisplay)
+        #expect(!plan.rebuildSession)
+    }
+}

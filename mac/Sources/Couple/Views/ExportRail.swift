@@ -148,18 +148,28 @@ private struct ExportRowView: View {
         .help(couple.video.name)
     }
 
+    // Width reserved for the status column so the filename baseline never shifts
+    // as a row moves between idle/queued (empty), running, done, and failed.
+    private static let statusColumnWidth: CGFloat = 12
+
+    // TODO-008: idle and pre-run queued rows carry no status info, so they render
+    // nothing — but the column keeps its width so filenames stay aligned when a
+    // progress spinner, success check, or failure icon later appears.
     @ViewBuilder
     private var statusIcon: some View {
-        switch couple.exportStatus {
-        case .idle, .queued:
-            Image(systemName: "circle").font(.system(size: 9)).foregroundStyle(Theme.textTertiary)
-        case .running(let f):
-            ProgressView(value: f).controlSize(.mini).frame(width: 12)
-        case .done:
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.good)
-        case .failed:
-            Image(systemName: "exclamationmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.bad)
+        Group {
+            switch couple.exportStatus {
+            case .idle, .queued:
+                Color.clear
+            case .running(let f):
+                ProgressView(value: f).controlSize(.mini)
+            case .done:
+                Image(systemName: "checkmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.good)
+            case .failed:
+                Image(systemName: "exclamationmark.circle.fill").font(.system(size: 9)).foregroundStyle(Theme.bad)
+            }
         }
+        .frame(width: Self.statusColumnWidth)
     }
 }
 

@@ -8,8 +8,33 @@
 import CoupleKit
 import SwiftUI
 
+/// Pure center-column layout math, kept out of the SwiftUI `View` so it emits a
+/// stable, linkable symbol the layout fixture (`DebugDrive.layoutTest`) can call.
+enum CenterLayout {
+    /// Responsive cap (pt) for the resolve banner's *candidate* scroll region
+    /// (TODO-006). Pure + deterministic so the layout fixture can assert it.
+    ///
+    /// The banner's title/reason and the candidate list live inside the greedy
+    /// center stack, *above* the fixed WaveformRow (124) + BottomBar (~52) that
+    /// must stay reachable. We therefore let candidates take only a modest
+    /// fraction of the column and clamp it: the floor keeps ~3 rows visible even
+    /// on a tiny window; the ceiling stops a huge list from dwarfing the video
+    /// on a tall one. `containerHeight == 0` (first layout pass) uses the floor.
+    static func candidateScrollCap(containerHeight: CGFloat) -> CGFloat {
+        let floor: CGFloat = 96   // ~3 candidate rows — never less, even at min height
+        let ceiling: CGFloat = 240
+        guard containerHeight > 0 else { return floor }
+        return min(ceiling, max(floor, containerHeight * 0.28))
+    }
+}
+
 struct CenterColumn: View {
     @Environment(AppModel.self) private var model
+
+    /// Live center-column height, captured so the resolve banner's candidate
+    /// scroll cap can shrink at small windows (TODO-006) and keep the waveform
+    /// row + bottom toolbar reachable at the minimum supported height.
+    @State private var containerHeight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: 8) {
@@ -20,7 +45,8 @@ struct CenterColumn: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity) // greedy
 
             if let couple = model.selectedCouple, couple.needsResolve {
-                ResolveBanner(couple: couple)
+                ResolveBanner(couple: couple,
+                              candidateMaxHeight: CenterLayout.candidateScrollCap(containerHeight: containerHeight))
             }
 
             if model.selectedCouple?.pair.session != nil {
@@ -39,6 +65,10 @@ struct CenterColumn: View {
         .padding(.top, 26) // traffic-light clearance
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(GeometryReader { geo in
+            Color.clear.onAppear { containerHeight = geo.size.height }
+                .onChange(of: geo.size.height) { _, h in containerHeight = h }
+        })
     }
 
     private var loupeStackHeight: CGFloat {
@@ -213,6 +243,14 @@ private struct BottomBar: View {
 private struct ResolveBanner: View {
     @Environment(AppModel.self) private var model
     let couple: CoupleRow
+    /// Responsive cap for the candidate scroll region (TODO-006); the title and
+    /// reason above it stay fixed and always visible.
+    let candidateMaxHeight: CGFloat
+
+    /// Measured natural height of the candidate list, so a short list sizes to
+    /// its content (no empty filler, no needless scrollbar) while a long list is
+    /// clamped to `candidateMaxHeight` and scrolls internally.
+    @State private var candidatesContentHeight: CGFloat = 0
 
     private var maxZ: Double { max(couple.candidates.map(\.z).max() ?? 1, 1) }
 
@@ -233,9 +271,7 @@ private struct ResolveBanner: View {
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.textTertiary)
             } else {
-                ForEach(couple.candidates) { cand in
-                    candidateRow(cand)
-                }
+                candidateList
             }
             // Boundary-9 (§14.4): the OBSERVATIONAL spectral shadow evidence appears ONLY in this
             // existing diagnostic disclosure (never in a normal queue row), and ONLY when the owner
@@ -250,6 +286,54 @@ private struct ResolveBanner: View {
         .background(Theme.verdictColor(couple.verdict).opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8)
             .strokeBorder(Theme.verdictColor(couple.verdict).opacity(0.3)))
+    }
+
+    /// The candidate picker (TODO-006): a height-bounded internal scroll region
+    /// so a large source list can never push the waveform row + bottom toolbar
+    /// off screen. The title/reason above stay fixed. A short list sizes to its
+    /// content (no filler, no scrollbar); a long list clamps to
+    /// `candidateMaxHeight` and scrolls. The current selection is scrolled into
+    /// view when the banner opens or the selection changes. Ordering/colors/
+    /// selection semantics are unchanged — only the container is bounded.
+    private var candidateList: some View {
+        // Natural height when it fits; otherwise the responsive cap.
+        let height = candidatesContentHeight > 0
+            ? min(candidatesContentHeight, candidateMaxHeight)
+            : candidateMaxHeight
+        return ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(couple.candidates) { cand in
+                        candidateRow(cand)
+                            .id(cand.audioKey)   // stable id for scroll-to-selection
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(GeometryReader { geo in
+                    Color.clear
+                        .onAppear { candidatesContentHeight = geo.size.height }
+                        .onChange(of: geo.size.height) { _, h in candidatesContentHeight = h }
+                })
+            }
+            .frame(height: height)
+            // Hide the scrollbar when the list fits; show it only when clamped.
+            .scrollIndicators(candidatesContentHeight > candidateMaxHeight ? .automatic : .hidden)
+            .onAppear { scrollToSelection(proxy) }
+            .onChange(of: couple.selectedAudioKey) { _, _ in scrollToSelection(proxy) }
+            .onChange(of: couple.id) { _, _ in scrollToSelection(proxy) }
+        }
+    }
+
+    /// Bring the current selection into view (centered). Falls back to the first
+    /// candidate so a no-selection ambiguous row opens at the top of the list.
+    private func scrollToSelection(_ proxy: ScrollViewProxy) {
+        let target = couple.selectedAudioKey ?? couple.candidates.first?.audioKey
+        guard let target else { return }
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.15)) {
+                proxy.scrollTo(target, anchor: .center)
+            }
+        }
     }
 
     /// Diagnostic-disclosure-only spectral shadow read-out (§14.2/§14.4). One line per audio,
