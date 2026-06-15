@@ -772,18 +772,83 @@ pub unsafe extern "C" fn cpl_export_start(
 
 // ---------- pairing (SPEC-V2 §4, Phase 7) ----------
 
+/// Decode `PairingParams` for the `*_params` pairing symbols (PLAN-AUDIO-MATCHING-PREWORK
+/// §6.7). null or empty `params_json` ⇒ `PairingParams::default()`; malformed JSON or a
+/// value that fails `validate()` ⇒ `InvalidArgument` (sets the thread-local last-error and
+/// returns `None`, so the caller returns null). Every parameterized entry validates before
+/// doing work.
+unsafe fn pairing_params_or_error(params_json: *const c_char) -> Option<couple_core::PairingParams> {
+    let params = if params_json.is_null() {
+        couple_core::PairingParams::default()
+    } else {
+        let raw = CStr::from_ptr(params_json).to_string_lossy();
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            couple_core::PairingParams::default()
+        } else {
+            match serde_json::from_str(trimmed) {
+                Ok(p) => p,
+                Err(e) => {
+                    set_error(&couple_core::CoupleError::invalid(format!("pairing params: {e}")));
+                    return None;
+                }
+            }
+        }
+    };
+    if let Err(e) = params.validate() {
+        set_error(&e);
+        return None;
+    }
+    Some(params)
+}
+
+/// Default `PairingParams` as JSON (PLAN-AUDIO-MATCHING-PREWORK §6.7) — the single source of
+/// pairing/verifier defaults that CLI and Swift read instead of hardcoding copies. Free with
+/// cpl_string_free.
+#[no_mangle]
+pub extern "C" fn cpl_pairing_params_default_json() -> *mut c_char {
+    to_cstring(serde_json::to_string(&couple_core::PairingParams::default()).unwrap())
+}
+
 /// Role-agnostic stage-1 correlation between any two imported tracks (SPEC-V2 §3.2).
 /// Returns PairCorrelation JSON (`{"z","lagMs","ncc","fineNcc","overlapBins",
-/// "runnerUpZ","refined","insufficientOverlap"}`); lag convention: content at time t
-/// in track_a occurs at t + lagMs/1000 in track_b. Default SyncParams (Z_MIN 8.5).
-/// Null on error; free with cpl_string_free.
+/// "runnerUpZ","refined","insufficientOverlap","legacyCandidate","prefilterCandidate"}`);
+/// `legacyCandidate` = z >= legacyZMin (default resolver gate), `prefilterCandidate` =
+/// ncc >= refineNccMin (flag-ON pre-filter) — both core-computed (§7.2). Lag convention:
+/// content at time t in track_a occurs at t + lagMs/1000 in track_b. Default PairingParams
+/// (legacy z 8.5). Null on error; free with cpl_string_free.
 #[no_mangle]
 pub extern "C" fn cpl_pair_correlate(ctx: u64, track_a: u64, track_b: u64) -> *mut c_char {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
     };
-    match ctx.pair_correlate(track_a, track_b, &Default::default()) {
+    match ctx.pair_correlate(track_a, track_b, &couple_core::PairingParams::default()) {
+        Ok(r) => to_cstring(serde_json::to_string(&r).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// As `cpl_pair_correlate` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
+/// malformed/invalid ⇒ InvalidArgument). Additive — no ABI bump. Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_pair_correlate_params(
+    ctx: u64,
+    track_a: u64,
+    track_b: u64,
+    params_json: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    let Some(params) = pairing_params_or_error(params_json) else {
+        return std::ptr::null_mut();
+    };
+    match ctx.pair_correlate(track_a, track_b, &params) {
         Ok(r) => to_cstring(serde_json::to_string(&r).unwrap()),
         Err(e) => {
             set_error(&e);
@@ -813,13 +878,222 @@ pub unsafe extern "C" fn cpl_pair_candidates(
     }
     let vs = std::slice::from_raw_parts(videos, n_videos);
     let aus = std::slice::from_raw_parts(audios, n_audios);
-    match ctx.pair_candidates(vs, aus, &Default::default()) {
+    match ctx.pair_candidates(vs, aus, &couple_core::PairingParams::default()) {
         Ok(m) => to_cstring(serde_json::to_string(&m).unwrap()),
         Err(e) => {
             set_error(&e);
             std::ptr::null_mut()
         }
     }
+}
+
+/// As `cpl_pair_candidates` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
+/// malformed/invalid ⇒ InvalidArgument). Additive — no ABI bump. Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_pair_candidates_params(
+    ctx: u64,
+    videos: *const u64,
+    n_videos: usize,
+    audios: *const u64,
+    n_audios: usize,
+    params_json: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    if (videos.is_null() && n_videos > 0) || (audios.is_null() && n_audios > 0) {
+        set_error(&couple_core::CoupleError::invalid("null track id array"));
+        return std::ptr::null_mut();
+    }
+    let Some(params) = pairing_params_or_error(params_json) else {
+        return std::ptr::null_mut();
+    };
+    let vs = std::slice::from_raw_parts(videos, n_videos);
+    let aus = std::slice::from_raw_parts(audios, n_audios);
+    match ctx.pair_candidates(vs, aus, &params) {
+        Ok(m) => to_cstring(serde_json::to_string(&m).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Method-neutral evidence for ONE candidate (video=`track_a`, audio=`track_b`) pair
+/// (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.1). Returns a single `PairEvidence` JSON object
+/// (`{"method","classification","lagMs","driftPpm","score","runnerUpScore","scoreMargin",
+/// "support","candidateCorrespondences","inlierFraction","temporalCoverage","residualRmsMs",
+/// "residualP95Ms","overlapS","refinedLagMs","refinedDriftPpm","refinedRmsMs","legacy"}`; the
+/// residual/refined fields are `null` when not applicable — NaN/Infinity is NEVER serialized, §20).
+/// The caller selects the matcher via `matcherMode` in `pairing_params_json` (the default,
+/// `legacyEnvelope`, yields `EnvelopeV1` evidence; `fingerprintShadow`/`fingerprintPrimary` run the
+/// spectral pipeline). null/empty `pairing_params_json` ⇒ `PairingParams::default()`; malformed or
+/// validate()-failing JSON ⇒ InvalidArgument. ADDITIVE — `cpl_abi_version` stays 1; the legacy
+/// `cpl_pair_correlate`/`cpl_pair_candidates` symbols are unchanged. Null on error; free with
+/// cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_match_pair(
+    ctx: u64,
+    track_a: u64,
+    track_b: u64,
+    pairing_params_json: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    let Some(params) = pairing_params_or_error(pairing_params_json) else {
+        return std::ptr::null_mut();
+    };
+    match ctx.match_pair(track_a, track_b, &params) {
+        Ok(ev) => to_cstring(serde_json::to_string(&ev).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Batch method-neutral evidence (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.1): rows = `videos`,
+/// columns = `audios`. Returns a JSON array-of-arrays of `PairEvidence` (each element the same wire
+/// form as `cpl_match_pair`). In the fingerprint modes core builds ONE audio-side inverted index for
+/// the whole batch (§5.3), not a naive per-cell matcher. null/empty `pairing_params_json` ⇒
+/// `PairingParams::default()` (`legacyEnvelope`); malformed/invalid ⇒ InvalidArgument. ADDITIVE — no
+/// ABI bump. Null on error; free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_match_candidates(
+    ctx: u64,
+    videos: *const u64,
+    n_videos: usize,
+    audios: *const u64,
+    n_audios: usize,
+    pairing_params_json: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    if (videos.is_null() && n_videos > 0) || (audios.is_null() && n_audios > 0) {
+        set_error(&couple_core::CoupleError::invalid("null track id array"));
+        return std::ptr::null_mut();
+    }
+    let Some(params) = pairing_params_or_error(pairing_params_json) else {
+        return std::ptr::null_mut();
+    };
+    let vs = std::slice::from_raw_parts(videos, n_videos);
+    let aus = std::slice::from_raw_parts(audios, n_audios);
+    match ctx.match_candidates(vs, aus, &params) {
+        Ok(m) => to_cstring(serde_json::to_string(&m).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// GRAPH-ADJUSTED batch evidence (PLAN-SPECTRAL-FINGERPRINT-MATCHING §13.4): same arguments and
+/// `PairEvidence` array-of-arrays return as `cpl_match_candidates`, but the §13 cross-device
+/// graph-consistency pass (`Ctx::match_candidates_graph`) is applied — an `Ambiguous` edge may be
+/// promoted to `Match` (or a `Match` demoted to `Ambiguous`) when independent composed affine paths
+/// close per §13.3. Boundary 13 (§13.4) made this the DEFAULT resolution input: the CLI and Swift
+/// resolvers consume this graph-adjusted matrix as the identity authority (the `legacyEnvelope`
+/// override keeps the envelope resolver). In `legacyEnvelope` mode the graph pass is a no-op and this
+/// equals `cpl_match_candidates`. ADDITIVE — `cpl_abi_version` stays 1; all existing symbols are
+/// unchanged. Null on error; free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_match_candidates_graph(
+    ctx: u64,
+    videos: *const u64,
+    n_videos: usize,
+    audios: *const u64,
+    n_audios: usize,
+    pairing_params_json: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    if (videos.is_null() && n_videos > 0) || (audios.is_null() && n_audios > 0) {
+        set_error(&couple_core::CoupleError::invalid("null track id array"));
+        return std::ptr::null_mut();
+    }
+    let Some(params) = pairing_params_or_error(pairing_params_json) else {
+        return std::ptr::null_mut();
+    };
+    let vs = std::slice::from_raw_parts(videos, n_videos);
+    let aus = std::slice::from_raw_parts(audios, n_audios);
+    match ctx.match_candidates_graph(vs, aus, &params) {
+        Ok(m) => to_cstring(serde_json::to_string(&m).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// §13.4 audio-audio SIMULTANEITY predicate over affine evidence — the core-owned check the CLI and
+/// Swift resolvers SHARE so neither shell reimplements the affine composition / closure tolerances
+/// (invariant 8). `request_json` is `{"va":{"lagMs","driftPpm"},"ab":{"lagMs","driftPpm"},
+/// "vb":{"lagMs","driftPpm"},"abClassification":"match|noMatch|ambiguous|insufficientOverlap|
+/// unavailable","coverageS":f64,"offsetTolMs":f64,"driftTolPpm":f64}` (the three legs' effective
+/// maps, the A↔B core classification, the video coverage window, and the §13.3 graph tolerances).
+/// Returns `{"closes":bool}`: true iff the A↔B edge is a `Match` AND composing V→A then A→B
+/// reproduces V→B at start/mid/end within the tolerances (`match_graph::triangle_closes`). A missing
+/// / non-positive-scale leg ⇒ `false`. PURE (no ctx); deterministic; no NaN/Infinity. Malformed JSON
+/// ⇒ InvalidArgument. Additive — no ABI bump. Null on error; free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_triangle_closes(request_json: *const c_char) -> *mut c_char {
+    use couple_core::match_graph::{triangle_closes, AffineMap, CycleResidual};
+    use couple_core::MatchClassification;
+    if request_json.is_null() {
+        set_error(&couple_core::CoupleError::invalid("triangle request JSON required"));
+        return std::ptr::null_mut();
+    }
+    let raw = unsafe { CStr::from_ptr(request_json) }.to_string_lossy();
+    let v: serde_json::Value = match serde_json::from_str(raw.trim()) {
+        Ok(v) => v,
+        Err(e) => {
+            set_error(&couple_core::CoupleError::invalid(format!("bad triangle request: {e}")));
+            return std::ptr::null_mut();
+        }
+    };
+    // Pull each leg's (lagMs, driftPpm) → an AffineMap (None when a leg or its scale is degenerate).
+    let leg = |k: &str| -> Option<AffineMap> {
+        let l = v.get(k)?;
+        let lag = l.get("lagMs")?.as_f64()?;
+        let drift = l.get("driftPpm")?.as_f64()?;
+        AffineMap::from_lag_drift(lag, drift)
+    };
+    let ab_class = match v.get("abClassification").and_then(|c| c.as_str()) {
+        Some("match") => MatchClassification::Match,
+        Some("noMatch") => MatchClassification::NoMatch,
+        Some("ambiguous") => MatchClassification::Ambiguous,
+        Some("insufficientOverlap") => MatchClassification::InsufficientOverlap,
+        Some("unavailable") => MatchClassification::Unavailable,
+        _ => {
+            set_error(&couple_core::CoupleError::invalid("triangle request: bad abClassification"));
+            return std::ptr::null_mut();
+        }
+    };
+    let coverage_s = v.get("coverageS").and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let offset_tol_ms = v.get("offsetTolMs").and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let drift_tol_ppm = v.get("driftTolPpm").and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let (va, ab, vb) = (leg("va"), leg("ab"), leg("vb"));
+    let closes = triangle_closes(va, ab, vb, ab_class, coverage_s, offset_tol_ms, drift_tol_ppm);
+    // The composed start/mid/end residual MAX (ms) — the shell's calibration read-out (the affine
+    // analogue of the legacy scalar lag residual). 0.0 when a leg is missing.
+    let residual_max_ms = match (va, ab, vb) {
+        (Some(va), Some(ab), Some(vb)) => match va.compose(ab) {
+            Some(c) => {
+                let t1 = if coverage_s.is_finite() && coverage_s > 0.0 { coverage_s } else { 1.0 };
+                CycleResidual::between(&vb, &c, 0.0, t1).max_offset_ms()
+            }
+            None => 0.0,
+        },
+        _ => 0.0,
+    };
+    to_cstring(serde_json::json!({"closes": closes, "residualMaxMs": residual_max_ms}).to_string())
 }
 
 /// Per-(video, audio) drift-fit RMS for contested candidate pairs (PLAN-RMS-TIEBREAKER
@@ -845,7 +1119,43 @@ pub unsafe extern "C" fn cpl_pair_fit_batch(ctx: u64, pairs_json: *const c_char)
                 return std::ptr::null_mut();
             }
         };
-    match ctx.pair_fit_batch(&pairs, &Default::default()) {
+    match ctx.pair_fit_batch(&pairs, &couple_core::PairingParams::default()) {
+        Ok(fits) => to_cstring(serde_json::to_string(&fits).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// As `cpl_pair_fit_batch` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
+/// malformed/invalid ⇒ InvalidArgument). Additive — no ABI bump. Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_pair_fit_batch_params(
+    ctx: u64,
+    pairs_json: *const c_char,
+    params_json: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    if pairs_json.is_null() {
+        set_error(&couple_core::CoupleError::invalid("null pairs_json"));
+        return std::ptr::null_mut();
+    }
+    let pairs: Vec<(u64, u64, f64)> =
+        match serde_json::from_str(&CStr::from_ptr(pairs_json).to_string_lossy()) {
+            Ok(p) => p,
+            Err(e) => {
+                set_error(&couple_core::CoupleError::invalid(format!("pairs: {e}")));
+                return std::ptr::null_mut();
+            }
+        };
+    let Some(params) = pairing_params_or_error(params_json) else {
+        return std::ptr::null_mut();
+    };
+    match ctx.pair_fit_batch(&pairs, &params) {
         Ok(fits) => to_cstring(serde_json::to_string(&fits).unwrap()),
         Err(e) => {
             set_error(&e);
@@ -879,7 +1189,44 @@ pub unsafe extern "C" fn cpl_verify_batch(ctx: u64, pairs_json: *const c_char) -
                 return std::ptr::null_mut();
             }
         };
-    match ctx.verify_batch(&pairs, &Default::default()) {
+    match ctx.verify_batch(&pairs, &couple_core::PairingParams::default()) {
+        Ok(fits) => to_cstring(serde_json::to_string(&fits).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// As `cpl_verify_batch` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
+/// malformed/invalid ⇒ InvalidArgument). Additive — no ABI bump (`cpl_abi_version` stays 1).
+/// Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_verify_batch_params(
+    ctx: u64,
+    pairs_json: *const c_char,
+    params_json: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    if pairs_json.is_null() {
+        set_error(&couple_core::CoupleError::invalid("null pairs_json"));
+        return std::ptr::null_mut();
+    }
+    let pairs: Vec<(u64, u64, f64)> =
+        match serde_json::from_str(&CStr::from_ptr(pairs_json).to_string_lossy()) {
+            Ok(p) => p,
+            Err(e) => {
+                set_error(&couple_core::CoupleError::invalid(format!("pairs: {e}")));
+                return std::ptr::null_mut();
+            }
+        };
+    let Some(params) = pairing_params_or_error(params_json) else {
+        return std::ptr::null_mut();
+    };
+    match ctx.verify_batch(&pairs, &params) {
         Ok(fits) => to_cstring(serde_json::to_string(&fits).unwrap()),
         Err(e) => {
             set_error(&e);
@@ -904,9 +1251,426 @@ pub extern "C" fn cpl_cache_gc(ctx: u64, max_bytes: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    /// Consume a core-allocated C string into an owned `String` (or None if null).
+    fn take(p: *mut c_char) -> Option<String> {
+        if p.is_null() {
+            return None;
+        }
+        let s = unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() };
+        unsafe { cpl_string_free(p) };
+        Some(s)
+    }
+
     #[test]
     fn abi_version_is_one() {
-        assert_eq!(super::cpl_abi_version(), 1);
+        assert_eq!(cpl_abi_version(), 1);
+    }
+
+    // §6.7: the default-params JSON is the single source of truth and round-trips back to
+    // `PairingParams::default()` (what CLI/Swift decode instead of hardcoding copies). After
+    // boundary 13 the default is FingerprintPrimary + profile 2, but the round-trip identity holds.
+    #[test]
+    fn pairing_params_default_json_round_trips() {
+        let s = take(cpl_pairing_params_default_json()).expect("default json");
+        let p: couple_core::PairingParams = serde_json::from_str(&s).unwrap();
+        assert_eq!(p, couple_core::PairingParams::default());
+        // Boundary 13: the default carries the fingerprint-primary mode + the frozen profile 2.
+        assert!(s.contains("\"matcherMode\":\"fingerprintPrimary\""), "default JSON mode: {s}");
+        assert!(s.contains("\"thresholdProfileVersion\":2"), "default JSON profile: {s}");
+    }
+
+    // §13.4: cpl_triangle_closes shares the core simultaneity predicate (the CLI + Swift resolvers
+    // call it; no shell reimplements the affine composition). A consistent geometry + a `match` A↔B
+    // closes; a non-match A↔B or a large composed residual does not. No ctx/media needed (pure).
+    #[test]
+    fn triangle_closes_predicate() {
+        // V=0, A=0.3, B=1.0 s ⇒ V→A = -300 ms, V→B = -1000 ms, A→B = -700 ms. Consistent + match.
+        let ok = CString::new(
+            r#"{"va":{"lagMs":-300,"driftPpm":0},"ab":{"lagMs":-700,"driftPpm":0},
+                "vb":{"lagMs":-1000,"driftPpm":0},"abClassification":"match",
+                "coverageS":600,"offsetTolMs":100,"driftTolPpm":150}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_triangle_closes(ok.as_ptr()) }).expect("triangle json");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["closes"], serde_json::json!(true), "consistent + match ⇒ closes: {r}");
+        assert!(v["residualMaxMs"].as_f64().unwrap() < 1.0, "residual ~0: {r}");
+
+        // NoMatch A↔B ⇒ does NOT close (core classification is the identity authority).
+        let nm = CString::new(
+            r#"{"va":{"lagMs":-300,"driftPpm":0},"ab":{"lagMs":-700,"driftPpm":0},
+                "vb":{"lagMs":-1000,"driftPpm":0},"abClassification":"noMatch",
+                "coverageS":600,"offsetTolMs":100,"driftTolPpm":150}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_triangle_closes(nm.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["closes"], serde_json::json!(false), "noMatch A↔B ⇒ not simultaneous: {r}");
+
+        // A→B off by 300 ms ⇒ composed residual exceeds the 100 ms tol ⇒ does NOT close.
+        let off = CString::new(
+            r#"{"va":{"lagMs":-300,"driftPpm":0},"ab":{"lagMs":-400,"driftPpm":0},
+                "vb":{"lagMs":-1000,"driftPpm":0},"abClassification":"match",
+                "coverageS":600,"offsetTolMs":100,"driftTolPpm":150}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_triangle_closes(off.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["closes"], serde_json::json!(false), "300 ms residual ⇒ does not close: {r}");
+        assert!(v["residualMaxMs"].as_f64().unwrap() > 100.0, "residual surfaced: {r}");
+
+        // Malformed JSON ⇒ null + last-error (InvalidArgument).
+        let bad = CString::new("{not json").unwrap();
+        assert!(take(unsafe { cpl_triangle_closes(bad.as_ptr()) }).is_none(), "malformed ⇒ null");
+    }
+
+    // §6.8.3: an old pairing symbol's output equals the new `*_params` symbol with null
+    // params (both use defaults). Exercised on empty pairs so the param plumbing is the SUT,
+    // no media/ffmpeg needed.
+    #[test]
+    fn old_symbol_equals_new_with_null_params() {
+        let ctx = unsafe { cpl_ctx_new(std::ptr::null()) };
+        assert_ne!(ctx, 0);
+        let empty = CString::new("[]").unwrap();
+
+        let old_v = take(unsafe { cpl_verify_batch(ctx, empty.as_ptr()) }).unwrap();
+        let new_v =
+            take(unsafe { cpl_verify_batch_params(ctx, empty.as_ptr(), std::ptr::null()) }).unwrap();
+        assert_eq!(old_v, new_v, "verify_batch old vs new(null) must match");
+        assert_eq!(new_v, "[]");
+
+        let old_f = take(unsafe { cpl_pair_fit_batch(ctx, empty.as_ptr()) }).unwrap();
+        let new_f =
+            take(unsafe { cpl_pair_fit_batch_params(ctx, empty.as_ptr(), std::ptr::null()) }).unwrap();
+        assert_eq!(old_f, new_f, "pair_fit_batch old vs new(null) must match");
+
+        cpl_ctx_free(ctx);
+    }
+
+    // §6.7: malformed JSON and a value failing validate() are both InvalidArgument (null
+    // result + last-error set); a VALID override is accepted (empty pairs ⇒ "[]").
+    #[test]
+    fn params_malformed_and_invalid_rejected() {
+        let ctx = unsafe { cpl_ctx_new(std::ptr::null()) };
+        let empty = CString::new("[]").unwrap();
+
+        let bad = CString::new("{not json").unwrap();
+        let r = unsafe { cpl_verify_batch_params(ctx, empty.as_ptr(), bad.as_ptr()) };
+        assert!(r.is_null(), "malformed params must yield null");
+        assert!(take(cpl_take_error_json(ctx)).is_some(), "last-error set on malformed");
+
+        let invalid = CString::new(r#"{"verifyRmsMaxMs": -1}"#).unwrap();
+        let r = unsafe { cpl_verify_batch_params(ctx, empty.as_ptr(), invalid.as_ptr()) };
+        assert!(r.is_null(), "value failing validate() must yield null");
+        assert!(take(cpl_take_error_json(ctx)).is_some(), "last-error set on invalid");
+
+        let okp = CString::new(r#"{"verifyRmsMaxMs": 7.5}"#).unwrap();
+        let r = take(unsafe { cpl_verify_batch_params(ctx, empty.as_ptr(), okp.as_ptr()) });
+        assert_eq!(r.as_deref(), Some("[]"), "valid override accepted");
+
+        cpl_ctx_free(ctx);
+    }
+
+    // ---- §14.1 cpl_match_pair / cpl_match_candidates ----
+
+    // §14.1 PLUMBING (no media): an empty batch returns "[]"; null params ⇒ default mode;
+    // malformed/invalid params ⇒ InvalidArgument (null + last-error). Mirrors the prework
+    // *_params convention and is the SUT for the new evidence symbols' parameter handling.
+    #[test]
+    fn match_candidates_param_plumbing() {
+        let ctx = unsafe { cpl_ctx_new(std::ptr::null()) };
+        assert_ne!(ctx, 0);
+
+        // Empty V×A batch with null params (⇒ the boundary-13 default FingerprintPrimary) ⇒ "[]".
+        let r = take(unsafe {
+            cpl_match_candidates(ctx, std::ptr::null(), 0, std::ptr::null(), 0, std::ptr::null())
+        });
+        assert_eq!(r.as_deref(), Some("[]"), "empty batch ⇒ []");
+
+        // Empty batch + a VALID shadow-mode override ⇒ still "[]" (param accepted, no work).
+        let shadow = CString::new(r#"{"matcherMode":"fingerprintShadow"}"#).unwrap();
+        let r = take(unsafe {
+            cpl_match_candidates(ctx, std::ptr::null(), 0, std::ptr::null(), 0, shadow.as_ptr())
+        });
+        assert_eq!(r.as_deref(), Some("[]"), "valid shadow override accepted");
+
+        // Malformed JSON ⇒ InvalidArgument (null + last-error).
+        let bad = CString::new("{not json").unwrap();
+        let r = unsafe {
+            cpl_match_candidates(ctx, std::ptr::null(), 0, std::ptr::null(), 0, bad.as_ptr())
+        };
+        assert!(r.is_null(), "malformed params ⇒ null");
+        assert!(take(cpl_take_error_json(ctx)).is_some(), "last-error set on malformed");
+
+        // A value that fails validate() ⇒ InvalidArgument.
+        let invalid = CString::new(r#"{"minOverlapS": -1}"#).unwrap();
+        let r = unsafe {
+            cpl_match_candidates(ctx, std::ptr::null(), 0, std::ptr::null(), 0, invalid.as_ptr())
+        };
+        assert!(r.is_null(), "validate()-failing params ⇒ null");
+        assert!(take(cpl_take_error_json(ctx)).is_some(), "last-error set on invalid");
+
+        cpl_ctx_free(ctx);
+    }
+
+    // §13.4 PLUMBING: the additive graph symbol mirrors cpl_match_candidates' parameter handling —
+    // empty batch ⇒ "[]" (with null and a valid shadow override), malformed/invalid ⇒ null + error.
+    #[test]
+    fn match_candidates_graph_param_plumbing() {
+        let ctx = unsafe { cpl_ctx_new(std::ptr::null()) };
+        assert_ne!(ctx, 0);
+
+        let r = take(unsafe {
+            cpl_match_candidates_graph(ctx, std::ptr::null(), 0, std::ptr::null(), 0, std::ptr::null())
+        });
+        assert_eq!(r.as_deref(), Some("[]"), "empty graph batch ⇒ []");
+
+        let shadow = CString::new(r#"{"matcherMode":"fingerprintShadow"}"#).unwrap();
+        let r = take(unsafe {
+            cpl_match_candidates_graph(ctx, std::ptr::null(), 0, std::ptr::null(), 0, shadow.as_ptr())
+        });
+        assert_eq!(r.as_deref(), Some("[]"), "valid shadow override accepted by graph symbol");
+
+        let bad = CString::new("{not json").unwrap();
+        let r = unsafe {
+            cpl_match_candidates_graph(ctx, std::ptr::null(), 0, std::ptr::null(), 0, bad.as_ptr())
+        };
+        assert!(r.is_null(), "malformed params ⇒ null");
+        assert!(take(cpl_take_error_json(ctx)).is_some(), "last-error set on malformed");
+
+        cpl_ctx_free(ctx);
+    }
+
+    // §14.1 END-TO-END through the C ABI on a synthetic pair: import a deterministic mono-48k WAV
+    // pair (B = A shifted by a known offset) THROUGH the FFI, then drive the new evidence symbols.
+    // Proves: cpl_match_pair (shadow) returns well-formed PairEvidence JSON (parses back into the
+    // core type) with NO NaN/Infinity (§20) and is DETERMINISTIC across calls; null params ⇒ the
+    // default LegacyEnvelope path (method "envelopeV1"); cpl_match_candidates returns the V×A matrix
+    // and its [0][0] cell is byte-identical to the single cpl_match_pair; and the OLD cpl_pair_*
+    // symbols still work unchanged on the same handles (§3 invariant 4, §14.1).
+    #[test]
+    fn match_pair_and_candidates_end_to_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let cam = dir.path().join("cam.wav");
+        let ext = dir.path().join("ext.wav");
+        write_pair_wavs(&cam, &ext);
+
+        let cfg = CString::new(
+            serde_json::json!({ "cacheDir": dir.path().join("cache").to_str().unwrap() }).to_string(),
+        )
+        .unwrap();
+        let ctx = unsafe { cpl_ctx_new(cfg.as_ptr()) };
+        assert_ne!(ctx, 0);
+
+        let v = import_blocking_ffi(ctx, &cam, 0);
+        let a = import_blocking_ffi(ctx, &ext, 1);
+
+        // --- cpl_match_pair, shadow mode: valid PairEvidence JSON, no NaN/Inf, deterministic. ---
+        let shadow = CString::new(r#"{"matcherMode":"fingerprintShadow"}"#).unwrap();
+        let s1 = take(unsafe { cpl_match_pair(ctx, v, a, shadow.as_ptr()) })
+            .expect("shadow match_pair JSON");
+        assert_no_nan_inf(&s1);
+        let ev1: couple_core::PairEvidence = serde_json::from_str(&s1).expect("parse PairEvidence");
+        assert_eq!(
+            ev1.method,
+            couple_core::MatchMethod::SpectralLandmarkV1,
+            "shadow ⇒ spectral method"
+        );
+        // The wire is camelCase and the non-applicable residual/refined fields serialize as null,
+        // never NaN/Infinity (covered by assert_no_nan_inf above).
+        assert!(s1.contains("\"method\":\"spectralLandmarkV1\""), "wire: {s1}");
+        // Determinism: a second identical call serializes byte-identically.
+        let s1b = take(unsafe { cpl_match_pair(ctx, v, a, shadow.as_ptr()) }).unwrap();
+        assert_eq!(s1, s1b, "cpl_match_pair must be deterministic");
+
+        // --- BOUNDARY 13: null params ⇒ the new DEFAULT FingerprintPrimary (method spectralLandmarkV1). ---
+        let s_default = take(unsafe { cpl_match_pair(ctx, v, a, std::ptr::null()) })
+            .expect("null-params match_pair JSON");
+        assert_no_nan_inf(&s_default);
+        let ev_default: couple_core::PairEvidence = serde_json::from_str(&s_default).unwrap();
+        assert_eq!(
+            ev_default.method,
+            couple_core::MatchMethod::SpectralLandmarkV1,
+            "boundary 13: null params ⇒ default FingerprintPrimary ⇒ spectralLandmarkV1"
+        );
+        // --- The DEVELOPER OVERRIDE `{"matcherMode":"legacyEnvelope"}` still forces envelopeV1 (§16.1). ---
+        let legacy_override = CString::new(r#"{"matcherMode":"legacyEnvelope"}"#).unwrap();
+        let s_legacy = take(unsafe { cpl_match_pair(ctx, v, a, legacy_override.as_ptr()) })
+            .expect("legacy-override match_pair JSON");
+        let ev_legacy: couple_core::PairEvidence = serde_json::from_str(&s_legacy).unwrap();
+        assert_eq!(
+            ev_legacy.method,
+            couple_core::MatchMethod::EnvelopeV1,
+            "the legacyEnvelope developer override forces envelopeV1 (§16.1)"
+        );
+
+        // --- cpl_match_candidates: 1×1 matrix; its [0][0] agrees with the single match_pair on the
+        // decision-bearing fields (method/classification/lag), and the symbol is itself deterministic
+        // run-to-run. (Exact cross-API byte-equality of the spectral path on REAL media is proven by
+        // core/tests/matching_evidence.rs; we do not re-assert it here, where the FFT over a purely
+        // synthetic signal can differ in the last ULP of quality telemetry without changing any
+        // decision — §3.2 determinism is the per-API run-to-run property, asserted below.) ---
+        let vids = [v];
+        let auds = [a];
+        let mat = take(unsafe {
+            cpl_match_candidates(ctx, vids.as_ptr(), 1, auds.as_ptr(), 1, shadow.as_ptr())
+        })
+        .expect("match_candidates JSON");
+        assert_no_nan_inf(&mat);
+        let matrix: Vec<Vec<couple_core::PairEvidence>> =
+            serde_json::from_str(&mat).expect("parse evidence matrix");
+        assert_eq!(matrix.len(), 1, "one video row");
+        assert_eq!(matrix[0].len(), 1, "one audio column");
+        let cell = &matrix[0][0];
+        assert_eq!(cell.method, ev1.method, "matrix cell method matches match_pair");
+        assert_eq!(
+            cell.classification, ev1.classification,
+            "matrix cell classification matches match_pair"
+        );
+        assert!(
+            (cell.lag_ms - ev1.lag_ms).abs() < 1e-6,
+            "matrix cell lag {} matches match_pair lag {}",
+            cell.lag_ms,
+            ev1.lag_ms
+        );
+        // The batch symbol is itself deterministic run-to-run (§3.2).
+        let mat_b = take(unsafe {
+            cpl_match_candidates(ctx, vids.as_ptr(), 1, auds.as_ptr(), 1, shadow.as_ptr())
+        })
+        .unwrap();
+        assert_eq!(mat, mat_b, "cpl_match_candidates must be deterministic");
+
+        // --- OLD symbols still work unchanged on the same handles (§14.1 / invariant 4). ---
+        let old = take(unsafe { cpl_pair_correlate(ctx, v, a) }).expect("old cpl_pair_correlate");
+        assert_no_nan_inf(&old);
+        let corr: couple_core::pair::PairCorrelation = serde_json::from_str(&old).unwrap();
+        // The legacy lag and the legacy-mode evidence lag agree (same matcher) within tolerance.
+        assert!(
+            (corr.lag_ms - ev_legacy.lag_ms).abs() < 1.0,
+            "legacy symbol lag {} vs legacy-mode evidence lag {}",
+            corr.lag_ms,
+            ev_legacy.lag_ms
+        );
+
+        cpl_ctx_free(ctx);
+    }
+
+    /// Assert a JSON string carries no NaN/Infinity token (§20). serde_json emits non-finite f64 as
+    /// `null`, which the contract scrubs at the source; this is the wire-level backstop.
+    fn assert_no_nan_inf(json: &str) {
+        for bad in ["NaN", "Infinity", "Inf"] {
+            assert!(!json.contains(bad), "evidence JSON must not contain {bad:?}: {json}");
+        }
+    }
+
+    /// Author a deterministic mono-48k WAV pair with rich aperiodic content so the spectral pipeline
+    /// finds landmarks: A is a 30 s pseudo-random broadband signal; B (40 s) is A shifted later by a
+    /// known offset (a genuine same-master excerpt). No ffmpeg — `hound` writes the PCM directly.
+    fn write_pair_wavs(cam: &Path, ext: &Path) {
+        const SR: usize = 48_000;
+        // A deterministic broadband-ish source: summed detuned sinusoids modulated by an aperiodic
+        // envelope, plus a hashed-noise term — enough spectral structure for peak/landmark selection.
+        let sample = |n: usize| -> f32 {
+            let t = n as f32 / SR as f32;
+            // Aperiodic AM envelope (irrational ratios so it never repeats over the clip).
+            let env = 0.5 + 0.5 * (0.7 * (2.0 * std::f32::consts::PI * 0.31 * t).sin()
+                + 0.3 * (2.0 * std::f32::consts::PI * 0.067 * t).sin());
+            let tone = (2.0 * std::f32::consts::PI * 440.0 * t).sin()
+                + 0.6 * (2.0 * std::f32::consts::PI * 932.0 * t).sin()
+                + 0.4 * (2.0 * std::f32::consts::PI * 1771.0 * t).sin()
+                + 0.3 * (2.0 * std::f32::consts::PI * 3119.0 * t).sin();
+            // Deterministic hashed noise term (no RNG; stable across runs/machines).
+            let h = (n as u64).wrapping_mul(2_654_435_761) ^ ((n as u64) >> 13);
+            let noise = ((h & 0xffff) as f32 / 32_768.0 - 1.0) * 0.25;
+            0.2 * env * tone + noise * env
+        };
+        let dur_a = 30 * SR;
+        let a: Vec<f32> = (0..dur_a).map(sample).collect();
+        // B = the SAME master, 40 s long, with A's content starting 2.5 s in (offset +2500 ms): B's
+        // sample m corresponds to A's sample (m - 2.5*SR). Outside A's span B is the same generator
+        // (it IS the master), so we just generate the master over [−2.5 s, 37.5 s) → write [0,40 s).
+        let shift = (2.5 * SR as f32) as i64;
+        let dur_b = 40 * SR;
+        let b: Vec<f32> = (0..dur_b)
+            .map(|m| {
+                let src = m as i64 - shift;
+                if src >= 0 {
+                    sample(src as usize)
+                } else {
+                    // Lead-in before A's start: extend the master generator to negative-equivalent n.
+                    sample((dur_a as i64 + src) as usize % dur_a)
+                }
+            })
+            .collect();
+        write_wav_mono_48k(cam, &a);
+        write_wav_mono_48k(ext, &b);
+    }
+
+    fn write_wav_mono_48k(path: &Path, samples: &[f32]) {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(path, spec).unwrap();
+        for &s in samples {
+            w.write_sample((s.clamp(-1.0, 1.0) * 32_767.0).round() as i16).unwrap();
+        }
+        w.finalize().unwrap();
+    }
+
+    /// Import a file through the C ABI and BLOCK until the job's terminal callback fires, returning
+    /// the imported track id (parsed from the "done" payload's TrackMeta JSON). This drives the real
+    /// FFI import path (registry insertion included) so the returned handle is a genuine C-ABI handle
+    /// usable by cpl_match_pair / the old cpl_pair_* symbols.
+    fn import_blocking_ffi(ctx: u64, path: &Path, role: i32) -> u64 {
+        use std::sync::mpsc;
+
+        // Channel carries the terminal payload JSON (or None on cancel/error).
+        struct Sink(mpsc::Sender<Option<String>>);
+        extern "C" fn cb(
+            _job: u64,
+            phase: *const c_char,
+            _fraction: f64,
+            payload: *const c_char,
+            user: *mut c_void,
+        ) {
+            // SAFETY: `user` is a &Sink we passed to cpl_import_start; the terminal call is the last
+            // use, after which the caller drops the sink.
+            let sink = unsafe { &*(user as *const Sink) };
+            let phase = unsafe { CStr::from_ptr(phase) }.to_string_lossy().into_owned();
+            match phase.as_str() {
+                "done" => {
+                    let p = if payload.is_null() {
+                        None
+                    } else {
+                        Some(unsafe { CStr::from_ptr(payload) }.to_string_lossy().into_owned())
+                    };
+                    let _ = sink.0.send(p);
+                }
+                "error" | "cancelled" => {
+                    let _ = sink.0.send(None);
+                }
+                _ => {} // progress; ignore
+            }
+        }
+
+        let (tx, rx) = mpsc::channel();
+        let sink = Box::new(Sink(tx));
+        let user = Box::into_raw(sink) as *mut c_void;
+        let cpath = CString::new(path.to_str().unwrap()).unwrap();
+        let job = unsafe { cpl_import_start(ctx, cpath.as_ptr(), role, Some(cb), user) };
+        assert_ne!(job, 0, "import job must start");
+        // Block for the terminal callback.
+        let payload = rx.recv().expect("import callback").expect("import succeeded");
+        // SAFETY: the terminal callback has fired and will not be invoked again; reclaim the sink.
+        drop(unsafe { Box::from_raw(user as *mut Sink) });
+        let meta: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        meta["id"].as_u64().expect("track id in import payload")
     }
 }
 

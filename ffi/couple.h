@@ -246,13 +246,32 @@ uint64_t cpl_export_start(uint64_t ctx,
                           void *user);
 
 /*
+ Default `PairingParams` as JSON (PLAN-AUDIO-MATCHING-PREWORK §6.7) — the single source of
+ pairing/verifier defaults that CLI and Swift read instead of hardcoding copies. Free with
+ cpl_string_free.
+ */
+ char *cpl_pairing_params_default_json(void);
+
+/*
  Role-agnostic stage-1 correlation between any two imported tracks (SPEC-V2 §3.2).
  Returns PairCorrelation JSON (`{"z","lagMs","ncc","fineNcc","overlapBins",
- "runnerUpZ","refined","insufficientOverlap"}`); lag convention: content at time t
- in track_a occurs at t + lagMs/1000 in track_b. Default SyncParams (Z_MIN 8.5).
- Null on error; free with cpl_string_free.
+ "runnerUpZ","refined","insufficientOverlap","legacyCandidate","prefilterCandidate"}`);
+ `legacyCandidate` = z >= legacyZMin (default resolver gate), `prefilterCandidate` =
+ ncc >= refineNccMin (flag-ON pre-filter) — both core-computed (§7.2). Lag convention:
+ content at time t in track_a occurs at t + lagMs/1000 in track_b. Default PairingParams
+ (legacy z 8.5). Null on error; free with cpl_string_free.
  */
  char *cpl_pair_correlate(uint64_t ctx, uint64_t track_a, uint64_t track_b);
+
+/*
+ As `cpl_pair_correlate` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
+ malformed/invalid ⇒ InvalidArgument). Additive — no ABI bump. Free with cpl_string_free.
+ */
+
+char *cpl_pair_correlate_params(uint64_t ctx,
+                                uint64_t track_a,
+                                uint64_t track_b,
+                                const char *params_json);
 
 /*
  Batch candidate matrix (SPEC-V2 §3.2): rows = videos, columns = audios. Returns a
@@ -267,6 +286,87 @@ char *cpl_pair_candidates(uint64_t ctx,
                           uintptr_t n_audios);
 
 /*
+ As `cpl_pair_candidates` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
+ malformed/invalid ⇒ InvalidArgument). Additive — no ABI bump. Free with cpl_string_free.
+ */
+
+char *cpl_pair_candidates_params(uint64_t ctx,
+                                 const uint64_t *videos,
+                                 uintptr_t n_videos,
+                                 const uint64_t *audios,
+                                 uintptr_t n_audios,
+                                 const char *params_json);
+
+/*
+ Method-neutral evidence for ONE candidate (video=`track_a`, audio=`track_b`) pair
+ (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.1). Returns a single `PairEvidence` JSON object
+ (`{"method","classification","lagMs","driftPpm","score","runnerUpScore","scoreMargin",
+ "support","candidateCorrespondences","inlierFraction","temporalCoverage","residualRmsMs",
+ "residualP95Ms","overlapS","refinedLagMs","refinedDriftPpm","refinedRmsMs","legacy"}`; the
+ residual/refined fields are `null` when not applicable — NaN/Infinity is NEVER serialized, §20).
+ The caller selects the matcher via `matcherMode` in `pairing_params_json` (the default,
+ `legacyEnvelope`, yields `EnvelopeV1` evidence; `fingerprintShadow`/`fingerprintPrimary` run the
+ spectral pipeline). null/empty `pairing_params_json` ⇒ `PairingParams::default()`; malformed or
+ validate()-failing JSON ⇒ InvalidArgument. ADDITIVE — `cpl_abi_version` stays 1; the legacy
+ `cpl_pair_correlate`/`cpl_pair_candidates` symbols are unchanged. Null on error; free with
+ cpl_string_free.
+ */
+
+char *cpl_match_pair(uint64_t ctx,
+                     uint64_t track_a,
+                     uint64_t track_b,
+                     const char *pairing_params_json);
+
+/*
+ Batch method-neutral evidence (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.1): rows = `videos`,
+ columns = `audios`. Returns a JSON array-of-arrays of `PairEvidence` (each element the same wire
+ form as `cpl_match_pair`). In the fingerprint modes core builds ONE audio-side inverted index for
+ the whole batch (§5.3), not a naive per-cell matcher. null/empty `pairing_params_json` ⇒
+ `PairingParams::default()` (`legacyEnvelope`); malformed/invalid ⇒ InvalidArgument. ADDITIVE — no
+ ABI bump. Null on error; free with cpl_string_free.
+ */
+
+char *cpl_match_candidates(uint64_t ctx,
+                           const uint64_t *videos,
+                           uintptr_t n_videos,
+                           const uint64_t *audios,
+                           uintptr_t n_audios,
+                           const char *pairing_params_json);
+
+/*
+ GRAPH-ADJUSTED batch evidence (PLAN-SPECTRAL-FINGERPRINT-MATCHING §13.4): same arguments and
+ `PairEvidence` array-of-arrays return as `cpl_match_candidates`, but the §13 cross-device
+ graph-consistency pass (`Ctx::match_candidates_graph`) is applied — an `Ambiguous` edge may be
+ promoted to `Match` (or a `Match` demoted to `Ambiguous`) when independent composed affine paths
+ close per §13.3. Boundary 13 (§13.4) made this the DEFAULT resolution input: the CLI and Swift
+ resolvers consume this graph-adjusted matrix as the identity authority (the `legacyEnvelope`
+ override keeps the envelope resolver). In `legacyEnvelope` mode the graph pass is a no-op and this
+ equals `cpl_match_candidates`. ADDITIVE — `cpl_abi_version` stays 1; all existing symbols are
+ unchanged. Null on error; free with cpl_string_free.
+ */
+
+char *cpl_match_candidates_graph(uint64_t ctx,
+                                 const uint64_t *videos,
+                                 uintptr_t n_videos,
+                                 const uint64_t *audios,
+                                 uintptr_t n_audios,
+                                 const char *pairing_params_json);
+
+/*
+ §13.4 audio-audio SIMULTANEITY predicate over affine evidence — the core-owned check the CLI and
+ Swift resolvers SHARE so neither shell reimplements the affine composition / closure tolerances
+ (invariant 8). `request_json` is `{"va":{"lagMs","driftPpm"},"ab":{"lagMs","driftPpm"},
+ "vb":{"lagMs","driftPpm"},"abClassification":"match|noMatch|ambiguous|insufficientOverlap|
+ unavailable","coverageS":f64,"offsetTolMs":f64,"driftTolPpm":f64}` (the three legs' effective
+ maps, the A↔B core classification, the video coverage window, and the §13.3 graph tolerances).
+ Returns `{"closes":bool}`: true iff the A↔B edge is a `Match` AND composing V→A then A→B
+ reproduces V→B at start/mid/end within the tolerances (`match_graph::triangle_closes`). A missing
+ / non-positive-scale leg ⇒ `false`. PURE (no ctx); deterministic; no NaN/Infinity. Malformed JSON
+ ⇒ InvalidArgument. Additive — no ABI bump. Null on error; free with cpl_string_free.
+ */
+ char *cpl_triangle_closes(const char *request_json);
+
+/*
  Per-(video, audio) drift-fit RMS for contested candidate pairs (PLAN-RMS-TIEBREAKER
  §4.2). pairs_json: `[[video_id, audio_id, coarse_lag_ms], …]` (lag = a candidate's
  PairCorrelation.lagMs). Returns a JSON array aligned to input order, each element a
@@ -274,6 +374,12 @@ char *cpl_pair_candidates(uint64_t ctx,
  Additive — no ABI bump. Null on error; free with cpl_string_free.
  */
  char *cpl_pair_fit_batch(uint64_t ctx, const char *pairs_json);
+
+/*
+ As `cpl_pair_fit_batch` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
+ malformed/invalid ⇒ InvalidArgument). Additive — no ABI bump. Free with cpl_string_free.
+ */
+ char *cpl_pair_fit_batch_params(uint64_t ctx, const char *pairs_json, const char *params_json);
 
 /*
  Per-(video, audio) fine MATCH-verification for candidate pairs
@@ -285,6 +391,13 @@ char *cpl_pair_candidates(uint64_t ctx,
  (`cpl_abi_version` stays 1). Null on error; free with cpl_string_free.
  */
  char *cpl_verify_batch(uint64_t ctx, const char *pairs_json);
+
+/*
+ As `cpl_verify_batch` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
+ malformed/invalid ⇒ InvalidArgument). Additive — no ABI bump (`cpl_abi_version` stays 1).
+ Free with cpl_string_free.
+ */
+ char *cpl_verify_batch_params(uint64_t ctx, const char *pairs_json, const char *params_json);
 
 /*
  LRU-GC the cache down to max_bytes; returns bytes freed.

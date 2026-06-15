@@ -241,8 +241,10 @@ version = "0.1.0"
 dependencies = [
  "cbindgen",
  "couple-core",
+ "hound",
  "libc",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
