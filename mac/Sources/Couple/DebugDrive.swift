@@ -74,7 +74,7 @@ final class DebugDrive {
             || env["COUPLE_REMERGE_TEST"] != nil || env["COUPLE_POOLSEL_TEST"] != nil
             || env["COUPLE_QUALITY_TEST"] != nil || env["COUPLE_REPAIRDROP_TEST"] != nil
             || env["COUPLE_REMOVE_TEST"] != nil || env["COUPLE_ANCHOR_TEST"] != nil
-            || env["COUPLE_ACTIVITY_TEST"] != nil else { return }
+            || env["COUPLE_ACTIVITY_TEST"] != nil || env["COUPLE_OVERVIEW_TEST"] != nil else { return }
         Task { await run(env: env) }
     }
 
@@ -88,7 +88,8 @@ final class DebugDrive {
             || env["COUPLE_PREVIEW_TEST"] == "1" || env["COUPLE_TRANSPORT_TEST"] == "1"
             || env["COUPLE_LOUPE_TEST"] == "1" || env["COUPLE_REMERGE_TEST"] == "1"
             || env["COUPLE_POOLSEL_TEST"] == "1" || env["COUPLE_QUALITY_TEST"] == "1"
-            || env["COUPLE_REPAIRDROP_TEST"] == "1" || env["COUPLE_ACTIVITY_TEST"] == "1" {
+            || env["COUPLE_REPAIRDROP_TEST"] == "1" || env["COUPLE_ACTIVITY_TEST"] == "1"
+            || env["COUPLE_OVERVIEW_TEST"] == "1" {
             if env["COUPLE_RMS_TEST"] == "1" { await rmsTest() }
             if env["COUPLE_OVERFLOW_TEST"] == "1" { await overflowTest() }
             if env["COUPLE_LAYOUT_TEST"] == "1" { await layoutTest() }
@@ -100,6 +101,7 @@ final class DebugDrive {
             if env["COUPLE_QUALITY_TEST"] == "1" { await qualityTest() }
             if env["COUPLE_REPAIRDROP_TEST"] == "1" { await repairDropTest() }
             if env["COUPLE_ACTIVITY_TEST"] == "1" { await activityTest() }
+            if env["COUPLE_OVERVIEW_TEST"] == "1" { await overviewTest() }
             let mediaRequested = env["COUPLE_OPEN_CAMERA"] != nil || env["COUPLE_PAIR_DIR"] != nil
                 || env["COUPLE_PROFILE"] != nil || env["COUPLE_RESTORE_TEST"] != nil
             if !mediaRequested {
@@ -973,6 +975,102 @@ final class DebugDrive {
               capAtMin + fixedBelowBanner < column)
 
         print("LAYOUT-TEST summary: \(pass) passed, \(fail) failed")
+    }
+
+    /// Pure unit test for TODO-014 Part 1's direct anchor-drag mapping
+    /// (`OverviewTimeline`). The bug was a velocity-adaptive gain on accumulated
+    /// pointer deltas, so sensitivity changed mid-drag and the landing time depended
+    /// on speed/path. The fix maps the pointer's CURRENT x straight through the
+    /// displayed visible range (the same absolute mapping the playhead scrub uses).
+    /// This locks the resulting contract — no engine, media, or view needed. Run
+    /// headless via COUPLE_OVERVIEW_TEST=1. Covers: endpoints + midpoint, monotonic
+    /// in x, clamp outside the lane, x→time→x round-trip, the SAME x yields the SAME
+    /// time regardless of the path/speed that reached it (no velocity gain remains),
+    /// a non-zero/zoomed visible lower bound (TODO-010 forward-compat), and degenerate
+    /// width/range pinning to the lower bound.
+    private func overviewTest() async {
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("OVERVIEW-TEST \(ok ? "ok " : "FAIL") \(name)")
+        }
+        let eps = 1e-9
+        let w: CGFloat = 800
+        let vis = 0.0...100.0 // displayed range (seconds)
+
+        // (a) Endpoints + midpoint map directly through the visible range.
+        check("(a) x=0 ⇒ lower bound",
+              abs(OverviewTimeline.time(atX: 0, width: w, visible: vis) - 0) < eps)
+        check("(a) x=width ⇒ upper bound",
+              abs(OverviewTimeline.time(atX: w, width: w, visible: vis) - 100) < eps)
+        check("(a) x=width/2 ⇒ midpoint",
+              abs(OverviewTimeline.time(atX: w / 2, width: w, visible: vis) - 50) < eps)
+
+        // (b) Strictly monotonic increasing in x across the lane.
+        var monotonic = true
+        var prev = -Double.infinity
+        for i in 0...80 {
+            let t = OverviewTimeline.time(atX: CGFloat(i) * 10, width: w, visible: vis)
+            if t < prev - eps { monotonic = false }
+            prev = t
+        }
+        check("(b) time(atX:) is monotonic non-decreasing in x", monotonic)
+
+        // (c) Off-lane pointer x clamps into the visible range (no escape, no second
+        // clamp needed before moveAnchor's playable clamp).
+        check("(c) x<0 clamps to lower bound",
+              abs(OverviewTimeline.time(atX: -250, width: w, visible: vis) - 0) < eps)
+        check("(c) x>width clamps to upper bound",
+              abs(OverviewTimeline.time(atX: w + 250, width: w, visible: vis) - 100) < eps)
+
+        // (d) x→time→x round-trips inside the lane.
+        var roundTrips = true
+        for px in stride(from: CGFloat(0), through: w, by: 40) {
+            let t = OverviewTimeline.time(atX: px, width: w, visible: vis)
+            let back = OverviewTimeline.x(forTime: t, width: w, visible: vis)
+            if abs(back - px) > 1e-6 { roundTrips = false }
+        }
+        check("(d) x→time→x round-trips", roundTrips)
+
+        // (e) THE bug: the landing time must depend ONLY on the final x, never on the
+        // path/speed taken to reach it. A slow walk, a fast jump, and a back-and-forth
+        // wander that all END at the same x must all yield the identical time (the old
+        // velocity-gain accumulator failed this).
+        let targetX: CGFloat = 537
+        let direct = OverviewTimeline.time(atX: targetX, width: w, visible: vis)
+        // Simulate three drag paths; only the final sample feeds the (now stateless)
+        // mapping, so each path's result is just time(atX: targetX).
+        let slowPath: [CGFloat] = stride(from: 0, through: targetX, by: 3).map { $0 }
+        let fastPath: [CGFloat] = [0, 200, targetX]
+        let wanderPath: [CGFloat] = [0, 760, 40, 700, 120, targetX]
+        func landing(_ path: [CGFloat]) -> Double {
+            var t = 0.0
+            for x in path { t = OverviewTimeline.time(atX: x, width: w, visible: vis) }
+            return t
+        }
+        check("(e) slow path lands at the direct time", abs(landing(slowPath) - direct) < eps)
+        check("(e) fast path lands at the same time", abs(landing(fastPath) - direct) < eps)
+        check("(e) wandering path lands at the same time", abs(landing(wanderPath) - direct) < eps)
+        check("(e) all three paths agree (no velocity gain remains)",
+              abs(landing(slowPath) - landing(fastPath)) < eps
+              && abs(landing(fastPath) - landing(wanderPath)) < eps)
+
+        // (f) A non-zero / zoomed visible range (TODO-010 forward-compat): the mapping
+        // is relative to the DISPLAYED range, not a hardcoded 0...duration.
+        let zoomed = 30.0...45.0
+        check("(f) zoomed lower bound at x=0", abs(OverviewTimeline.time(atX: 0, width: w, visible: zoomed) - 30) < eps)
+        check("(f) zoomed midpoint at x=width/2",
+              abs(OverviewTimeline.time(atX: w / 2, width: w, visible: zoomed) - 37.5) < eps)
+        check("(f) zoomed upper bound at x=width",
+              abs(OverviewTimeline.time(atX: w, width: w, visible: zoomed) - 45) < eps)
+
+        // (g) Degenerate width / range can't divide-by-zero; pin to the lower bound.
+        check("(g) zero width ⇒ lower bound",
+              abs(OverviewTimeline.time(atX: 123, width: 0, visible: vis) - 0) < eps)
+        check("(g) empty range ⇒ lower bound",
+              abs(OverviewTimeline.time(atX: 123, width: w, visible: 50.0...50.0) - 50) < eps)
+
+        print("OVERVIEW-TEST summary: \(pass) passed, \(fail) failed")
     }
 
     /// Pure unit test for TODO-002's media-pool preview state machine

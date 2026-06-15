@@ -18,6 +18,32 @@ extension PairSession {
     }
 }
 
+/// The ONE x↔time mapping for the overview strip. Both the playhead scrub and the
+/// anchor drag map the pointer's CURRENT x DIRECTLY through the displayed visible
+/// range (absolute position, never accumulated deltas), so a given pointer x always
+/// yields the same time regardless of how fast or by what path it got there. Pin and
+/// connector x positions invert the same mapping, so the pin stays under the pointer.
+/// `visible` is the displayed range (today `PairSession.stageDomain`); routing every
+/// caller through here — instead of a hardcoded full-duration assumption — keeps the
+/// strip compatible with TODO-010's future zoomed/panned overview range for free.
+enum OverviewTimeline {
+    /// Pointer x (in lane coordinates) → time, clamped to the visible range. Direct
+    /// and monotonic in x; degenerate width/range pins to the lower bound.
+    static func time(atX x: CGFloat, width: CGFloat, visible: ClosedRange<Double>) -> Double {
+        let span = visible.upperBound - visible.lowerBound
+        guard width > 0, span > 0 else { return visible.lowerBound }
+        let frac = max(0, min(1, Double(x / width)))
+        return visible.lowerBound + frac * span
+    }
+
+    /// Inverse: time → lane x. Used to draw pins/connectors so they track the pointer.
+    static func x(forTime t: Double, width: CGFloat, visible: ClosedRange<Double>) -> CGFloat {
+        let span = visible.upperBound - visible.lowerBound
+        guard span > 0 else { return 0 }
+        return CGFloat((t - visible.lowerBound) / span) * width
+    }
+}
+
 private let stagePad: CGFloat = 14
 
 // Overview strip vertical metrics: a badge gutter above the lanes keeps the
@@ -243,8 +269,10 @@ struct OverviewStrip: View {
                         case .scrub:
                             guard pair.session != nil else { return }
                             pair.audition.isScrubbing = true
-                            let frac = Double(g.location.x / size.width)
-                            pair.audition.seek(to: domain.lowerBound + frac * span)
+                            // Absolute pointer x → time through the displayed range
+                            // (the same mapping the anchor drag uses); seek clamps.
+                            pair.audition.seek(to: OverviewTimeline.time(
+                                atX: g.location.x, width: size.width, visible: domain))
                         case nil:
                             break
                         }
@@ -275,13 +303,13 @@ struct OverviewStrip: View {
     private func pins(size: CGSize) -> some View {
         let pair = model.pair
         let domain = pair.stageDomain
-        let span = domain.upperBound - domain.lowerBound
         return ForEach(pair.anchors.indices, id: \.self) { i in
-            let x = CGFloat((pair.anchors[i] - domain.lowerBound) / span) * size.width
+            let x = OverviewTimeline.x(forTime: pair.anchors[i], width: size.width, visible: domain)
             AnchorPin(index: i,
                       color: Theme.anchorColors[i % 4],
                       height: size.height,
-                      secondsPerPoint: span / size.width)
+                      laneWidth: size.width,
+                      visible: domain)
                 .position(x: x, y: size.height / 2)
         }
     }
@@ -423,9 +451,11 @@ private struct AnchorPin: View {
     let index: Int
     let color: Color
     let height: CGFloat
-    let secondsPerPoint: Double
-
-    @State private var lastDragX: CGFloat = 0
+    // The displayed overview timeline this pin lives on (lane width + visible
+    // range), so the drag maps the pointer's absolute x to a time exactly like
+    // the playhead scrub — TODO-014 Part 1.
+    let laneWidth: CGFloat
+    let visible: ClosedRange<Double>
 
     var body: some View {
         pinBody
@@ -435,20 +465,21 @@ private struct AnchorPin: View {
                 model.audition.focusedAnchor = index
             }
             .gesture(
-                DragGesture(minimumDistance: 1)
+                // Direct 1:1 drag (TODO-014 Part 1): map the pointer's CURRENT x
+                // in the shared "overview" space straight to a time through the
+                // displayed range — the same absolute mapping the playhead uses,
+                // not accumulated deltas. No velocity gain, so sensitivity never
+                // changes mid-drag and the same x always yields the same time. The
+                // pin tracks the pointer; `moveAnchor` applies the existing
+                // playable-range clamp. Unrounded value; stays where released.
+                DragGesture(minimumDistance: 1, coordinateSpace: .named("overview"))
                     .onChanged { g in
                         let pair = model.pair
                         guard pair.inputsEnabled, pair.anchors.indices.contains(index) else { return }
-                        let dx = g.translation.width - lastDragX
-                        lastDragX = g.translation.width
-                        // Precision drag: slow pointer movement gets a finer
-                        // gain so the pin can land exactly where intended;
-                        // fast movement passes through 1:1.
-                        let gain = min(1.0, 0.25 + abs(dx) / 12.0)
-                        pair.moveAnchor(index, to: pair.anchors[index] + Double(dx) * gain * secondsPerPoint)
+                        pair.moveAnchor(index, to: OverviewTimeline.time(
+                            atX: g.location.x, width: laneWidth, visible: visible))
                     }
                     .onEnded { _ in
-                        lastDragX = 0
                         // Stays exactly where placed (no transient snap —
                         // owner 2026-06-12); ⌖ in the loupe header snaps.
                         model.pair.releaseAnchor(index)
@@ -485,14 +516,13 @@ struct ConnectorLayer: View {
         Canvas { ctx, size in
             guard pair.loupeLayout == .grid, !pair.anchors.isEmpty else { return }
             let domain = pair.stageDomain
-            let span = domain.upperBound - domain.lowerBound
             let n = pair.anchors.count
             let spacing: CGFloat = 8
             let loupeW = (size.width - CGFloat(n - 1) * spacing) / CGFloat(n)
             // Pin x lives in the lane area, which stops short of the volume column.
             let laneW = size.width - laneControlsW - laneControlsGap
             for i in 0..<n {
-                let xPin = CGFloat((pair.anchors[i] - domain.lowerBound) / span) * laneW
+                let xPin = OverviewTimeline.x(forTime: pair.anchors[i], width: laneW, visible: domain)
                 let xLoupe = CGFloat(i) * (loupeW + spacing) + loupeW / 2
                 var path = Path()
                 path.move(to: CGPoint(x: xPin, y: 0))

@@ -866,7 +866,7 @@ clean. This item touched no Rust/core.
 
 ## TODO-014: Make anchor dragging direct and add a precision magnifier
 
-**Status:** Ready  
+**Status:** In progress — Part 1 (direct 1:1 drag) Done; Part 2 (precision magnifier) Deferred  
 **Type:** Behavior fix and interaction feature  
 **Area:** Overview waveform, anchor placement
 
@@ -956,3 +956,44 @@ provides deliberate zoom, pan, and fit controls for broader inspection.
 - Focus, loupe disclosure on click, explicit snap, anchor measurement
   invalidation, and TODO-010's future zoomed-overview coordinate mapping remain
   compatible.
+
+### Progress
+
+**Part 1 — direct 1:1 anchor drag (Done, verified).** The velocity-adaptive gain is
+removed. `AnchorPin`'s drag previously accumulated pointer deltas (`lastDragX`) and
+scaled each by `min(1.0, 0.25 + abs(dx)/12)` — a hidden mid-drag sensitivity change.
+It now maps the pointer's CURRENT x straight to a time through the displayed overview
+range, the same absolute-position principle as the overview playhead scrub, so a given
+pointer x always yields the same anchor time regardless of speed or path. Both paths go
+through ONE shared mapping, `OverviewTimeline.time(atX:width:visible:)` /
+`x(forTime:…)` (WaveformStage.swift) — no parallel coordinate system; pin/connector x
+positions invert the same function. The pin's `DragGesture` now reads the shared
+`"overview"` coordinate space (matching the playhead) and passes the displayed range +
+lane width in. The target is unrounded and clamped only by the existing
+`PairSession.moveAnchor` playable clamp (`0…cam.durationS`) — no second clamp; the pin
+stays exactly where released. The explicit ⌖ loupe-header snap (`snapAnchor`) is
+untouched, and so are the Option-drag coarse-offset gesture, Shift behaviors, playhead
+seeking, tap-to-focus/loupe disclosure, and anchor-measurement invalidation
+(`releaseAnchor` → re-measure unchanged). Because the mapping reads the displayed
+`visible` range rather than a hardcoded full duration, it is compatible with TODO-010's
+future zoomed/panned overview range. Verified: `swift build` clean (only the
+pre-existing `VideoThumbnail`/`QueueRail` `NSImage`-Sendable + `libcouple.a` macOS-
+version warnings); `swift test` 92 passed (unchanged — `CoupleKitTests` doesn't link
+the app target). New coverage is an env-gated app-target DebugDrive hook
+(`COUPLE_OVERVIEW_TEST=1`, mirroring `COUPLE_LAYOUT_TEST`): 16 checks that the x→time
+mapping is direct (endpoints + midpoint), monotonic in x, clamped off-lane, x↔time
+round-trips, the SAME final x yields the SAME time across slow/fast/wandering paths
+(the anti-regression for the removed gain), correct on a non-zero zoomed range, and
+divide-by-zero-safe — 16 passed. `git diff --check` clean. Touched only
+WaveformStage.swift + DebugDrive.swift. Human click-through to confirm: slow drag (pin
+tracks pointer, no lag), fast drag (no acceleration, same landing as slow at the same
+spot), drag start (no jump to pointer or away from it), release (stays put, no snap),
+explicit ⌖ snap still jumps to the nearest transient, and Option-drag on the external
+lane still slides the coarse offset rather than moving an anchor.
+
+**Part 2 — precision magnifier (Deferred).** The transient magnified local-detail lens
+over the overview during an anchor drag is intentionally retained but not yet planned;
+it needs an owner design pass (lens width, zoom span, edge/recenter behavior, lane
+labels, time readout, accent/border treatment, and overview-chip/monitor-control
+avoidance) per the item's design notes before implementation. Part 1 stands on its own
+and does not depend on it.
