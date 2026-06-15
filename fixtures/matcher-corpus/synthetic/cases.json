@@ -1,0 +1,861 @@
+{
+  "schema": "couple-matcher-corpus/1",
+  "split": "synthetic",
+  "mediaRoot": "",
+  "cases": [
+    {
+      "id": "clean_30s",
+      "group": "synthetic",
+      "a": "synthetic/clean_30s/camera.wav",
+      "b": "synthetic/clean_30s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "clean"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 101
+      }
+    },
+    {
+      "id": "agc_30s",
+      "group": "synthetic",
+      "a": "synthetic/agc_30s/camera.wav",
+      "b": "synthetic/agc_30s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "agc"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 6.0,
+        "agc": true,
+        "seed": 102
+      }
+    },
+    {
+      "id": "telephone_30s",
+      "group": "synthetic",
+      "a": "synthetic/telephone_30s/camera.wav",
+      "b": "synthetic/telephone_30s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "telephone"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": 15.0,
+        "gainDb": 3.0,
+        "agc": true,
+        "seed": 103
+      }
+    },
+    {
+      "id": "reverb_30s",
+      "group": "synthetic",
+      "a": "synthetic/reverb_30s/camera.wav",
+      "b": "synthetic/reverb_30s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "reverb"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": -3.0,
+        "agc": true,
+        "seed": 104
+      }
+    },
+    {
+      "id": "snr0_30s",
+      "group": "synthetic",
+      "a": "synthetic/snr0_30s/camera.wav",
+      "b": "synthetic/snr0_30s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "snr",
+        "snr0"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": 0.0,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 110
+      }
+    },
+    {
+      "id": "snr5_30s",
+      "group": "synthetic",
+      "a": "synthetic/snr5_30s/camera.wav",
+      "b": "synthetic/snr5_30s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "snr",
+        "snr5"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": 5.0,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 115
+      }
+    },
+    {
+      "id": "snr10_30s",
+      "group": "synthetic",
+      "a": "synthetic/snr10_30s/camera.wav",
+      "b": "synthetic/snr10_30s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "snr",
+        "snr10"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": 10.0,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 120
+      }
+    },
+    {
+      "id": "dur_8s",
+      "group": "synthetic",
+      "a": "synthetic/dur_8s/camera.wav",
+      "b": "synthetic/dur_8s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 8.0,
+      "tags": [
+        "duration",
+        "dur8"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 8.0,
+        "durExtS": 14.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 128
+      }
+    },
+    {
+      "id": "dur_12s",
+      "group": "synthetic",
+      "a": "synthetic/dur_12s/camera.wav",
+      "b": "synthetic/dur_12s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 12.0,
+      "tags": [
+        "duration",
+        "dur12"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 12.0,
+        "durExtS": 18.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 132
+      }
+    },
+    {
+      "id": "dur_20s",
+      "group": "synthetic",
+      "a": "synthetic/dur_20s/camera.wav",
+      "b": "synthetic/dur_20s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 20.0,
+      "tags": [
+        "duration",
+        "dur20"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 20.0,
+        "durExtS": 26.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 140
+      }
+    },
+    {
+      "id": "dur_60s",
+      "group": "synthetic",
+      "a": "synthetic/dur_60s/camera.wav",
+      "b": "synthetic/dur_60s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 60.0,
+      "tags": [
+        "duration",
+        "dur60"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 60.0,
+        "durExtS": 66.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 180
+      }
+    },
+    {
+      "id": "dur_600s",
+      "group": "synthetic",
+      "a": "synthetic/dur_600s/camera.wav",
+      "b": "synthetic/dur_600s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 600.0,
+      "tags": [
+        "duration",
+        "dur600"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 600.0,
+        "durExtS": 606.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 720
+      }
+    },
+    {
+      "id": "drift_-600ppm",
+      "group": "synthetic",
+      "a": "synthetic/drift_-600ppm/camera.wav",
+      "b": "synthetic/drift_-600ppm/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": -600.0,
+      "minimumOverlapS": 60.0,
+      "tags": [
+        "drift",
+        "ppm-600"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": -600.0,
+        "durCamS": 60.0,
+        "durExtS": 70.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 140
+      }
+    },
+    {
+      "id": "drift_-100ppm",
+      "group": "synthetic",
+      "a": "synthetic/drift_-100ppm/camera.wav",
+      "b": "synthetic/drift_-100ppm/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": -100.0,
+      "minimumOverlapS": 60.0,
+      "tags": [
+        "drift",
+        "ppm-100"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": -100.0,
+        "durCamS": 60.0,
+        "durExtS": 70.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 640
+      }
+    },
+    {
+      "id": "drift_0ppm",
+      "group": "synthetic",
+      "a": "synthetic/drift_0ppm/camera.wav",
+      "b": "synthetic/drift_0ppm/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 60.0,
+      "tags": [
+        "drift",
+        "ppm0"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 60.0,
+        "durExtS": 70.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 740
+      }
+    },
+    {
+      "id": "drift_100ppm",
+      "group": "synthetic",
+      "a": "synthetic/drift_100ppm/camera.wav",
+      "b": "synthetic/drift_100ppm/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 100.0,
+      "minimumOverlapS": 60.0,
+      "tags": [
+        "drift",
+        "ppm100"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 100.0,
+        "durCamS": 60.0,
+        "durExtS": 70.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 840
+      }
+    },
+    {
+      "id": "drift_600ppm",
+      "group": "synthetic",
+      "a": "synthetic/drift_600ppm/camera.wav",
+      "b": "synthetic/drift_600ppm/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 600.0,
+      "minimumOverlapS": 60.0,
+      "tags": [
+        "drift",
+        "ppm600"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 600.0,
+        "durCamS": 60.0,
+        "durExtS": 70.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 1340
+      }
+    },
+    {
+      "id": "macro_only_30s",
+      "group": "synthetic",
+      "a": "synthetic/macro_only_30s/camera.wav",
+      "b": "synthetic/macro_only_30s/external.wav",
+      "sameEvent": false,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "macroEnvelope",
+        "negative"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 555,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 160
+      }
+    },
+    {
+      "id": "repeated_phrase_40s",
+      "group": "synthetic",
+      "a": "synthetic/repeated_phrase_40s/camera.wav",
+      "b": "synthetic/repeated_phrase_40s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 40.0,
+      "tags": [
+        "repeatedPhrase",
+        "ambiguousOffset"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 40.0,
+        "durExtS": 52.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 170
+      }
+    },
+    {
+      "id": "periodic_tone_30s",
+      "group": "synthetic",
+      "a": "synthetic/periodic_tone_30s/camera.wav",
+      "b": "synthetic/periodic_tone_30s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "periodicTone",
+        "hazard"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 180
+      }
+    },
+    {
+      "id": "mostly_silence_30s",
+      "group": "synthetic",
+      "a": "synthetic/mostly_silence_30s/camera.wav",
+      "b": "synthetic/mostly_silence_30s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "mostlySilence",
+        "sparse"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 190
+      }
+    },
+    {
+      "id": "dropout_30s",
+      "group": "synthetic",
+      "a": "synthetic/dropout_30s/camera.wav",
+      "b": "synthetic/dropout_30s/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "dropout"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": 15.0,
+        "gainDb": -12.0,
+        "agc": true,
+        "seed": 200
+      }
+    },
+    {
+      "id": "restart_disjoint",
+      "group": "synthetic",
+      "a": "synthetic/restart_disjoint/camera.wav",
+      "b": "synthetic/restart_disjoint/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": -40000.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 18.0,
+      "tags": [
+        "restart",
+        "disjoint",
+        "partial"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": -40000.0,
+        "ppm": 0.0,
+        "durCamS": 60.0,
+        "durExtS": 40.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 210
+      }
+    },
+    {
+      "id": "simul_recA",
+      "group": "synthetic",
+      "a": "synthetic/simul_recA/camera.wav",
+      "b": "synthetic/simul_recA/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "simultaneous",
+        "multiRecorder"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": 18.0,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 220
+      }
+    },
+    {
+      "id": "simul_recB",
+      "group": "synthetic",
+      "a": "synthetic/simul_recB/camera.wav",
+      "b": "synthetic/simul_recB/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "simultaneous",
+        "multiRecorder"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": 12.0,
+        "gainDb": -6.0,
+        "agc": true,
+        "seed": 220
+      }
+    },
+    {
+      "id": "manycand_0",
+      "group": "synthetic",
+      "a": "synthetic/manycand_0/camera.wav",
+      "b": "synthetic/manycand_0/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "manyCandidates",
+        "overSix"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 230
+      }
+    },
+    {
+      "id": "manycand_1",
+      "group": "synthetic",
+      "a": "synthetic/manycand_1/camera.wav",
+      "b": "synthetic/manycand_1/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "manyCandidates",
+        "overSix"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 230
+      }
+    },
+    {
+      "id": "manycand_2",
+      "group": "synthetic",
+      "a": "synthetic/manycand_2/camera.wav",
+      "b": "synthetic/manycand_2/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "manyCandidates",
+        "overSix"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 230
+      }
+    },
+    {
+      "id": "manycand_3",
+      "group": "synthetic",
+      "a": "synthetic/manycand_3/camera.wav",
+      "b": "synthetic/manycand_3/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "manyCandidates",
+        "overSix"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 230
+      }
+    },
+    {
+      "id": "manycand_4",
+      "group": "synthetic",
+      "a": "synthetic/manycand_4/camera.wav",
+      "b": "synthetic/manycand_4/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "manyCandidates",
+        "overSix"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 230
+      }
+    },
+    {
+      "id": "manycand_5",
+      "group": "synthetic",
+      "a": "synthetic/manycand_5/camera.wav",
+      "b": "synthetic/manycand_5/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "manyCandidates",
+        "overSix"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 230
+      }
+    },
+    {
+      "id": "manycand_6",
+      "group": "synthetic",
+      "a": "synthetic/manycand_6/camera.wav",
+      "b": "synthetic/manycand_6/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "manyCandidates",
+        "overSix"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 230
+      }
+    },
+    {
+      "id": "manycand_7",
+      "group": "synthetic",
+      "a": "synthetic/manycand_7/camera.wav",
+      "b": "synthetic/manycand_7/external.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": 1500.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 30.0,
+      "tags": [
+        "manyCandidates",
+        "overSix"
+      ],
+      "allowedForTuning": true,
+      "gen": {
+        "offsetMs": 1500.0,
+        "ppm": 0.0,
+        "durCamS": 30.0,
+        "durExtS": 36.0,
+        "camSeedOffset": 0,
+        "snrDb": null,
+        "gainDb": 0.0,
+        "agc": false,
+        "seed": 230
+      }
+    }
+  ]
+}

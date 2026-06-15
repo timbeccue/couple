@@ -1,0 +1,19 @@
+{
+  "schema": "couple-matcher-corpus/1",
+  "split": "validation",
+  "mediaRoot": "example_data",
+  "cases": [
+    {
+      "id": "schumann_frozen_pair",
+      "group": "schumann",
+      "a": "schumann-video.mp4",
+      "b": "schumann-audio.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": -5536.639131250842,
+      "expectedDriftPpm": 3.5704620480890514,
+      "minimumOverlapS": 1400.0,
+      "tags": ["real", "frozen", "canonical", "schumann", "longForm"],
+      "allowedForTuning": true
+    }
+  ]
+}

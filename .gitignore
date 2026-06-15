@@ -11,8 +11,23 @@ example_data/peaks/*
 example_data/handsync/*
 !example_data/handsync/.gitkeep
 
-# Synthetic fixture output (regenerable, large)
-fixtures/
+# Synthetic fixture output (regenerable, large). NOTE: ignore the CONTENTS, not the directory
+# itself, so the matcher-corpus negations below can re-include specific files (git cannot
+# re-include a path whose parent DIRECTORY is excluded — so we never exclude a parent dir).
+fixtures/*
+# The matcher corpus (PLAN-AUDIO-MATCHING-PREWORK §10): manifests, schema, ground truth, and
+# READMEs ARE tracked — media MAY be gitignored, manifests + ground truth MUST be committed.
+# Walk the path down, un-ignoring each directory level, then re-include JSON/MD only; any
+# generated/real media under it stays ignored (regenerable from the committed `gen` parameters,
+# or large real clips that live under example_data/).
+!fixtures/matcher-corpus/
+fixtures/matcher-corpus/*
+!fixtures/matcher-corpus/*/
+!fixtures/matcher-corpus/*.json
+!fixtures/matcher-corpus/*.md
+fixtures/matcher-corpus/*/*
+!fixtures/matcher-corpus/*/*.json
+!fixtures/matcher-corpus/*/*.md
 
 # Caches
 .couple-cache/
@@ -29,3 +44,9 @@ fixtures/
 # Swift (mac/)
 mac/.build/
 mac/dist/
+# Incremental build artifacts SwiftPM leaks into mac/ root
+mac/*.o
+mac/*.d
+mac/*.swiftdeps
+mac/*.swiftdeps~
+mac/*.swiftmodule

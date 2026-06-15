@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "couple-matcher-corpus/1",
+  "title": "Couple matcher corpus manifest",
+  "description": "PLAN-AUDIO-MATCHING-PREWORK §10.1. One split's cases + ground truth. Media MAY be gitignored; this manifest MUST be committed. Synthetic cases carry a `gen` block (the committed generation parameters) so their pcm media is reproducible without committing WAVs; real cases reference repo-relative media under `mediaRoot`.",
+  "type": "object",
+  "required": ["schema", "split", "cases"],
+  "properties": {
+    "schema": { "const": "couple-matcher-corpus/1" },
+    "split": {
+      "type": "string",
+      "enum": ["synthetic", "calibration", "validation", "holdout"],
+      "description": "The split governs the tuning rule (§10.3/§10.5): holdout is NEVER tuned on; calibration and validation hold real difficult examples (a given recording event lives in exactly one split — no event leakage)."
+    },
+    "mediaRoot": {
+      "type": "string",
+      "default": "",
+      "description": "Repo-relative root the real `a`/`b` paths resolve against (empty ⇒ the repo root). Ignored for synthetic cases (they regenerate from `gen`)."
+    },
+    "cases": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/case" }
+    }
+  },
+  "definitions": {
+    "case": {
+      "type": "object",
+      "required": ["id", "group", "a", "b", "sameEvent", "expectedOffsetMs", "expectedDriftPpm", "minimumOverlapS", "tags", "allowedForTuning"],
+      "properties": {
+        "id": { "type": "string", "description": "Unique within the manifest." },
+        "group": { "type": "string", "description": "synthetic | calibration | validation | holdout | a real recording-event name." },
+        "a": { "type": "string", "description": "Video/camera side: a repo-relative media path (real) or generated file name (synthetic)." },
+        "b": { "type": "string", "description": "External-audio side: a repo-relative media path (real) or generated file name (synthetic)." },
+        "sameEvent": { "type": "boolean", "description": "Ground truth: do a and b capture the SAME acoustic event? A false case MUST NOT confidently match." },
+        "expectedOffsetMs": { "type": "number", "description": "A→B lag: content at time t in a occurs at t + expectedOffsetMs/1000 in b." },
+        "expectedDriftPpm": { "type": "number", "description": "Clock drift of b relative to a, ppm." },
+        "minimumOverlapS": { "type": "number", "description": "The overlap the case is constructed to present; scoring expects the matcher to be reachable at/above the pairing floor." },
+        "tags": { "type": "array", "items": { "type": "string" }, "description": "Family/condition tags; drive the per-tag metrics breakdown." },
+        "allowedForTuning": { "type": "boolean", "description": "MUST be false for every holdout case (§10.1). Thresholds are never tuned on a case with allowedForTuning=false." },
+        "gen": {
+          "type": "object",
+          "description": "Synthetic generation parameters (absent for real cases). pcm WAV only (no video, no AAC) so regeneration is byte-stable.",
+          "required": ["offsetMs", "ppm", "durCamS", "durExtS", "seed"],
+          "properties": {
+            "offsetMs": { "type": "number" },
+            "ppm": { "type": "number" },
+            "durCamS": { "type": "number" },
+            "durExtS": { "type": "number" },
+            "camSeedOffset": { "type": "integer", "default": 0, "description": "Nonzero ⇒ the camera master differs from the external (independent fine content, same macro-envelope)." },
+            "snrDb": { "type": ["number", "null"], "default": 20.0 },
+            "gainDb": { "type": "number", "default": 0.0 },
+            "agc": { "type": "boolean", "default": false },
+            "seed": { "type": "integer" }
+          }
+        }
+      }
+    }
+  }
+}

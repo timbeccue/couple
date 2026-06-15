@@ -1,0 +1,82 @@
+{
+  "schema": "couple-matcher-corpus/1",
+  "split": "calibration",
+  "mediaRoot": "example_data/difficult-match",
+  "cases": [
+    {
+      "id": "hsbach_test1_172_zoom33",
+      "group": "hsBach",
+      "a": "test 1/bach 172.mov",
+      "b": "test 1/ZOOM0033.WAV",
+      "sameEvent": true,
+      "expectedOffsetMs": 1153.9,
+      "expectedDriftPpm": 31.8,
+      "minimumOverlapS": 60.0,
+      "tags": ["real", "difficult", "fullLength", "hsBach"],
+      "allowedForTuning": true,
+      "groundTruthSource": "legacy-fine-lock fit (boundary-12 calibration); offset well-determined, ppm is the legacy coarse estimate"
+    },
+    {
+      "id": "hsbach_test1_169_zoom33_negative",
+      "group": "hsBach",
+      "a": "test 1/bach 169.mov",
+      "b": "test 1/ZOOM0033.WAV",
+      "sameEvent": false,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 0.0,
+      "tags": ["real", "difficult", "negative", "hsBach"],
+      "allowedForTuning": true
+    },
+    {
+      "id": "hsbach_test1_170_zoom33_negative",
+      "group": "hsBach",
+      "a": "test 1/bach 170.mov",
+      "b": "test 1/ZOOM0033.WAV",
+      "sameEvent": false,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 0.0,
+      "tags": ["real", "difficult", "negative", "hsBach"],
+      "allowedForTuning": true
+    },
+    {
+      "id": "hsbach_test1_171_zoom33_negative",
+      "group": "hsBach",
+      "a": "test 1/bach 171.mov",
+      "b": "test 1/ZOOM0033.WAV",
+      "sameEvent": false,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 0.0,
+      "tags": ["real", "difficult", "negative", "hsBach"],
+      "allowedForTuning": true
+    },
+    {
+      "id": "hsbach_test2_172_33short",
+      "group": "hsBach",
+      "a": "test 2/bach 172.mov",
+      "b": "test 2/33-shortened.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": -62138.3,
+      "expectedDriftPpm": -304.8,
+      "minimumOverlapS": 20.0,
+      "tags": ["real", "difficult", "shortExcerpt", "hsBach"],
+      "allowedForTuning": true,
+      "groundTruthSource": "legacy-fine-lock fit (boundary-12 calibration); the 33-shortened excerpt begins ~62 s into bach 172"
+    },
+    {
+      "id": "hsbach_test3_172_33shortmore",
+      "group": "hsBach",
+      "a": "test 3/bach 172.mov",
+      "b": "test 3/33-shortened-more.wav",
+      "sameEvent": true,
+      "expectedOffsetMs": -82079.6,
+      "expectedDriftPpm": 363.7,
+      "minimumOverlapS": 8.0,
+      "tags": ["real", "difficult", "veryShortExcerpt", "hsBach"],
+      "allowedForTuning": true,
+      "groundTruthSource": "legacy-fine-lock fit (boundary-12 calibration); the 33-shortened-more excerpt begins ~82 s into bach 172"
+    }
+  ]
+}

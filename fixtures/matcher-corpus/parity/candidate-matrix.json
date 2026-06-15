@@ -1,0 +1,66 @@
+{
+  "schema": "couple-pair-matrix/1",
+  "note": "PLAN-AUDIO-MATCHING-PREWORK §11.2 cross-stack parity fixture. A small candidate matrix PRODUCED BY CORE (couple pair over a synthetic session, seed 7: one video, a matching external, an unrelated external) plus two hand-authored edge cells that pin the boolean contract. Both the Rust CLI resolver and CoupleKit decode EVERY field; the flag-ON pre-filter reads `prefilterCandidate`, the legacy gate reads `legacyCandidate`/`z` — never a local numeric threshold. The two booleans DIVERGE on the `unrelated` and `short_genuine` cells (legacyCandidate=false while prefilterCandidate=true), which is exactly what makes this a parity test rather than a tautology.",
+  "cells": [
+    {
+      "video": "video.mp4",
+      "audio": "match.wav",
+      "comment": "core-produced: a clean same-event match. z clears legacyZMin AND ncc clears refineNccMin ⇒ both booleans true.",
+      "z": 13.928655587129978,
+      "lagMs": 29999.997333083895,
+      "ncc": 0.98490468184715,
+      "fineNcc": 0.9840556849622207,
+      "overlapBins": 200,
+      "runnerUpZ": 3.36980554380326,
+      "refined": true,
+      "insufficientOverlap": false,
+      "legacyCandidate": true,
+      "prefilterCandidate": true
+    },
+    {
+      "video": "video.mp4",
+      "audio": "unrelated.wav",
+      "comment": "core-produced: a DIFFERENT-master external. ncc 0.30 clears the loose refineNccMin=0.15 prefilter (prefilterCandidate=true) but z 4.28 is below legacyZMin=8.5 (legacyCandidate=false). Flag ON admits it as a verify candidate; the fine lock disposes. Flag OFF the legacy gate rejects it.",
+      "z": 4.277538842873608,
+      "lagMs": 25579.985879162647,
+      "ncc": 0.3024676722584786,
+      "fineNcc": 0.21879498066492262,
+      "overlapBins": 200,
+      "runnerUpZ": 3.4395608051611095,
+      "refined": true,
+      "insufficientOverlap": false,
+      "legacyCandidate": false,
+      "prefilterCandidate": true
+    },
+    {
+      "video": "video.mp4",
+      "audio": "short_genuine.wav",
+      "comment": "edge: a short (~12 s) genuine overlap. z is capped by sqrt(n) below legacyZMin (legacyCandidate=false) yet the high ncc clears the prefilter (prefilterCandidate=true) — the 8-20 s cell Phase 2 makes reachable for the verifier. The flag-ON path MUST admit this; the flag-OFF legacy path does NOT (z too low).",
+      "z": 6.3,
+      "lagMs": 1200.0,
+      "ncc": 0.97,
+      "fineNcc": 0.99,
+      "overlapBins": 60,
+      "runnerUpZ": 0.4,
+      "refined": true,
+      "insufficientOverlap": false,
+      "legacyCandidate": false,
+      "prefilterCandidate": true
+    },
+    {
+      "video": "video.mp4",
+      "audio": "tiny_clip.wav",
+      "comment": "edge: below the second-based pairing floor at every lag ⇒ insufficientOverlap=true ⇒ BOTH booleans false. Neither path treats it as a candidate.",
+      "z": 0.0,
+      "lagMs": 0.0,
+      "ncc": 0.0,
+      "fineNcc": null,
+      "overlapBins": 0,
+      "runnerUpZ": 0.0,
+      "refined": false,
+      "insufficientOverlap": true,
+      "legacyCandidate": false,
+      "prefilterCandidate": false
+    }
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "schema": "couple-matcher-corpus/1",
+  "split": "holdout",
+  "mediaRoot": "example_data/multifile-session/2022orch",
+  "cases": [
+    {
+      "id": "orch2022_bach",
+      "group": "2022orch",
+      "a": "bach.MOV",
+      "b": "bach.WAV",
+      "sameEvent": true,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 60.0,
+      "tags": ["real", "holdout", "2022orch", "bach"],
+      "allowedForTuning": false
+    },
+    {
+      "id": "orch2022_bach2",
+      "group": "2022orch",
+      "a": "bach 2.MOV",
+      "b": "bach 2.WAV",
+      "sameEvent": true,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 60.0,
+      "tags": ["real", "holdout", "2022orch", "bach"],
+      "allowedForTuning": false
+    },
+    {
+      "id": "orch2022_berlioz",
+      "group": "2022orch",
+      "a": "berlioz.MOV",
+      "b": "berlioz.WAV",
+      "sameEvent": true,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 60.0,
+      "tags": ["real", "holdout", "2022orch", "berlioz"],
+      "allowedForTuning": false
+    },
+    {
+      "id": "orch2022_dvorak",
+      "group": "2022orch",
+      "a": "dvorak.MOV",
+      "b": "dvorak.WAV",
+      "sameEvent": true,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 60.0,
+      "tags": ["real", "holdout", "2022orch", "dvorak"],
+      "allowedForTuning": false
+    },
+    {
+      "id": "orch2022_dvorak2",
+      "group": "2022orch",
+      "a": "dvorak 2.MOV",
+      "b": "dvorak 2.WAV",
+      "sameEvent": true,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 60.0,
+      "tags": ["real", "holdout", "2022orch", "dvorak"],
+      "allowedForTuning": false
+    },
+    {
+      "id": "orch2022_dvorak3",
+      "group": "2022orch",
+      "a": "dvorak 3.MOV",
+      "b": "dvorak 3.WAV",
+      "sameEvent": true,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 60.0,
+      "tags": ["real", "holdout", "2022orch", "dvorak"],
+      "allowedForTuning": false
+    },
+    {
+      "id": "orch2022_prokofiev",
+      "group": "2022orch",
+      "a": "prokofiev.MOV",
+      "b": "prokofiev.WAV",
+      "sameEvent": true,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 60.0,
+      "tags": ["real", "holdout", "2022orch", "prokofiev"],
+      "allowedForTuning": false
+    },
+    {
+      "id": "orch2022_berlioz_dvorak_negative",
+      "group": "2022orch",
+      "a": "berlioz.MOV",
+      "b": "dvorak.WAV",
+      "sameEvent": false,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 0.0,
+      "tags": ["real", "holdout", "2022orch", "negative"],
+      "allowedForTuning": false
+    }
+  ]
+}
