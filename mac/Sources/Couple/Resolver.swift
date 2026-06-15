@@ -30,39 +30,34 @@ struct PairParams: Sendable, Equatable {
     var rmsRatio        = 3.0 // [TUNE] a rival fit must be ≥ this × the leader to be "comparably clean"
     var minFitWindows   = 6   // [TUNE/SPEC] mirrors core synced_min_windows; fewer ⇒ don't trust RMS
 
-    // ---- match classifier (PLAN-MATCH-CLASSIFIER §4.2) ----
-    // The fine waveform-lock classifier knobs, mirroring the core SyncParams
-    // defaults so BOTH resolvers share identical thresholds (the gates run the CLI).
-    // Phase 1: NONE of these — nor `verifyClassifierActive` — is read by ANY decision;
-    // they exist so Phase 2 can flip the classifier on and so the params can be
-    // forwarded to verifyBatch for telemetry. `verifyClassifierActive` is the single
-    // Phase-1↔Phase-2 boundary switch, defaulted false here.
-    var verifyClassifierActive    = false  // [PHASE-2] OFF in Phase 1: z-gate decides, verify is telemetry only
-    var verifyMinOverlapS         = 8.0
-    var verifyWinFrac             = 0.5
-    var verifyHalfWinMinS         = 2.5
-    // Density 0.20 (1 win / 5 s) starved short clips; 0.5 (~1 win / 2 s) exposes a short
-    // clip's lag agreement to the fit. Mirrors core SyncParams (verifyBatch runs with the
-    // core default; this keeps the Swift `isMatch` mirror calibrated to the same regime).
-    var verifyDensityPerS         = 0.5
-    var verifyMinWindowsFloor     = 3
-    var verifyMaxWindows          = 24
-    var verifyMaxCandidatesPerVideo = 6
-    var verifySpanCapMs           = 500.0
-    var driftLambdaS2             = 50.0
-    // Classifier drift bound tightened 2000 → 600: a coherent different-recording impostor
-    // wants ~1500+ ppm ⇒ clamped ⇒ rejected; genuine matches stay ≤ a few hundred ppm.
-    var driftMaxPpm               = 600.0
-    var verifyMinLocked           = 4
-    var verifyLockFractionMin     = 0.66
-    // Trust floor on lock RMS — real true pairs run up to ~9.5 ms, so 9.0 false-rejected
-    // them; 12.0 admits the true pair while the drift bound + lock_fraction reject impostors.
-    var verifyRmsMaxMs            = 12.0
-    var verifyPrefilterNcc        = 0.15
-    // Per-window NCC floor for COUNTING a locked window in verify_pair (core), separate
-    // from the editor-sync ncc_window_min (D5). Mirrors core; verifyBatch reads the core
-    // default, so this is carried for parity/forwarding, not consumed by Swift isMatch.
-    var verifyNccWindowMin        = 0.25
+    // ---- resolver-owned classifier policy (PLAN-AUDIO-MATCHING-PREWORK §6.6) ----
+    // The fine-verifier THRESHOLDS now live in core `PairingParams` (decoded via
+    // `Engine.pairingParamsDefault()`), so the resolver keeps NO copies: `isMatch` reads the
+    // core-computed `VerifyFit.matched`. Phase 4 (§9) RETIRED the old top-K cost cap as a
+    // silent false-negative path: every `prefilterCandidate` is now verified (in chunks), and
+    // the only bound on work is the core-owned `maxVerifyPairsPerVideo`/`maxVerifyPairsTotal`
+    // SAFETY CEILING (read from `pairingParamsDefault()`), which surfaces as honest
+    // `ambiguous` (a `candidateOverflow`) rather than dropping candidates.
+    // `verifyClassifierActive` is the Phase-1↔Phase-2 boundary switch (AppModel defaults ON).
+    var verifyClassifierActive = false // [PHASE-2] flag
+
+    // ---- spectral-shadow telemetry (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.2 / §14.4) ----
+    // OPT-IN, OFF BY DEFAULT. When OFF the LEGACY resolver does NOT call `Engine.matchCandidates`.
+    // When ON (and the legacy override is active), the spectral `PairEvidence` matrix is computed
+    // ALONGSIDE the legacy resolution and attached to each row's `ResolutionDetail.shadowEvidence` as
+    // OBSERVATIONAL display telemetry. AppModel wires this to the COUPLE_SHADOW_MATCHER env var. (Under
+    // the fingerprint-primary default the rows ARE the spectral evidence, so this shadow attach is a
+    // legacy-override-only diagnostic.)
+    var shadowMatcherActive = false // [BOUNDARY-9] opt-in observational shadow
+
+    // ---- boundary-13 default matcher switch (PLAN-SPECTRAL-FINGERPRINT-MATCHING §16.1) ----
+    // The DEFAULT resolver: resolve rows from the core graph-adjusted `PairEvidence` matrix
+    // (`Engine.matchCandidatesGraph`), with `classification` the SOLE identity authority and the
+    // audio-audio triangle the SHARED core `Engine.triangleCloses` predicate (NO re-derived thresholds
+    // in the shell, invariant 8). Coverage clustering + user override stay shell policy. The DEVELOPER
+    // OVERRIDE back to the proven envelope resolution (for ≥ 1 release, §16.1) sets this false — AppModel
+    // wires it to COUPLE_MATCHER=legacy (mirrors the CLI `--matcher legacy`).
+    var matcherFingerprintPrimary = true // [BOUNDARY-13] default ON; COUPLE_MATCHER=legacy forces off
 }
 
 /// Span of the video timeline an audio covers (§3.2; overlap_info with ppm 0).
@@ -152,6 +147,23 @@ struct TriangleCheck: Sendable {
     var simultaneous: Bool
 }
 
+/// Why a row's candidates could not be verified within the configured resource
+/// ceiling (PLAN-AUDIO-MATCHING-PREWORK §9.2). Constructed ONLY when the eligible
+/// candidate count for a row would exceed `maxVerifyPairsPerVideo`, or the running
+/// total across rows would exceed `maxVerifyPairsTotal`. The honest alternative to
+/// silently dropping candidates: NO subset is verified, the row is `ambiguous` (never
+/// `noMatch`/`confident`), and every candidate name stays visible. Non-persisted
+/// (resolver-local telemetry; QueueStore never serializes it — mirrors the CLI field).
+struct CandidateOverflow: Sendable {
+    /// Number of eligible (`prefilterCandidate`) cells for this row.
+    var eligible: Int
+    /// The resource ceiling that was exceeded.
+    var limit: Int
+    /// Which ceiling: "perVideo" (`maxVerifyPairsPerVideo`) or "total"
+    /// (`maxVerifyPairsTotal`).
+    var scope: String
+}
+
 /// The honesty trail behind a row's state — surfaced raw so the owner can tune.
 struct ResolutionDetail: Sendable {
     var margin: Double?
@@ -163,6 +175,17 @@ struct ResolutionDetail: Sendable {
     // them: 4.2 ms vs 21.8 ms". Optional; informational only.
     var fitBestRmsMs: Double? = nil
     var fitSecondRmsMs: Double? = nil
+    // Phase-4 (§9.2): set ONLY when a resource ceiling forced this row to honest
+    // ambiguity instead of silently truncating candidates. Optional + non-persisted.
+    var candidateOverflow: CandidateOverflow? = nil
+    // Boundary-9 (§14.2/§14.4): OBSERVATIONAL spectral shadow telemetry — set ONLY when
+    // `shadowMatcherActive` is ON, otherwise nil (so shadow-off is byte-identical, §5.2). One
+    // projected `ShadowEvidenceRow` per candidate audio for THIS video, ordered by `score` desc
+    // (the pure `ShadowTelemetry.rows` projection). DISPLAY-ONLY: it surfaces core's `classification`
+    // verbatim (acceptance stays in core), never re-decides a row, and appears ONLY in the existing
+    // diagnostic disclosure — never as jargon in a normal queue row (§14.4). Optional + non-persisted
+    // (QueueStore never serializes ResolutionDetail; it is telemetry, not queue state).
+    var shadowEvidence: [ShadowEvidenceRow]? = nil
 }
 
 /// A resolved queue row = one video + its selected audio (nil for ambiguous /
@@ -201,11 +224,21 @@ enum Resolver {
     /// selects (computed by the caller from the pool).
     static func resolve(videos: [ResolverVideo], audios: [ResolverAudio],
                         engine: Engine, params: PairParams = PairParams()) -> [ResolvedRow] {
+        // BOUNDARY 13 (§16.1): the DEFAULT resolves from the core graph-adjusted `PairEvidence`
+        // matrix; `--matcher legacy`'s equivalent (matcherFingerprintPrimary == false) keeps the
+        // proven envelope resolver below. The fingerprint resolver is a SEPARATE single-pass path.
+        if params.matcherFingerprintPrimary {
+            return resolveFingerprint(videos: videos, audios: audios, engine: engine, params: params)
+        }
         // Candidate matrix over the analyzable videos only (a stripped-audio
         // video has no handle and resolves `no match` without a matrix row).
         let importable = videos.filter { $0.handle != nil }
         let matrix = engine.pairCandidates(videos: importable.compactMap(\.handle),
                                            audios: audios.map(\.handle)) ?? []
+        // Core owns the pairing/verifier defaults (PLAN-AUDIO-MATCHING-PREWORK §6) AND the
+        // candidacy predicate (§7.2): the loose Stage-A pre-filter is `PairCorrelation.
+        // prefilterCandidate`, read off each cell below — the resolver keeps no threshold,
+        // so the verifier (null params ⇒ core defaults) and this pre-filter never drift.
 
         // Map matrix rows back onto the full video list, keeping per-video the
         // candidate cells (audio index, measurement). Flag OFF (the ONLY default):
@@ -218,22 +251,32 @@ enum Resolver {
             let row = matrixRow < matrix.count ? matrix[matrixRow] : []
             matrixRow += 1
             for (ai, m) in row.enumerated() {
+                // Flag ON: core's loose Stage-A pre-filter boolean (ncc ≥ refineNccMin, §7.2),
+                // consumed not re-derived (invariant 8); `z` no longer rejects, the fine
+                // classifier disposes. Flag OFF: the unchanged default z-gate against the
+                // RESOLVER's own `zMin` (a resolution constant distinct from the pairing
+                // `legacyCandidate`), so the row decision is byte-identical to today.
                 let passes = params.verifyClassifierActive
-                    ? (!m.insufficientOverlap && m.ncc >= params.verifyPrefilterNcc)
+                    ? m.prefilterCandidate
                     : (!m.insufficientOverlap && m.z >= params.zMin)
                 if passes { perVideo[vi].append((ai, m)) }
             }
         }
 
-        // Match classifier (PLAN-MATCH-CLASSIFIER §5.2 / Stage B) — flag ON only. Per
-        // video CAP the loose pre-filter set to the top-K by NCC (NOT z — z's √n term is
-        // the short-clip penalty this change removes), run one `verifyBatch` over the
-        // capped set, and keep ONLY cells that pass `isMatch`. That real-match set
-        // REPLACES `perVideo[vi]` feeding the UNCHANGED §3.3 pipeline. Flag OFF: this is
-        // skipped and `perVideo` is exactly the z-passing set — byte-identical to today.
+        // Match classifier (PLAN-MATCH-CLASSIFIER §5.2 / Stage B; Phase-4 §9 rework) — flag
+        // ON only. We verify EVERY `prefilterCandidate` (no top-K truncation — that was a
+        // silent false-negative path, §2.5/§9.1); the real-match set (isMatch survivors)
+        // REPLACES `perVideo[vi]` feeding the UNCHANGED §3.3 pipeline. The ONLY bound on work
+        // is the core-owned `maxVerifyPairsPerVideo`/`maxVerifyPairsTotal` SAFETY CEILING; a
+        // row that would exceed it verifies NO subset, records a `CandidateOverflow`, and is
+        // forced to honest `ambiguous` with every candidate visible (§9.2). Flag OFF: this is
+        // skipped, `perVideo` is the z-passing set, and overflow is all-nil — byte-identical.
+        var overflow: [CandidateOverflow?] = Array(repeating: nil, count: videos.count)
         if params.verifyClassifierActive {
-            perVideo = classifyMatches(videos: videos, audios: audios, perVideo: perVideo,
-                                       engine: engine, params: params)
+            let r = classifyMatches(videos: videos, audios: audios, perVideo: perVideo,
+                                    engine: engine, params: params)
+            perVideo = r.perVideo
+            overflow = r.overflow
         }
 
         var abMemo: [PairKey: PairCorrelation] = [:]
@@ -249,9 +292,9 @@ enum Resolver {
         outcomes.reserveCapacity(videos.count)
         for (vi, v) in videos.enumerated() {
             var reqs: [FitRequest] = []
-            let outcome = resolveRow(video: v, cands: perVideo[vi], audios: audios,
-                                     engine: engine, params: params, abMemo: &abMemo,
-                                     fitReqs: &reqs)
+            let outcome = resolveRow(video: v, cands: perVideo[vi], overflow: overflow[vi],
+                                     audios: audios, engine: engine, params: params,
+                                     abMemo: &abMemo, fitReqs: &reqs)
             outcomes.append(outcome)
             fitReqs.append(contentsOf: reqs)
         }
@@ -272,11 +315,215 @@ enum Resolver {
         let verifyByCand = batchVerify(videos: videos, audios: audios,
                                        perVideo: perVideo, engine: engine)
 
+        // Boundary-9 (§14.2): OBSERVATIONAL spectral shadow telemetry — computed ONLY when the
+        // opt-in flag is ON, AFTER all legacy resolution work above (so the legacy decision is
+        // already fully formed and untouched). Flag OFF (the default): `shadowByVideo` is empty,
+        // NO `Engine.matchCandidates` call happens, and the resolve is byte-identical to today
+        // (§5.2 — shadow is never an accidental cost). The map is keyed by video key; `finalize`
+        // attaches each row's projection to `detail.shadowEvidence` (display-only, resolved rows
+        // stay legacy).
+        let shadowByVideo = params.shadowMatcherActive
+            ? shadowEvidence(videos: videos, audios: audios, engine: engine)
+            : [:]
+
         // Pass 2: attach telemetry to every candidate (Phase 1) and — for the
         // provisional rows — consult the fits to rescue a genuinely-decidable take
         // (Phase 2 tie-breaker). A row with no Pending is unaffected by the fits
         // (telemetry only): its verdict is byte-identical to before.
-        return outcomes.map { finalize($0, fitByCand: fitByCand, verifyByCand: verifyByCand, params: params) }
+        return outcomes.map {
+            finalize($0, fitByCand: fitByCand, verifyByCand: verifyByCand,
+                     shadowByVideo: shadowByVideo, params: params)
+        }
+    }
+
+    // MARK: - boundary-13 fingerprint resolver (§13.4)
+
+    /// The DEFAULT resolution (§16.1): rows come from the core graph-adjusted `PairEvidence` matrix
+    /// (`Engine.matchCandidatesGraph`). `classification` is the SOLE identity authority — a cell is a
+    /// candidate iff `classification == .match` (NO z-gate / acceptance threshold is re-derived here,
+    /// invariant 8). Coverage clustering, disjoint/split/2-sources discrimination, the §3.4
+    /// simultaneity triangle (the SHARED core `Engine.triangleCloses` predicate over AFFINE evidence +
+    /// composed-map residuals), the §3.5 margin rule, and user override stay shell policy. `score`
+    /// gives the deterministic order. Single-pass: the legacy two-pass RMS escalation is a z-margin
+    /// facility; fingerprint identity is core's classification + the affine triangle.
+    private static func resolveFingerprint(videos: [ResolverVideo], audios: [ResolverAudio],
+                                           engine: Engine, params: PairParams) -> [ResolvedRow] {
+        let importable = videos.filter { $0.handle != nil }
+        // The graph-adjusted matrix under the core default (FingerprintPrimary + profile 2): pass nil
+        // params so core uses its default matcher (§16.1). §16.2 fallback (a cell whose fingerprint is
+        // unavailable ⇒ EnvelopeV1) is handled INSIDE core; the cell's `method` records it.
+        let matrix = importable.isEmpty || audios.isEmpty
+            ? []
+            : (engine.matchCandidatesGraph(videos: importable.compactMap(\.handle),
+                                           audios: audios.map(\.handle)) ?? [])
+
+        // Map importable-indexed rows back onto the full video list (an audio-less video ⇒ no match).
+        var perVideoEvidence: [[PairEvidence]?] = Array(repeating: nil, count: videos.count)
+        var mi = 0
+        for (vi, v) in videos.enumerated() where v.handle != nil {
+            if mi < matrix.count { perVideoEvidence[vi] = matrix[mi] }
+            mi += 1
+        }
+
+        var abMemo: [PairKey: PairEvidence] = [:]
+        var rows: [ResolvedRow] = []
+        rows.reserveCapacity(videos.count)
+        for (vi, v) in videos.enumerated() {
+            rows.append(resolveRowFP(video: v, cells: perVideoEvidence[vi],
+                                     audios: audios, engine: engine, params: params, abMemo: &abMemo))
+        }
+        return rows
+    }
+
+    /// The effective (lagMs, driftPpm) a `PairEvidence` cell describes — the REFINED mapping when
+    /// boundary 7 populated it, else the consensus mapping (§13.1). Both finite (§20).
+    private static func evidenceLagDrift(_ e: PairEvidence) -> (lag: Double, drift: Double) {
+        (e.refinedLagMs ?? e.lagMs, e.refinedDriftPpm ?? e.driftPpm)
+    }
+
+    /// §3.3 resolution for one video from core `PairEvidence` cells (§13.4). Candidacy is core's
+    /// `classification == .match`; everything else is the same shell coverage / cluster / triangle /
+    /// margin policy as `resolveRow`. A `nil` cells row (stripped-audio video) ⇒ `no match`.
+    private static func resolveRowFP(video: ResolverVideo, cells: [PairEvidence]?,
+                                     audios: [ResolverAudio], engine: Engine, params: PairParams,
+                                     abMemo: inout [PairKey: PairEvidence]) -> ResolvedRow {
+        func mk(_ ai: Int, _ e: PairEvidence) -> RowCandidate {
+            RowCandidate(audioKey: audios[ai].key, audioName: audios[ai].name, z: e.score,
+                         lagMs: evidenceLagDrift(e).lag,
+                         coverage: Coverage(durVideo: video.durationS, durAudio: audios[ai].durationS,
+                                            lagMs: evidenceLagDrift(e).lag))
+        }
+        func row(_ state: RowState, _ selected: RowCandidate?, _ alternates: [RowCandidate],
+                 _ detail: ResolutionDetail) -> ResolvedRow {
+            ResolvedRow(videoKey: video.key, videoName: video.name, state: state,
+                        chip: chipText(state, selected, video.durationS),
+                        selected: selected, alternates: alternates, detail: detail)
+        }
+
+        if !video.hasAudio {
+            return row(.noMatch, nil, [], ResolutionDetail(margin: nil, clusters: 0, note: "no audio stream"))
+        }
+        guard let cells else {
+            return row(.noMatch, nil, [], ResolutionDetail(margin: nil, clusters: 0))
+        }
+
+        // CANDIDACY = core's identity verdict: keep only `.match` cells (invariant 8 — no re-derived
+        // threshold). A deliberate fingerprint rejection (`.noMatch`/`.ambiguous`) is honored (§16.2 —
+        // the weaker matcher never overrides it). Order: score desc, ties by audio file name.
+        var c: [(Int, PairEvidence)] = cells.enumerated()
+            .filter { $0.element.classification == .match }
+            .map { ($0.offset, $0.element) }
+        c.sort { a, b in a.1.score != b.1.score ? a.1.score > b.1.score : audios[a.0].name < audios[b.0].name }
+
+        if c.isEmpty {
+            return row(.noMatch, nil, [], ResolutionDetail(margin: nil, clusters: 0))
+        }
+        if c.count == 1 {
+            let sel = mk(c[0].0, c[0].1)
+            let state: RowState = sel.coverage.fraction >= params.coverageFull ? .confident : .partial
+            return row(state, sel, [], ResolutionDetail(margin: nil, clusters: 1))
+        }
+
+        let covs = c.map { Coverage(durVideo: video.durationS, durAudio: audios[$0.0].durationS, lagMs: evidenceLagDrift($0.1).lag) }
+        let clusters = clusterIntervals(covs, tol: params.disjointTolS)
+
+        var triangles: [TriangleCheck] = []
+        var marginOut: Double?
+        var winners: [(idx: Int, simultaneous: Bool)] = []
+        var ambiguous = false
+        for cluster in clusters {
+            if cluster.count == 1 { winners.append((cluster[0], false)); continue }
+            // §3.4 simultaneity over every pair — the SHARED core affine composed-map check (§13.4).
+            var allSimultaneous = true
+            for i in cluster.indices {
+                for j in (i + 1)..<cluster.count {
+                    let ci = cluster[i], cj = cluster[j]
+                    let (ai, ea) = c[ci], (aj, eb) = (c[cj].0, c[cj].1)
+                    let ab = matchAudioPairEvidence(ai, aj, audios: audios, engine: engine, memo: &abMemo)
+                    let va = evidenceLagDrift(ea), vb = evidenceLagDrift(eb), abm = evidenceLagDrift(ab)
+                    let tri = engine.triangleCloses(
+                        vaLagMs: va.lag, vaDriftPpm: va.drift,
+                        abLagMs: abm.lag, abDriftPpm: abm.drift,
+                        vbLagMs: vb.lag, vbDriftPpm: vb.drift,
+                        abClassification: ab.classification,
+                        coverageS: video.durationS,
+                        offsetTolMs: 100.0, driftTolPpm: 150.0)  // §13.3 graph tolerances (core defaults)
+                    allSimultaneous = allSimultaneous && tri.closes
+                    triangles.append(TriangleCheck(audioA: audios[ai].name, audioB: audios[aj].name,
+                                                   abZ: ab.score, abLagMs: abm.lag,
+                                                   residualMs: tri.residualMaxMs, simultaneous: tri.closes))
+                }
+            }
+            if allSimultaneous {
+                winners.append((cluster[0], true))
+            } else {
+                let zBest = c[cluster[0]].1.score
+                let zSecond = c[cluster[1]].1.score
+                let margin = zBest - zSecond
+                marginOut = margin
+                if margin >= params.zMargin {
+                    winners.append((cluster[0], false))
+                } else {
+                    ambiguous = true
+                }
+            }
+        }
+
+        if ambiguous {
+            let alternates = c.map { mk($0.0, $0.1) }
+            return row(.ambiguous, nil, alternates,
+                       ResolutionDetail(margin: marginOut, clusters: clusters.count, triangles: triangles))
+        }
+
+        let selPos = winners.indices.max { a, b in
+            let ca = covs[winners[a].idx], cb = covs[winners[b].idx]
+            if ca.seconds != cb.seconds { return ca.seconds < cb.seconds }
+            if c[winners[a].idx].1.score != c[winners[b].idx].1.score { return c[winners[a].idx].1.score < c[winners[b].idx].1.score }
+            return audios[c[winners[b].idx].0].name > audios[c[winners[a].idx].0].name
+        }!
+        let selIdx = winners[selPos].idx
+        let selSimul = winners[selPos].simultaneous
+        let sel = mk(c[selIdx].0, c[selIdx].1)
+        let alternates = c.indices.filter { $0 != selIdx }.map { mk(c[$0].0, c[$0].1) }
+        let state: RowState
+        if clusters.count > 1 {
+            state = .split
+        } else if selSimul {
+            state = .twoSources
+        } else {
+            state = sel.coverage.fraction >= params.coverageFull ? .confident : .partial
+        }
+        return row(state, sel, alternates,
+                   ResolutionDetail(margin: marginOut, clusters: clusters.count, triangles: triangles))
+    }
+
+    /// Audio-audio `PairEvidence` for the §3.4 triangle, memoized with antisymmetric lag/drift
+    /// (L(B,A) = −L(A,B)). Uses `matchPair` (the same core path the matrix used, so the A↔B identity
+    /// `classification` is consistent with the V→A / V→B cells). nil-core-fault ⇒ an Unavailable cell
+    /// (never a fabricated simultaneity — `triangleCloses` then returns false for the non-Match class).
+    private static func matchAudioPairEvidence(_ a: Int, _ b: Int, audios: [ResolverAudio],
+                                               engine: Engine, memo: inout [PairKey: PairEvidence]) -> PairEvidence {
+        let key = PairKey(lo: min(a, b), hi: max(a, b))
+        let base: PairEvidence
+        if let hit = memo[key] {
+            base = hit
+        } else {
+            base = engine.matchPair(audios[key.lo].handle, audios[key.hi].handle)
+                ?? PairEvidence(method: .spectralLandmarkV1, classification: .unavailable,
+                                lagMs: 0, driftPpm: 0, score: 0, runnerUpScore: 0, scoreMargin: 0,
+                                support: 0, candidateCorrespondences: 0, inlierFraction: 0,
+                                temporalCoverage: 0, residualRmsMs: nil, residualP95Ms: nil, overlapS: 0)
+            memo[key] = base
+        }
+        if a > b {
+            var e = base
+            e.lagMs = -e.lagMs
+            e.driftPpm = -e.driftPpm
+            if let l = e.refinedLagMs { e.refinedLagMs = -l }
+            if let d = e.refinedDriftPpm { e.refinedDriftPpm = -d }
+            return e
+        }
+        return base
     }
 
     // MARK: - two-pass plumbing (telemetry + escalation)
@@ -375,40 +622,123 @@ enum Resolver {
         return byCand
     }
 
-    /// Phase-2 match classifier (PLAN-MATCH-CLASSIFIER §5.2 / Stage B) — flag ON only.
-    /// For each video: CAP the loose pre-filtered `perVideo[vi]` to the top-K by NCC
-    /// (overlap-INDEPENDENT resemblance; ranking by z would re-introduce the short-clip
-    /// √n penalty), run ONE `verifyBatch` over the capped set, and keep only the cells
-    /// that pass `isMatch`. Returns the real-match set per video (replaces `perVideo`).
-    /// Pure measurement + arithmetic; off-main like `batchVerify` (Engine/TrackHandle
-    /// Sendable). The CLI mirror is `cli/src/pair.rs` step 3a.
+    /// Boundary-9 OBSERVATIONAL spectral shadow telemetry (PLAN-SPECTRAL-FINGERPRINT-MATCHING
+    /// §14.2). Called ONLY when `shadowMatcherActive` is ON. Runs the spectral matcher in
+    /// `fingerprintShadow` mode over the SAME importable V×A matrix the legacy path used, then
+    /// projects each video's evidence row into ordered `ShadowEvidenceRow`s via the PURE
+    /// `ShadowTelemetry.rows` (which surfaces core's `classification` verbatim and orders by `score`
+    /// — NO acceptance thresholding; acceptance lives in core). Returns a (videoKey → rows) map; the
+    /// resolved rows are NEVER derived from this (display/debug only). Off-main like `batchVerify`
+    /// (Engine/TrackHandle are Sendable). On any core fault `matchCandidates` returns nil ⇒ this
+    /// yields an empty map (the legacy rows are unaffected — shadow is best-effort observation).
+    ///
+    /// The matcher selection is core's: we pass the `fingerprintShadow` `matcherMode` override as
+    /// JSON; the resolver does NOT re-implement matcher dispatch (mirrors the CLI shadow path).
+    private static func shadowEvidence(videos: [ResolverVideo], audios: [ResolverAudio],
+                                       engine: Engine) -> [String: [ShadowEvidenceRow]] {
+        let importable = videos.filter { $0.handle != nil }
+        guard !importable.isEmpty, !audios.isEmpty else { return [:] }
+        // Request the spectral SHADOW matcher via a PairingParams override (matcherMode only); all
+        // other fields are core defaults. nil-params would select core's default legacyEnvelope.
+        let shadowJSON = #"{"matcherMode":"fingerprintShadow"}"#
+        guard let matrix = engine.matchCandidates(videos: importable.compactMap(\.handle),
+                                                  audios: audios.map(\.handle),
+                                                  paramsJSON: shadowJSON) else { return [:] }
+        let audioKeys = audios.map(\.key)
+        let audioNames = audios.map(\.name)
+        // `matrix` rows align to the importable videos in order (audio-less videos are absent),
+        // exactly like the CLI re-attaches names by walking the importable list.
+        var byVideo: [String: [ShadowEvidenceRow]] = [:]
+        for (i, v) in importable.enumerated() where i < matrix.count {
+            byVideo[v.key] = ShadowTelemetry.rows(evidence: matrix[i],
+                                                  audioKeys: audioKeys, audioNames: audioNames)
+        }
+        return byVideo
+    }
+
+    /// PURE Phase-4 (§9.2) overflow decision — unit-testable headlessly (no engine, no
+    /// media), the parity mirror of `cli/src/pair.rs` step 3a. Given the per-video eligible
+    /// (`prefilterCandidate`) counts IN INPUT ORDER and the two core-owned resource ceilings,
+    /// returns `Some(CandidateOverflow)` for each row that may NOT be verified within budget
+    /// and `nil` otherwise. A row overflows when its eligible set exceeds `perVideoLimit`, OR
+    /// when adding it would push the running total of VERIFIED pairs past `totalLimit` (only
+    /// non-overflowed rows count toward the total — an overflowed row verifies nothing). The
+    /// per-resolve total is order-dependent BY THE INPUT ORDER, which is deterministic
+    /// (name-sorted upstream), so the result is stable. The caller forces every overflowed
+    /// row to honest `ambiguous`; this never drops a candidate silently.
+    static func candidateOverflows(eligibleCounts: [Int], perVideoLimit: Int, totalLimit: Int)
+        -> [CandidateOverflow?] {
+        var overflow: [CandidateOverflow?] = Array(repeating: nil, count: eligibleCounts.count)
+        var totalVerified = 0
+        for (i, eligible) in eligibleCounts.enumerated() {
+            if eligible == 0 { continue }
+            if eligible > perVideoLimit {
+                overflow[i] = CandidateOverflow(eligible: eligible, limit: perVideoLimit, scope: "perVideo")
+            } else if totalVerified + eligible > totalLimit {
+                overflow[i] = CandidateOverflow(eligible: eligible, limit: totalLimit, scope: "total")
+            } else {
+                totalVerified += eligible
+            }
+        }
+        return overflow
+    }
+
+    /// Match classifier (PLAN-MATCH-CLASSIFIER §5.2 / Stage B; Phase-4 §9 rework) — flag ON
+    /// only. Verifies EVERY `prefilterCandidate` (no top-K truncation — §2.5/§9.1) and keeps
+    /// only the cells that pass `isMatch`. The ONLY bound on work is the core-owned
+    /// `maxVerifyPairsPerVideo`/`maxVerifyPairsTotal` SAFETY CEILING (read from
+    /// `pairingParamsDefault()`): a row whose eligible set exceeds the per-video ceiling, or
+    /// whose addition would exceed the per-resolve ceiling, OVERFLOWS — no subset is verified
+    /// and a `CandidateOverflow` is returned so `resolveRow` surfaces it as honest `ambiguous`
+    /// with all candidates visible (§9.2). Verification runs in chunks to bound transient
+    /// allocation. Pure measurement + arithmetic; off-main like `batchVerify` (Engine/
+    /// TrackHandle Sendable). The CLI mirror is `cli/src/pair.rs` step 3a.
     private static func classifyMatches(videos: [ResolverVideo], audios: [ResolverAudio],
                                         perVideo: [[(Int, PairCorrelation)]],
-                                        engine: Engine, params: PairParams) -> [[(Int, PairCorrelation)]] {
+                                        engine: Engine, params: PairParams)
+        -> (perVideo: [[(Int, PairCorrelation)]], overflow: [CandidateOverflow?]) {
         var out: [[(Int, PairCorrelation)]] = Array(repeating: [], count: videos.count)
-        // Flatten the capped requests across videos into ONE batch, remembering each
-        // request's (vi, ai, m) so the is_match survivors map back per video.
+        // Resource ceilings come from core's single PairingParams contract (not a copy here).
+        let limits = engine.pairingParamsDefault()
+        // Chunk size bounds the transient verify request/result allocation; correctness is
+        // independent of it (every eligible cell within the ceiling is verified).
+        let verifyChunk = 256
+
+        // The overflow decision (pure, unit-tested by `candidateOverflows`) over the per-video
+        // eligible counts — a stripped-audio video has no candidates (count 0, never overflows).
+        let eligibleCounts = videos.indices.map { videos[$0].handle == nil ? 0 : perVideo[$0].count }
+        let overflow = candidateOverflows(eligibleCounts: eligibleCounts,
+                                          perVideoLimit: limits.maxVerifyPairsPerVideo,
+                                          totalLimit: limits.maxVerifyPairsTotal)
+
+        // Flatten the to-verify cells (NON-overflowed videos only) into a batched verify. An
+        // overflowed video keeps `perVideo[vi]` intact (all names visible) and verifies nothing
+        // — `resolveRow` surfaces it as honest `ambiguous` with the overflow detail.
         var reqIndex: [(vi: Int, ai: Int, m: PairCorrelation)] = []
         var pairs: [(TrackHandle, TrackHandle, Double)] = []
         for (vi, v) in videos.enumerated() {
-            guard let vh = v.handle else { continue }
-            // Cap by NCC desc; ties by audio file name (deterministic, clock-free §1.4).
-            let capped = perVideo[vi]
-                .sorted { a, b in a.1.ncc != b.1.ncc ? a.1.ncc > b.1.ncc : audios[a.0].name < audios[b.0].name }
-                .prefix(params.verifyMaxCandidatesPerVideo)
-            for (ai, m) in capped {
+            guard let vh = v.handle, overflow[vi] == nil else { continue }
+            for (ai, m) in perVideo[vi] {
                 reqIndex.append((vi, ai, m))
                 pairs.append((vh, audios[ai].handle, m.lagMs))
             }
         }
-        guard !pairs.isEmpty else { return out }
-        let fits = engine.verifyBatch(pairs) ?? Array(repeating: nil, count: pairs.count)
-        for (i, req) in reqIndex.enumerated() where i < fits.count {
-            if let f = fits[i], isMatch(f, params: params) {
-                out[req.vi].append((req.ai, req.m))
+        guard !pairs.isEmpty else { return (out, overflow) }
+        // Verify in chunks; map each is_match survivor back to its video.
+        var base = 0
+        while base < pairs.count {
+            let end = min(base + verifyChunk, pairs.count)
+            let slice = Array(pairs[base..<end])
+            let fits = engine.verifyBatch(slice) ?? Array(repeating: nil, count: slice.count)
+            for k in 0..<slice.count {
+                let req = reqIndex[base + k]
+                if k < fits.count, let f = fits[k], isMatch(f) {
+                    out[req.vi].append((req.ai, req.m))
+                }
             }
+            base = end
         }
-        return out
+        return (out, overflow)
     }
 
     /// Pass 2 for one row: attach RMS telemetry, then (for a provisional row) run
@@ -416,6 +746,7 @@ enum Resolver {
     /// `pending` is only decorated here — its `state`/`selected` are untouched.
     private static func finalize(_ outcome: RowOutcome, fitByCand: [String: PairFit],
                                  verifyByCand: [String: VerifyFit],
+                                 shadowByVideo: [String: [ShadowEvidenceRow]],
                                  params: PairParams) -> ResolvedRow {
         var row = outcome.row
         let vk = row.videoKey
@@ -456,6 +787,12 @@ enum Resolver {
         let withFits = cands.filter { $0.fitRmsMs != nil }
         if withFits.count >= 1 { row.detail.fitBestRmsMs = withFits[0].fitRmsMs }
         if withFits.count >= 2 { row.detail.fitSecondRmsMs = withFits[1].fitRmsMs }
+
+        // Boundary-9 (§14.2/§14.4): attach the OBSERVATIONAL spectral shadow telemetry for this
+        // video onto the FINAL row (provisional ambiguous OR rescued — the row decision above is
+        // already fully formed and is NOT consulted here). Empty when the shadow flag is OFF ⇒
+        // `shadowEvidence` stays nil and the row is byte-identical to today. Display-only.
+        if let shadow = shadowByVideo[vk] { row.detail.shadowEvidence = shadow }
         return row
     }
 
@@ -468,6 +805,7 @@ enum Resolver {
     // MARK: - §3.3 single-row resolution
 
     private static func resolveRow(video: ResolverVideo, cands: [(Int, PairCorrelation)],
+                                   overflow: CandidateOverflow?,
                                    audios: [ResolverAudio], engine: Engine, params: PairParams,
                                    abMemo: inout [PairKey: PairCorrelation],
                                    fitReqs: inout [FitRequest]) -> RowOutcome {
@@ -485,6 +823,16 @@ enum Resolver {
 
         if !video.hasAudio {
             return done(row(.noMatch, nil, [], ResolutionDetail(margin: nil, clusters: 0, note: "no audio stream")))
+        }
+
+        // Resource ceiling exceeded (§9.2): NEVER a silent eviction. We verified no subset,
+        // so we cannot confidently select — the row is `ambiguous` with all candidate names
+        // listed and the overflow detail (eligible count + configured limit) for the user.
+        if let ov = overflow {
+            let alternates = cands.map { mk($0.0, $0.1) }
+            let note = "candidate overflow: \(ov.eligible) eligible exceed the \(ov.limit) \(ov.scope) verify limit"
+            return done(row(.ambiguous, nil, alternates,
+                            ResolutionDetail(margin: nil, clusters: 0, note: note, candidateOverflow: ov)))
         }
 
         // Candidates sorted by z desc, ties by audio file name (deterministic,
@@ -696,16 +1044,12 @@ enum Resolver {
 
     // MARK: - classifier predicate (PLAN-MATCH-CLASSIFIER §2.3) — telemetry only in Phase 1
 
-    /// The fine-verify classifier predicate, mirroring core `verify::is_match`
-    /// (verify.rs:41). Pure; thresholds from `params`. In Phase 1 this is consumed ONLY
-    /// by the COUPLE_VERIFY_DUMP readout (no resolve `if` calls it) — Phase 2 makes it
-    /// the candidacy decision. A real match locks a low-rms, high-lock-fraction,
-    /// in-bound-drift line; a non-match scatters or clamps.
-    static func isMatch(_ fit: VerifyFit, params: PairParams) -> Bool {
-        Int(fit.locked) >= params.verifyMinLocked
-            && fit.lockFraction >= params.verifyLockFractionMin
-            && fit.rmsMs <= params.verifyRmsMaxMs
-            && !fit.clamped
+    /// The fine-verify classifier predicate. Core computes the decision once
+    /// (`VerifyFit.matched`, PLAN-AUDIO-MATCHING-PREWORK §6.4); the resolver surfaces it so
+    /// CLI, app, and core share ONE predicate with no copied thresholds. Mirror of core
+    /// `verify::is_match`.
+    static func isMatch(_ fit: VerifyFit) -> Bool {
+        fit.matched
     }
 
     /// Two overlap spans are comparable when within 20% (§5.2 coverage guard).

@@ -36,6 +36,20 @@ final class AppModel {
         if let v = ProcessInfo.processInfo.environment["COUPLE_VERIFY_ACTIVE"] {
             p.verifyClassifierActive = (v == "1")
         }
+        // BOUNDARY 13 (§16.1): the app DEFAULT is the FINGERPRINT resolver (rows resolved from the
+        // core graph-adjusted `PairEvidence`, classification the identity authority). The DEVELOPER
+        // OVERRIDE back to the proven envelope resolver (retained ≥ 1 release) is COUPLE_MATCHER=legacy
+        // (mirrors the CLI `--matcher legacy`). Any other value keeps the fingerprint default.
+        if let v = ProcessInfo.processInfo.environment["COUPLE_MATCHER"] {
+            p.matcherFingerprintPrimary = (v != "legacy")
+        }
+        // Boundary-9 OBSERVATIONAL spectral shadow telemetry (§14.2 / §14.4): OPT-IN, OFF BY DEFAULT.
+        // Under the fingerprint default the rows ARE the spectral evidence; this attaches the shadow
+        // `PairEvidence` to the diagnostic disclosure when the LEGACY override is active. The owner
+        // turns it on per launch with COUPLE_SHADOW_MATCHER=1.
+        if let v = ProcessInfo.processInfo.environment["COUPLE_SHADOW_MATCHER"] {
+            p.shadowMatcherActive = (v == "1")
+        }
         return p
     }()
 

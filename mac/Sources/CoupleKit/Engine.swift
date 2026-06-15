@@ -120,6 +120,14 @@ public final class Engine: @unchecked Sendable {
 
     // ---------- pairing (SPEC-V2 §4) ----------
 
+    /// Core's default `PairingParams` (PLAN-AUDIO-MATCHING-PREWORK §6) — the single source of
+    /// pairing/verifier defaults. The resolver reads these instead of keeping its own copies,
+    /// so a verifier threshold lives in exactly one place. Falls back to the Swift mirror
+    /// defaults only if the core read ever fails (never in normal operation).
+    public func pairingParamsDefault() -> PairingParams {
+        (try? decodeJSON(cpl_pairing_params_default_json(), as: PairingParams.self)) ?? PairingParams()
+    }
+
     /// Role-agnostic stage-1 between any two imported tracks. Never errors on a
     /// poor match (below-floor cells keep the coarse lag); nil only on a real
     /// core fault.
@@ -174,4 +182,111 @@ public final class Engine: @unchecked Sendable {
               let json = String(data: data, encoding: .utf8) else { return nil }
         return try? decodeJSON(cpl_verify_batch(ctx, json), as: [VerifyFit?].self)
     }
+
+    // ---------- method-neutral pair evidence (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.2) ----------
+
+    /// Method-neutral evidence for one candidate (`video`, `audio`) pair (`cpl_match_pair`, §14.2).
+    /// `paramsJSON` is an optional `PairingParams` override selecting the matcher via `matcherMode`
+    /// (nil ⇒ core default `legacyEnvelope` ⇒ `EnvelopeV1` evidence; pass
+    /// `{"matcherMode":"fingerprintShadow"}` to run the spectral pipeline with the legacy correlation
+    /// attached for comparison). nil only on a real core fault or invalid params.
+    ///
+    /// PLUMBING ONLY (boundary 8): this returns the decoded carrier. The resolver migration
+    /// (boundary 9) will consume `classification` / refined lag-drift / `score` / `scoreMargin`; it
+    /// MUST NOT reproduce the fingerprint acceptance formula — all acceptance logic stays in core.
+    public func matchPair(_ video: TrackHandle, _ audio: TrackHandle, paramsJSON: String? = nil)
+        -> PairEvidence?
+    {
+        (try? decodeOptionalJSON(
+            cpl_match_pair(ctx, video.id, audio.id, paramsJSON), as: PairEvidence.self)) ?? nil
+    }
+
+    /// Batch method-neutral evidence (`cpl_match_candidates`, §14.2): `result[i]` is video `i`'s row
+    /// of cells, one per audio (same wire form as `matchPair`). In the fingerprint modes core builds
+    /// ONE audio-side index for the whole batch (§5.3). `paramsJSON` as in `matchPair` (nil ⇒ core
+    /// default `legacyEnvelope`). Returns one empty row per video when there are no audios; nil only
+    /// on a core fault or invalid params. PLUMBING ONLY — see `matchPair`.
+    public func matchCandidates(
+        videos: [TrackHandle], audios: [TrackHandle], paramsJSON: String? = nil
+    ) -> [[PairEvidence]]? {
+        guard !videos.isEmpty else { return [] }
+        guard !audios.isEmpty else { return videos.map { _ in [] } }
+        let vs = videos.map(\.id)
+        let aus = audios.map(\.id)
+        return vs.withUnsafeBufferPointer { vp in
+            aus.withUnsafeBufferPointer { ap in
+                try? decodeJSON(
+                    cpl_match_candidates(
+                        ctx, vp.baseAddress, UInt(vp.count), ap.baseAddress, UInt(ap.count),
+                        paramsJSON),
+                    as: [[PairEvidence]].self)
+            }
+        }
+    }
+
+    /// GRAPH-ADJUSTED batch evidence (`cpl_match_candidates_graph`, §13.4): same shape and wire form
+    /// as `matchCandidates`, but core applies the §13 cross-device graph-consistency pass (an
+    /// `Ambiguous` edge may be promoted to `Match`, or a `Match` demoted to `Ambiguous`, when
+    /// independent composed affine paths close per §13.3). Boundary 13: this is the DEFAULT
+    /// resolver's input — `Resolver.resolveFingerprint` keys on each cell's `classification` (the
+    /// identity authority) and orders by `score`; acceptance logic stays in core. In `legacyEnvelope`
+    /// mode the graph pass is a no-op and this equals `matchCandidates`. nil only on a core fault or
+    /// invalid params.
+    public func matchCandidatesGraph(
+        videos: [TrackHandle], audios: [TrackHandle], paramsJSON: String? = nil
+    ) -> [[PairEvidence]]? {
+        guard !videos.isEmpty else { return [] }
+        guard !audios.isEmpty else { return videos.map { _ in [] } }
+        let vs = videos.map(\.id)
+        let aus = audios.map(\.id)
+        return vs.withUnsafeBufferPointer { vp in
+            aus.withUnsafeBufferPointer { ap in
+                try? decodeJSON(
+                    cpl_match_candidates_graph(
+                        ctx, vp.baseAddress, UInt(vp.count), ap.baseAddress, UInt(ap.count),
+                        paramsJSON),
+                    as: [[PairEvidence]].self)
+            }
+        }
+    }
+
+    /// §13.4 audio-audio SIMULTANEITY check over affine evidence (`cpl_triangle_closes`) — the SAME
+    /// core predicate the CLI resolver uses, so neither shell reimplements the affine composition or
+    /// the closure tolerances (invariant 8). Given the three legs' effective maps (V→A, A→B, V→B as
+    /// `(lagMs, driftPpm)`), the A↔B core `classification`, the video coverage window, and the §13.3
+    /// graph tolerances, returns whether the two recorders are simultaneous: the A↔B edge is a `Match`
+    /// AND composing V→A then A→B reproduces V→B at start/mid/end within tolerance. `residualMaxMs` is
+    /// the composed start/mid/end residual MAX for the calibration read-out. Defaults (closes=false)
+    /// on any core fault — a fault never fabricates a simultaneity.
+    public func triangleCloses(
+        vaLagMs: Double, vaDriftPpm: Double,
+        abLagMs: Double, abDriftPpm: Double,
+        vbLagMs: Double, vbDriftPpm: Double,
+        abClassification: MatchClassification,
+        coverageS: Double, offsetTolMs: Double, driftTolPpm: Double
+    ) -> (closes: Bool, residualMaxMs: Double) {
+        let req: [String: Any] = [
+            "va": ["lagMs": vaLagMs, "driftPpm": vaDriftPpm],
+            "ab": ["lagMs": abLagMs, "driftPpm": abDriftPpm],
+            "vb": ["lagMs": vbLagMs, "driftPpm": vbDriftPpm],
+            "abClassification": abClassification.rawValue,
+            "coverageS": coverageS,
+            "offsetTolMs": offsetTolMs,
+            "driftTolPpm": driftTolPpm,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: req),
+            let json = String(data: data, encoding: .utf8),
+            let result = try? decodeJSON(cpl_triangle_closes(json), as: TriangleResult.self)
+        else {
+            return (false, 0.0)
+        }
+        return (result.closes, result.residualMaxMs)
+    }
+}
+
+/// Decoded result of `cpl_triangle_closes` (§13.4): whether the triangle closes + the composed
+/// start/mid/end residual MAX (ms) for calibration read-out.
+struct TriangleResult: Decodable {
+    var closes: Bool
+    var residualMaxMs: Double
 }

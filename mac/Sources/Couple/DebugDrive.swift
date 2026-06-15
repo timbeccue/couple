@@ -67,7 +67,8 @@ final class DebugDrive {
         let env = ProcessInfo.processInfo.environment
         guard env["COUPLE_OPEN_CAMERA"] != nil || env["COUPLE_PAIR_DIR"] != nil
             || env["COUPLE_PROFILE"] != nil || env["COUPLE_RESTORE_TEST"] != nil
-            || env["COUPLE_RMS_TEST"] != nil || env["COUPLE_VERIFY_DUMP"] != nil else { return }
+            || env["COUPLE_RMS_TEST"] != nil || env["COUPLE_VERIFY_DUMP"] != nil
+            || env["COUPLE_OVERFLOW_TEST"] != nil || env["COUPLE_SHADOW_DUMP"] != nil else { return }
         Task { await run(env: env) }
     }
 
@@ -77,8 +78,9 @@ final class DebugDrive {
 
         // Media-free pure-predicate tests run first and, when nothing else is
         // requested, exit without entering the (media-gated) resolve/sync wait.
-        if env["COUPLE_RMS_TEST"] == "1" {
-            await rmsTest()
+        if env["COUPLE_RMS_TEST"] == "1" || env["COUPLE_OVERFLOW_TEST"] == "1" {
+            if env["COUPLE_RMS_TEST"] == "1" { await rmsTest() }
+            if env["COUPLE_OVERFLOW_TEST"] == "1" { await overflowTest() }
             let mediaRequested = env["COUPLE_OPEN_CAMERA"] != nil || env["COUPLE_PAIR_DIR"] != nil
                 || env["COUPLE_PROFILE"] != nil || env["COUPLE_RESTORE_TEST"] != nil
             if !mediaRequested {
@@ -129,6 +131,9 @@ final class DebugDrive {
         }
         if env["COUPLE_VERIFY_DUMP"] == "1" {
             await verifyDump()
+        }
+        if env["COUPLE_SHADOW_DUMP"] == "1" {
+            await shadowDump()
         }
         if env["COUPLE_RESTORE_TEST"] == "1" {
             await restoreTest()
@@ -637,6 +642,63 @@ final class DebugDrive {
         print("RMS-TEST summary: \(pass) passed, \(fail) failed")
     }
 
+    /// Pure unit test for the Phase-4 (§9.2/§9.3) candidate-overflow decision
+    /// (`Resolver.candidateOverflows`) — the Swift PARITY mirror of the CLI gate
+    /// `candidate_overflow_no_silent_eviction`. No engine, no media: it drives the pure
+    /// decision over per-video eligible counts, asserting the three §9.3 properties — normal
+    /// limits verify everything (no overflow), a low limit degrades to EXPLICIT overflow
+    /// (→ ambiguous, eligible/limit/scope surfaced), and the decision is INDEPENDENT of any
+    /// per-candidate identity or filename (it is a function of COUNTS only, so nothing is
+    /// silently retained by name). Run headless via COUPLE_OVERFLOW_TEST=1 (needs no files).
+    private func overflowTest() async {
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("OVERFLOW-TEST \(ok ? "ok " : "FAIL") \(name)")
+        }
+
+        // One row with EIGHT eligible candidates (the §9.3 shape: the true pair sits past
+        // position six — but the decision never ranks, so position is irrelevant by design).
+        // (a) Normal core limit (default maxVerifyPairsPerVideo = 32 ≫ 8): no overflow ⇒ every
+        // candidate is verified; the true pair cannot be evicted.
+        let normal = Resolver.candidateOverflows(eligibleCounts: [8], perVideoLimit: 32, totalLimit: 4096)
+        check("(a) normal limit (8 ≤ 32) ⇒ no overflow, all candidates verified", normal[0] == nil)
+
+        // (b) Low per-video limit (4 < 8) ⇒ explicit overflow with eligible/limit/scope; the
+        // resolver turns this into an `ambiguous` row (never noMatch/confident).
+        let low = Resolver.candidateOverflows(eligibleCounts: [8], perVideoLimit: 4, totalLimit: 4096)
+        if let ov = low[0] {
+            check("(b) low limit (8 > 4) ⇒ overflow eligible=8", ov.eligible == 8)
+            check("(b) overflow surfaces the configured limit=4", ov.limit == 4)
+            check("(b) overflow scope = perVideo", ov.scope == "perVideo")
+        } else {
+            check("(b) low limit (8 > 4) ⇒ overflow", false)
+        }
+
+        // (c) The decision is a function of COUNTS only — there is no candidate identity or
+        // filename in the signature, so it cannot silently retain a subset by name. Same count,
+        // same verdict, every time (the CLI proves this by reversing the filenames).
+        let again = Resolver.candidateOverflows(eligibleCounts: [8], perVideoLimit: 4, totalLimit: 4096)
+        check("(c) identical counts ⇒ identical overflow (no name-dependent retention)",
+              again[0]?.eligible == 8 && again[0]?.limit == 4 && again[0]?.scope == "perVideo")
+
+        // Per-resolve total ceiling: only NON-overflowed rows count toward the total, and a
+        // per-video overflow takes precedence. Three rows of 4 with totalLimit 9: row0 (0→4)
+        // ok, row1 (4→8) ok, row2 (8+4>9) overflows on `total`.
+        let totalCase = Resolver.candidateOverflows(eligibleCounts: [4, 4, 4], perVideoLimit: 32, totalLimit: 9)
+        check("(total) per-resolve ceiling: rows 0,1 fit, row 2 overflows on total",
+              totalCase[0] == nil && totalCase[1] == nil
+              && totalCase[2]?.scope == "total" && totalCase[2]?.limit == 9 && totalCase[2]?.eligible == 4)
+
+        // A row at exactly the per-video limit is NOT an overflow (strict `>`), and a
+        // zero-candidate (e.g. stripped-audio) row never overflows.
+        let edge = Resolver.candidateOverflows(eligibleCounts: [0, 4], perVideoLimit: 4, totalLimit: 4096)
+        check("(edge) count == limit is not overflow; zero-candidate never overflows",
+              edge[0] == nil && edge[1] == nil)
+
+        print("OVERFLOW-TEST summary: \(pass) passed, \(fail) failed")
+    }
+
     /// COUPLE_VERIFY_DUMP=1 (PLAN-MATCH-CLASSIFIER §4.1/§4.5): the owner's window onto
     /// the fine-verify signal on real files. Iterates the FULL video×audio matrix and
     /// runs verify on EVERY cell that has a plausible lag, **bypassing the z-gate** — so
@@ -651,7 +713,9 @@ final class DebugDrive {
             if !model.resolving && (!model.pool.videos.isEmpty || !model.pool.audios.isEmpty) { break }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
-        let params = model.params
+        // Core owns the pairing/verifier defaults (PLAN-AUDIO-MATCHING-PREWORK §6); the dump
+        // reads the floor from core rather than a copied threshold.
+        let pairing = engine.pairingParamsDefault()
         let videos = model.pool.videos
         let audios = model.pool.audios
         print("VERIFY-DUMP: \(videos.count) video(s) × \(audios.count) audio file(s) — FULL matrix, z-gate bypassed")
@@ -686,15 +750,66 @@ final class DebugDrive {
             guard i < fits.count, let f = fits[i] else {
                 // None ⇒ overlap below the absolute hard floor (no candidate possible).
                 print(String(format: "  %@ x %@ | z %.1f lag %.0f — below verify_min_overlap_s (%.0f s), no fit",
-                             v, a, cell.m.z, cell.m.lagMs, params.verifyMinOverlapS))
+                             v, a, cell.m.z, cell.m.lagMs, pairing.minOverlapS))
                 continue
             }
-            let match = Resolver.isMatch(f, params: params)
+            let match = Resolver.isMatch(f)
             print(String(format: "  %@ x %@ | z %.1f lag %.0f overlap %.1f locked %d/%d frac %.2f rms %.2f ppm %.0f clamped %@ is_match %@",
                          v, a, cell.m.z, cell.m.lagMs, f.overlapS, f.locked, f.expected,
                          f.lockFraction, f.rmsMs, f.ppm, f.clamped ? "Y" : "n", match ? "YES" : "no"))
         }
         print("VERIFY-DUMP: done")
+    }
+
+    /// COUPLE_SHADOW_DUMP=1 (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.2 / §14.4): the owner's window
+    /// onto the OBSERVATIONAL spectral shadow telemetry on real files. Re-resolves the live pool with
+    /// the shadow matcher forced ON (independent of the launch flag), so each video's
+    /// `ResolutionDetail.shadowEvidence` is populated by the SAME pure projection the diagnostic
+    /// disclosure renders, and prints the per-(video, audio) evidence in `score` order. Read-only:
+    /// it changes NO resolved row (the legacy `state`/selection are printed alongside to prove they
+    /// stay legacy); prints to stdout only. Like the other harnesses it needs the GUI app-bundle
+    /// runloop (pool import + handles) — it does NOT run to completion in a headless agent shell; the
+    /// pure projection's automated coverage is `ShadowTelemetry` in CoupleKitTests (`swift test`).
+    private func shadowDump() async {
+        guard let model, let engine = model.engine else { print("SHADOW-DUMP: no engine"); return }
+        // Wait for the pool import + resolution to settle (the dump needs handles).
+        for _ in 0..<1800 {
+            if !model.resolving && (!model.pool.videos.isEmpty || !model.pool.audios.isEmpty) { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let videos = model.pool.videos.map {
+            ResolverVideo(key: $0.id, name: $0.name, durationS: $0.durationS,
+                          handle: $0.handle, hasAudio: $0.handle != nil)
+        }
+        let audios = model.pool.audios.map {
+            ResolverAudio(key: $0.id, name: $0.name, durationS: $0.durationS, handle: $0.handle!)
+        }
+        // Force shadow ON for the dump regardless of the launch flag — the observational shadow
+        // telemetry attaches to the LEGACY resolver's rows (boundary 9). Boundary 13 made the
+        // fingerprint resolver the default (its rows ARE the spectral evidence and carry no
+        // `shadowEvidence`), so this dump pins the legacy override to populate the comparison.
+        var params = model.params
+        params.matcherFingerprintPrimary = false
+        params.shadowMatcherActive = true
+        let rows = await Task.detached(priority: .userInitiated) {
+            Resolver.resolve(videos: videos, audios: audios, engine: engine, params: params)
+        }.value
+        print("SHADOW-DUMP: \(rows.count) row(s) — spectral shadow is OBSERVATIONAL; resolved rows stay legacy")
+        for row in rows {
+            let sel = row.selected?.audioName ?? "—"
+            print("  \(row.videoName) [legacy: \(row.state.rawValue) -> \(sel)]")
+            guard let shadow = row.detail.shadowEvidence, !shadow.isEmpty else {
+                print("      (no spectral evidence)")
+                continue
+            }
+            for ev in shadow {
+                print(String(format: "      shadow: %@ %@ · lag %.0f ppm %.0f · supp %d · in %.0f%% · cov %.0f%% · score %.3f · margin %.3f",
+                             String(describing: ev.classification), ev.audioName, ev.refinedLagMs ?? ev.lagMs,
+                             ev.refinedDriftPpm ?? ev.driftPpm, ev.support, ev.inlierFraction * 100,
+                             ev.temporalCoverage * 100, ev.score, ev.scoreMargin))
+            }
+        }
+        print("SHADOW-DUMP: done")
     }
 
     private func capture(to path: String) {

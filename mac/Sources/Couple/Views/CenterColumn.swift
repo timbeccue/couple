@@ -237,11 +237,59 @@ private struct ResolveBanner: View {
                     candidateRow(cand)
                 }
             }
+            // Boundary-9 (§14.4): the OBSERVATIONAL spectral shadow evidence appears ONLY in this
+            // existing diagnostic disclosure (never in a normal queue row), and ONLY when the owner
+            // opted in (COUPLE_SHADOW_MATCHER=1 ⇒ `detail.shadowEvidence` populated). Algorithm terms
+            // are confined here — the user-facing row vocabulary (confident/partial/…/no match) is
+            // untouched. Read-only: it reflects core's classification, it does not change the row.
+            if let shadow = couple.detail.shadowEvidence, !shadow.isEmpty {
+                shadowDisclosure(shadow)
+            }
         }
         .padding(10)
         .background(Theme.verdictColor(couple.verdict).opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8)
             .strokeBorder(Theme.verdictColor(couple.verdict).opacity(0.3)))
+    }
+
+    /// Diagnostic-disclosure-only spectral shadow read-out (§14.2/§14.4). One line per audio,
+    /// ordered by the projector's deterministic `score` rank. Shows core's `classification` verbatim
+    /// (the acceptance authority) plus the consensus mapping + quality metrics for owner calibration.
+    /// This is the ONLY place algorithm jargon is allowed; it carries no decision (resolved rows are
+    /// legacy). Refined lag/drift (boundary 7) are shown when core supplied them.
+    private func shadowDisclosure(_ rows: [ShadowEvidenceRow]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Spectral shadow (observational — does not change the match)")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Theme.textTertiary)
+            ForEach(rows, id: \.audioKey) { ev in
+                Text(shadowLine(ev))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    /// One shadow line: `<class> <audio> · lag <ms> · <ppm> ppm · supp <n> · in <%> · cov <%> · p95 <ms> · score <s>`.
+    /// `class` is core's verdict (match/no-match/ambiguous/…); the refined lag/drift replace the
+    /// consensus pair when present. `p95` reads `—` when core had no fittable hypothesis.
+    private func shadowLine(_ ev: ShadowEvidenceRow) -> String {
+        let cls: String
+        switch ev.classification {
+        case .match: cls = "match"
+        case .noMatch: cls = "no-match"
+        case .ambiguous: cls = "ambiguous"
+        case .insufficientOverlap: cls = "insuff-overlap"
+        case .unavailable: cls = "unavailable"
+        }
+        let lag = ev.refinedLagMs ?? ev.lagMs
+        let ppm = ev.refinedDriftPpm ?? ev.driftPpm
+        let p95 = ev.residualP95Ms.map { String(format: "%.1f", $0) } ?? "—"
+        return String(format: "%@ %@ · lag %.0f · %.0f ppm · supp %d · in %.0f%% · cov %.0f%% · p95 %@ · score %.2f",
+                      cls, ev.audioName, lag, ppm, ev.support,
+                      ev.inlierFraction * 100, ev.temporalCoverage * 100, p95, ev.score)
     }
 
     private var reason: String {
