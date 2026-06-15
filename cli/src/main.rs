@@ -160,6 +160,19 @@ enum Cmd {
         /// decision and adds nothing to --json (PLAN-MATCH-CLASSIFIER §4.5).
         #[arg(long = "verify-debug")]
         verify_debug: bool,
+        /// Recording-identity matcher (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.3 / §16.1).
+        /// `fingerprint` (DEFAULT, boundary 13): resolve rows from the core graph-adjusted
+        /// `PairEvidence` matrix (classification is the identity authority). `legacy`: the
+        /// DEVELOPER OVERRIDE — today's envelope resolution, byte-identical output, for ≥ 1
+        /// release (§16.1). `shadow`: resolve with legacy but ALSO emit the spectral matrix in
+        /// --json (observational, for calibration comparison).
+        #[arg(long = "matcher", value_name = "MODE", default_value = "fingerprint")]
+        matcher: String,
+        /// With `--matcher shadow|fingerprint`, print a concise per-cell spectral evidence
+        /// table to STDERR (method, class, lag, ppm, support, inlier%, coverage%, p95,
+        /// score, margin). Opt-in; adds nothing to --json and changes no decision (§14.3/§14.4).
+        #[arg(long = "matcher-debug")]
+        matcher_debug: bool,
     },
     /// Session state tooling
     State {
@@ -170,6 +183,62 @@ enum Cmd {
     Fixture {
         #[command(subcommand)]
         cmd: FixtureCmd,
+    },
+    /// Matcher-corpus tooling (PLAN-AUDIO-MATCHING-PREWORK §10)
+    Corpus {
+        #[command(subcommand)]
+        cmd: CorpusCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum CorpusCmd {
+    /// Write the deterministic §10.2 synthetic manifest to <out> (the committed cases.json).
+    GenSynthetic {
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Measure the §15.3 performance budgets (fingerprint gen/hr, artifact bytes/hr, index build,
+    /// lookup, fit, 6×6 & 20×20 matrix wall times, peak RSS). A TIMING report (non-deterministic);
+    /// printed as JSON on stdout with a budget pass/fail summary on stderr.
+    Budgets {
+        /// Audio seconds used to measure fingerprint generation + artifact size (longer ⇒ steadier
+        /// per-hour figure, slower run).
+        #[arg(long, default_value_t = 120.0)]
+        gen_audio_s: f64,
+        /// Audio seconds per track in the 6×6 / 20×20 matrix workloads.
+        #[arg(long, default_value_t = 60.0)]
+        cell_audio_s: f64,
+    },
+    /// Score a matcher over a corpus manifest and emit the §10.4 metrics JSON on stdout
+    /// (byte-identical across runs); runtime + peak candidate count print to stderr.
+    Metrics {
+        /// A corpus manifest JSON (synthetic/calibration/validation/holdout).
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Repo root the real-data case paths resolve against (default: cwd).
+        #[arg(long)]
+        repo_root: Option<PathBuf>,
+        /// Work dir for regenerated synthetic media (default: a temp dir, cleaned on exit).
+        #[arg(long)]
+        work_dir: Option<PathBuf>,
+        /// Which matcher to score (PLAN-SPECTRAL-FINGERPRINT-MATCHING §15.1):
+        /// `legacy-z` (default), `legacy-fine-lock`, `fingerprint-shadow`, `fingerprint-primary`.
+        #[arg(long = "matcher", value_name = "MATCHER", default_value = "legacy-z")]
+        matcher: String,
+        /// DEPRECATED alias for `--matcher legacy-fine-lock` (the prework flag). Ignored when
+        /// `--matcher` is given a non-default value.
+        #[arg(long)]
+        verify_active: bool,
+        /// Threshold profile for the fingerprint matcher: `0` = the uncalibrated shadow default,
+        /// `1` = the frozen profile (`FingerprintMatchParams::profile_v1`), `2` = the re-calibrated
+        /// recall-fix profile (`profile_v2`). Ignored by the legacy matchers. `fingerprint-primary`
+        /// REQUIRES a profile ≥ 1 (§6).
+        #[arg(long, default_value_t = 0)]
+        profile: u32,
+        /// Resolver z floor for the legacy verdict (mirrors `pair`'s z-min).
+        #[arg(long, default_value_t = 8.5)]
+        z_min: f64,
     },
 }
 
@@ -398,7 +467,7 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
             };
             run_export(cli, ctx, video, audio, state, opts, cancel)
         }
-        Cmd::Pair { dir, params, verify_debug } => {
+        Cmd::Pair { dir, params, verify_debug, matcher, matcher_debug } => {
             let mut pp = pair::PairParams::default();
             for kv in params {
                 let (k, v) = kv
@@ -406,7 +475,11 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
                     .ok_or_else(|| couple_core::CoupleError::invalid("--params expects k=v"))?;
                 pp.set(k, v)?;
             }
-            pair::run_pair(cli.json, cli.quiet, cli.progress_json, ctx, dir, &pp, *verify_debug, cancel)
+            let matcher = pair::MatcherChoice::parse(matcher)?;
+            pair::run_pair(
+                cli.json, cli.quiet, cli.progress_json, ctx, dir, &pp, *verify_debug, matcher,
+                *matcher_debug, cancel,
+            )
         }
         Cmd::State { cmd } => match cmd {
             StateCmd::Validate { file } => {
@@ -474,6 +547,113 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
                     .map_err(|e| couple_core::CoupleError::invalid(format!("spec JSON: {e}")))?;
                 let truth = couple_core::fixture::generate_session(out, &spec, &ctx.ffmpeg()?)?;
                 emit(cli, &truth)
+            }
+        },
+        Cmd::Corpus { cmd } => match cmd {
+            CorpusCmd::GenSynthetic { out } => {
+                let manifest = couple_core::matcher_corpus::synthetic_manifest();
+                manifest.validate()?;
+                std::fs::write(out, serde_json::to_vec_pretty(&manifest).unwrap())
+                    .map_err(|e| couple_core::CoupleError::internal(format!("write manifest: {e}")))?;
+                if !cli.quiet {
+                    eprintln!("wrote {} synthetic case(s) to {}", manifest.cases.len(), out.display());
+                }
+                Ok(())
+            }
+            CorpusCmd::Budgets { gen_audio_s, cell_audio_s } => {
+                let r = couple_core::matcher_corpus::measure_budgets(*gen_audio_s, *cell_audio_s);
+                // §15.3 budgets: gen ≤ 10 s/hr, artifact ≤ 10 MB/hr, 6×6 ≤ 5 s, 20×20 ≤ 15 s,
+                // peak mem ≤ 512 MB. Pass/fail to stderr; the measured JSON to stdout.
+                let mb = 1024.0 * 1024.0;
+                eprintln!(
+                    "budgets: gen {:.1} s/hr (≤10) | artifact {:.2} MB/hr (≤10) | index {:.2} ms | \
+                     lookup {:.3} ms/pair | fit {:.3} ms/pair | 6×6 {:.0} ms (≤5000) | \
+                     20×20 {:.0} ms (≤15000) | peakRSS {:.0} MB (≤512)",
+                    r.fingerprint_gen_ms_per_hour / 1000.0,
+                    r.artifact_bytes_per_hour / mb,
+                    r.index_build_ms,
+                    r.candidate_lookup_ms_per_pair,
+                    r.affine_fit_ms_per_pair,
+                    r.matrix_6x6_ms,
+                    r.matrix_20x20_ms,
+                    r.peak_rss_bytes as f64 / mb,
+                );
+                println!("{}", serde_json::to_string(&r).expect("serialize budgets"));
+                Ok(())
+            }
+            CorpusCmd::Metrics {
+                manifest,
+                repo_root,
+                work_dir,
+                matcher,
+                verify_active,
+                profile,
+                z_min,
+            } => {
+                use couple_core::matcher_corpus::Matcher;
+                let raw = std::fs::read(manifest)
+                    .map_err(|e| couple_core::CoupleError::invalid(format!("read manifest: {e}")))?;
+                let m: couple_core::matcher_corpus::CorpusManifest = serde_json::from_slice(&raw)
+                    .map_err(|e| couple_core::CoupleError::invalid(format!("manifest JSON: {e}")))?;
+                // Select the matcher. `--matcher` wins; the deprecated `--verify-active` flag still
+                // maps to the legacy fine-lock when `--matcher` is left at its default.
+                let selected = match matcher.as_str() {
+                    "legacy-z" if *verify_active => Matcher::LegacyFineLock,
+                    "legacy-z" => Matcher::LegacyZ,
+                    "legacy-fine-lock" => Matcher::LegacyFineLock,
+                    "fingerprint-shadow" | "shadow" => Matcher::FingerprintShadow,
+                    "fingerprint-primary" | "fingerprint" => Matcher::FingerprintPrimary,
+                    other => {
+                        return Err(couple_core::CoupleError::invalid(format!(
+                            "unknown --matcher '{other}' (legacy-z|legacy-fine-lock|fingerprint-shadow|fingerprint-primary)"
+                        )))
+                    }
+                };
+                let repo = repo_root.clone().unwrap_or_else(|| std::env::current_dir().unwrap());
+                // Default work dir: a process-unique subdir of the system temp dir (no extra
+                // crate). Cleaned up after scoring unless the caller supplied an explicit dir.
+                let ephemeral = work_dir.is_none();
+                let wd = work_dir.clone().unwrap_or_else(|| {
+                    std::env::temp_dir().join(format!("couple-corpus-{}", std::process::id()))
+                });
+                std::fs::create_dir_all(&wd)
+                    .map_err(|e| couple_core::CoupleError::internal(format!("corpus work dir: {e}")))?;
+                // The fingerprint thresholds under test: profile 1 ⇒ the frozen calibrated table,
+                // else the profile-0 shadow default. Legacy matchers ignore this.
+                let mut params = couple_core::PairingParams::default();
+                match *profile {
+                    0 => {}
+                    1 => {
+                        params.fingerprint_match =
+                            couple_core::fingerprint::FingerprintMatchParams::profile_v1();
+                    }
+                    2 => {
+                        params.fingerprint_match =
+                            couple_core::fingerprint::FingerprintMatchParams::profile_v2();
+                    }
+                    other => {
+                        return Err(couple_core::CoupleError::invalid(format!(
+                            "unknown --profile {other} (0 = shadow default, 1 = profile_v1, 2 = frozen profile_v2)"
+                        )))
+                    }
+                }
+                let scored = couple_core::matcher_corpus::score_manifest_with(
+                    ctx, &m, &repo, &wd, &params, selected, *z_min,
+                );
+                if ephemeral {
+                    let _ = std::fs::remove_dir_all(&wd);
+                }
+                let (metrics, runtime_ms) = scored?;
+                // Runtime + peak candidate count to STDERR (non-deterministic runtime stays OUT
+                // of the scored JSON so two runs are byte-identical — the §11.3 gate).
+                eprintln!(
+                    "corpus metrics ({}): {} case(s), runtime {:.1} ms, peak candidate count {}",
+                    metrics.matcher, metrics.cases, runtime_ms, metrics.peak_candidate_count
+                );
+                // The metrics JSON itself: ALWAYS compact + deterministic on stdout (independent
+                // of --json, so the two-run byte comparison is stable regardless of the flag).
+                println!("{}", serde_json::to_string(&metrics).expect("serialize metrics"));
+                Ok(())
             }
         },
         Cmd::Cache { cmd } => match cmd {
