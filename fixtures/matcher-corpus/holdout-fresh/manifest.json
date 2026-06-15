@@ -1,0 +1,46 @@
+{
+  "schema": "couple-matcher-corpus/1",
+  "split": "holdout",
+  "mediaRoot": "example_data/multifile-session",
+  "cases": [
+    {
+      "id": "fresh_img9901_zoom0004",
+      "group": "2022orch_imgzoom",
+      "a": "2022orch/IMG_9901.MOV",
+      "b": "2022orch/ZOOM0004.WAV",
+      "sameEvent": true,
+      "expectedOffsetMs": 1050.19,
+      "expectedDriftPpm": -22.7,
+      "minimumOverlapS": 60.0,
+      "tags": ["real", "holdoutFresh", "2022orch", "imgzoom", "underCapFractionPath", "truePair"],
+      "allowedForTuning": false,
+      "groundTruthSource": "legacy full auto-sync (couple sync) — 12/12 fine windows accepted over the full 0-221 s span, coarse NCC 0.948 / z 32.2, fit RMS 2.69 ms; offset 1050.19 ms well-determined, drift -22.7 ppm is the legacy fit (real reverberant material is drift-noisy: legacy fine-lock fit -8.1 ppm, fingerprint consensus -24.2 ppm, all agree on offset within ~4 ms). Reserved-unseen: present in NO calibration/validation/old-holdout manifest; the single reserved camera+Zoom pair in the 2022orch folder."
+    },
+    {
+      "id": "fresh_img9901_gigue_negative",
+      "group": "2022orch_imgzoom",
+      "a": "2022orch/IMG_9901.MOV",
+      "b": "hsBach/Gigue Recording.WAV",
+      "sameEvent": false,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 0.0,
+      "tags": ["real", "holdoutFresh", "negative", "crossEvent", "crossSession"],
+      "allowedForTuning": false,
+      "groundTruthSource": "true non-match (cross-session: 2022 camera vs 2013 hsBach recorder, distinct events). Legacy fine-lock: 0/12 windows accepted, fineMatch=false. Both files reserved-unseen ⇒ no leakage."
+    },
+    {
+      "id": "fresh_img9901_prelude_negative",
+      "group": "2022orch_imgzoom",
+      "a": "2022orch/IMG_9901.MOV",
+      "b": "hsBach/Prelude Recording.WAV",
+      "sameEvent": false,
+      "expectedOffsetMs": 0.0,
+      "expectedDriftPpm": 0.0,
+      "minimumOverlapS": 0.0,
+      "tags": ["real", "holdoutFresh", "negative", "crossEvent", "crossSession", "highCorrLowInlier"],
+      "allowedForTuning": false,
+      "groundTruthSource": "true non-match (cross-session). A demanding safety case: two dense music recordings group 33448 correspondences yet the affine consensus finds only 31 inliers (fraction 0.001) ⇒ NoMatch, proving raw correspondence volume alone cannot force a match. Legacy fine-lock: fineMatch=false. Both files reserved-unseen ⇒ no leakage."
+    }
+  ]
+}
