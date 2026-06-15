@@ -91,6 +91,16 @@ impl CacheEntry {
     pub fn meta_path(&self) -> PathBuf {
         self.dir.join("meta.json")
     }
+    /// Derived spectral-fingerprint sidecar `fingerprint-v1.cpf`
+    /// (PLAN-SPECTRAL-FINGERPRINT-MATCHING §8.3). It has an INDEPENDENT format/version lifecycle
+    /// from the PCM and pyramid and is always rebuildable from `pcm48f32.raw`, so it is
+    /// DELIBERATELY NOT part of [`load_meta`]'s validity check: a valid entry without this file is
+    /// still a valid entry (§3 invariant 7 — old caches stay readable; a missing fingerprint is
+    /// not corruption). It lives inside the entry dir, so whole-entry GC accounts for and removes
+    /// it automatically — no GC special-casing.
+    pub fn fingerprint_path_v1(&self) -> PathBuf {
+        self.dir.join("fingerprint-v1.cpf")
+    }
 
     /// Valid hit: meta parses, key matches, artifact files present with consistent sizes.
     pub fn load_meta(&self, key: &str) -> Option<CacheMeta> {

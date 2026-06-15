@@ -2,10 +2,12 @@
 
 use crate::cache::{CacheEntry, CacheMeta};
 use crate::error::{CoupleError, Result};
+use crate::fingerprint::{self, FingerprintReader};
 use crate::media::TrackMeta;
 use crate::onsets::Onset;
 use crate::pyramid::{PyramidReader, SAMPLE_RATE};
 use memmap2::Mmap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 pub const RAW_FETCH_MAX_S: f64 = 8.0; // [SPEC] §4.3
 
@@ -15,6 +17,12 @@ pub struct TrackData {
     pcm: Mmap,
     pub onsets: Vec<Onset>,
     pub cache: CacheEntry,
+    /// Lazily-built spectral fingerprint reader (§8.3). Cached here so a track builds/reads its
+    /// `fingerprint-v1.cpf` at most once per loaded handle. `OnceLock` holds the successful
+    /// result; `fp_build_lock` serializes the FALLIBLE build so concurrent first-callers build at
+    /// most once in-process (`OnceLock::get_or_init` cannot host a `Result`-returning build).
+    fingerprint: OnceLock<Arc<FingerprintReader>>,
+    fp_build_lock: Mutex<()>,
 }
 
 impl TrackData {
@@ -45,6 +53,8 @@ impl TrackData {
             pcm,
             onsets,
             cache,
+            fingerprint: OnceLock::new(),
+            fp_build_lock: Mutex::new(()),
         })
     }
 
@@ -58,6 +68,57 @@ impl TrackData {
         let bytes: &[u8] = &self.pcm;
         debug_assert_eq!(bytes.as_ptr() as usize % 4, 0, "mmap is page-aligned");
         unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4) }
+    }
+
+    /// The track's versioned spectral fingerprint (PLAN-SPECTRAL-FINGERPRINT-MATCHING §8.3),
+    /// built lazily from the MMAP PCM cache — never by re-decoding the source media (DoD item 2).
+    ///
+    /// Lifecycle, in order:
+    ///
+    /// - returns the in-handle cached reader if this track has already produced one;
+    /// - otherwise reads `fingerprint-v1.cpf`; if present and valid under the frozen v1 format it
+    ///   is decoded and cached;
+    /// - if the sidecar is ABSENT, it is built from PCM and atomically installed (the lazy upgrade
+    ///   of an old cache entry that predates fingerprints — a missing `.cpf` is NOT corruption);
+    /// - if the sidecar is CORRUPT or written under an INCOMPATIBLE format (mismatched params
+    ///   hash), only the `.cpf` is deleted and rebuilt — PCM, pyramid, and onsets are untouched.
+    ///
+    /// Concurrency: the successful reader is memoized in a `OnceLock`; the fallible build is
+    /// serialized by a per-track mutex so two callers racing the FIRST request build AT MOST ONCE
+    /// in-process (the second waits, then observes the freshly-stored result). After the first
+    /// success this is a lock-free `OnceLock` read.
+    ///
+    /// Determinism (§3 invariant 2): the build is a pure function of the PCM (fed in one slice);
+    /// repeated builds of the same PCM produce byte-identical `.cpf` bytes.
+    pub fn fingerprint_v1(&self) -> Result<Arc<FingerprintReader>> {
+        // Fast path: already built/loaded on this handle.
+        if let Some(fp) = self.fingerprint.get() {
+            return Ok(Arc::clone(fp));
+        }
+
+        // Serialize the build so concurrent first-callers do not both decode/rebuild. The lock is
+        // held only for the (bounded) build; the result is published through the OnceLock.
+        let _guard = self
+            .fp_build_lock
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+
+        // Re-check under the lock: a racing caller may have just published the reader.
+        if let Some(fp) = self.fingerprint.get() {
+            return Ok(Arc::clone(fp));
+        }
+
+        let frames = self.frames();
+        let (reader, _src) =
+            fingerprint::load_or_build(&self.cache.fingerprint_path_v1(), self.pcm_samples(), frames)?;
+        let arc = Arc::new(reader);
+        // `set` only fails if another thread already published; we hold the build lock, so it
+        // cannot — but fall back to the stored value defensively rather than asserting.
+        let stored = match self.fingerprint.set(Arc::clone(&arc)) {
+            Ok(()) => arc,
+            Err(_) => Arc::clone(self.fingerprint.get().expect("set raced means value present")),
+        };
+        Ok(stored)
     }
 
     /// §4.3 raw_window: mono 48 kHz f32 from the PCM cache, canonical timeline.

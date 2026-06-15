@@ -250,6 +250,15 @@ fn decode_into_cache(
         &entry.onsets_path(),
         &serde_json::to_vec(&onset_list).expect("onsets serialize"),
     )?;
+
+    // Spectral fingerprint sidecar (PLAN-SPECTRAL-FINGERPRINT-MATCHING §8.3.1): generated in THIS
+    // decode pass, NOT by a second decode of the source media — we mmap the canonical PCM we just
+    // wrote and run the deterministic builder over it (the exact same path `fingerprint_v1` takes
+    // for an old entry). It is an optional, lazily-rebuildable sidecar with an independent format
+    // lifecycle, so a failure here must NOT fail the import or invalidate the entry: the artifact
+    // will simply be built on first request. `meta.json` (written below) marks entry validity and
+    // does not depend on the fingerprint.
+    generate_fingerprint(entry, frames);
     let cmeta = CacheMeta {
         version: CACHE_META_VERSION,
         content_key: key.to_string(),
@@ -387,6 +396,35 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     std::fs::write(&tmp, bytes).map_err(|e| CoupleError::internal(format!("write {path:?}: {e}")))?;
     std::fs::rename(&tmp, path).map_err(|e| CoupleError::internal(format!("rename {path:?}: {e}")))?;
     Ok(())
+}
+
+/// Generate the `fingerprint-v1.cpf` sidecar during import (§8.3.1) by mmap'ing the canonical PCM
+/// just written into the entry and running the deterministic builder over it — the SAME
+/// build-from-PCM path the lazy `TrackData::fingerprint_v1` uses, so an import-time artifact is
+/// byte-identical to one built later on demand. No second source decode happens.
+///
+/// Best-effort: the fingerprint is an optional, independently-versioned, lazily-rebuildable
+/// sidecar (§3 invariant 7). A failure to mmap or write it must not fail the import or invalidate
+/// the cache entry — the artifact is simply built on first request. `load_or_build` already does
+/// the atomic temp-rename and removes any `.tmp` on error, so a failure leaves no litter.
+fn generate_fingerprint(entry: &CacheEntry, frames: u64) {
+    let pcm_path = entry.pcm_path();
+    let Ok(file) = std::fs::File::open(&pcm_path) else {
+        return;
+    };
+    // SAFETY: the PCM was just written and is not concurrently mutated; this is the same mmap the
+    // track loader performs. A mapping failure (e.g. zero-length file) is non-fatal.
+    let Ok(mmap) = (unsafe { memmap2::Mmap::map(&file) }) else {
+        return;
+    };
+    let bytes: &[u8] = &mmap;
+    if !(bytes.as_ptr() as usize).is_multiple_of(4) || !bytes.len().is_multiple_of(4) {
+        // Page-aligned and a whole number of f32 frames in practice; bail rather than risk an
+        // unaligned/partial read.
+        return;
+    }
+    let samples = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, bytes.len() / 4) };
+    let _ = crate::fingerprint::load_or_build(&entry.fingerprint_path_v1(), samples, frames);
 }
 
 fn drop_pcm_tmp(p: &Path) {
