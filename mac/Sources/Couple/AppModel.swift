@@ -45,12 +45,35 @@ final class AppModel {
     var resolving = false {
         didSet { if resolving != oldValue { activity.refresh() } }
     }
+    /// Determinate MATCHING progress (incremental-matching boundary): the live phase+fraction of the
+    /// graph-adjusted matching JOB (`Engine.matchCandidatesGraphStart`), mapped from each
+    /// `ProgressUpdate`. Drives the MATCH stage of the unified ingest bar. Set on the main actor as
+    /// the job reports; CLEARED SYNCHRONOUSLY alongside `resolving = false` in `resolveQueue` (the
+    /// same late-final-frame gate as import — the matching signal is only ever read while
+    /// `model.resolving`, so a stale post-resolve frame cannot stick).
+    @ObservationIgnored private(set) var matchingActivity: ActivitySignals.Matching?
+    /// True from the start of an `ingest()` (a dropped batch) until its post-import sync queue
+    /// drains — the window in which import→match→sync is ONE unified 0→100% bar (unified-bar
+    /// boundary). A standalone re-sync / re-resolve (no preceding import) leaves it false and keeps
+    /// the per-kind lines (Open Decision 6). Set in `ingest`, cleared in the `pumpSync` drain tail.
+    @ObservationIgnored private(set) var ingestInFlight = false
+    /// Which stages the in-flight ingest will run, for the unified bar's renormalization. Set when
+    /// the batch resolution is known (an all-duplicates batch drops match+sync ⇒ import-only).
+    @ObservationIgnored private(set) var ingestStages: Stages =
+        [.importStage, .matchStage, .syncStage]
     /// True for a resolve that runs AFTER an earlier import already produced couples
     /// (so the activity strip reads `Updating matches after import...` rather than the
     /// first-analysis count line, TODO-005). Set per `resolveQueue` call.
     @ObservationIgnored private var resolveIsUpdate = false
     /// Strip-facing read of `resolveIsUpdate` (TODO-005).
     var resolveIsUpdateForStrip: Bool { resolveIsUpdate }
+    /// True for a resolve that is the MATCHING TAIL of an import — it ran inside `ingest`,
+    /// right after the dropped batch finished importing. The activity strip then continues
+    /// the unified import→match bar rather than an indeterminate pairing line (TODO). A
+    /// standalone re-resolve (e.g. after a removal) leaves it false.
+    @ObservationIgnored private var resolveIsImportTail = false
+    /// Strip-facing read of `resolveIsImportTail`.
+    var resolveIsImportTailForStrip: Bool { resolveIsImportTail }
 
     /// The unified long-running activity strip (TODO-005). Owns the debounced summary
     /// of every background job (import / pairing / queued sync / export) shown beneath
@@ -205,14 +228,36 @@ final class AppModel {
     }
 
     private func ingest(_ urls: [URL]) async {
+        // The whole import → match → sync sequence is ONE unified 0→100% bar (unified-bar
+        // boundary). Mark it in-flight up front so the strip composes the stages; the post-import
+        // sync queue's drain tail clears it. Default to all three stages; if the drop turns out to
+        // be all-duplicates (no new media) we clear immediately below.
+        ingestInFlight = true
+        ingestStages = [.importStage, .matchStage, .syncStage]
         let added = await pool.importDropped(urls)
-        guard !added.isEmpty else { return }
+        guard !added.isEmpty else {
+            // An all-duplicates drop did no real work (the import bar already cleared in the pool);
+            // there is no match/sync to run, so end the ingest window cleanly.
+            ingestInFlight = false
+            activity.refresh()
+            return
+        }
         // Default the export folder to where the most recent import came from,
         // until the user picks one explicitly.
         if destinationAuto, let dir = added.last?.url.deletingLastPathComponent() {
             exportDestination = dir
         }
-        await resolveQueue()
+        // The resolve is the matching TAIL of this import, so the activity strip shows it
+        // as the "Matching couples…" comparison stage (a moving bar) of the same process,
+        // rather than a separate standalone pairing line (TODO).
+        await resolveQueue(partOfImport: true)
+        // If the resolve started no auto-sync (e.g. an audio-only drop with no couples to align, or
+        // every couple already synced), the ingest ends at the match stage — close the unified-bar
+        // window here so it does not hang. When sync IS running, `pumpSync`'s drain tail closes it.
+        if !syncRunning && syncPending.isEmpty {
+            ingestInFlight = false
+            activity.refresh()
+        }
     }
 
     /// The user explicitly chose an export folder — pin it (stop auto-tracking).
@@ -224,11 +269,23 @@ final class AppModel {
 
     /// Run the §3 candidate matrix + §3.3 resolution over the pool (off-main),
     /// then build/update couples — pinned/approved selections survive (§3.6).
-    func resolveQueue() async {
+    ///
+    /// Incremental-matching boundary: the graph-adjusted candidate MATRIX is now built by a
+    /// DETERMINATE JOB (`Engine.matchCandidatesGraphStart`) so the unified bar can show real
+    /// fingerprint→compare→cross-check progress, instead of one opaque synchronous call. The matrix
+    /// is `await`ed off-main; its `progress` is consumed on a child task that writes
+    /// `matchingActivity` (main actor). The per-row §3.3 resolution policy then runs `Task.detached`
+    /// over that PREBUILT matrix exactly as before — the resolved output is byte-identical to the
+    /// synchronous path (the matrix is the only input). The legacy matcher and the empty-matrix
+    /// cases keep the old synchronous path (no job started ⇒ `matchingActivity` stays nil).
+    func resolveQueue(partOfImport: Bool = false) async {
         guard let engine, !pool.videos.isEmpty || !pool.audios.isEmpty else { return }
         // A resolve over an already-populated queue is an UPDATE (the strip reads
         // "Updating matches after import..."); the first resolve is the analysis pass.
         resolveIsUpdate = !couples.isEmpty
+        // When this resolve is the tail of an import, the strip labels it "Matching
+        // couples…" (the comparison stage) instead of a standalone pairing line.
+        resolveIsImportTail = partOfImport
         resolving = true
         let videos = pool.videos.map {
             ResolverVideo(key: $0.id, name: $0.name, durationS: $0.durationS,
@@ -238,11 +295,55 @@ final class AppModel {
             ResolverAudio(key: $0.id, name: $0.name, durationS: $0.durationS, handle: $0.handle!)
         }
         let params = params
+
+        // Build the graph-adjusted matrix via the determinate job, but only on the fingerprint path
+        // with a non-empty V×A batch (the only case `resolveFingerprint` would call core for one).
+        // Otherwise fall back to nil ⇒ `Resolver.resolve` does its usual synchronous build.
+        let importableVideoHandles = pool.videos.compactMap(\.handle)
+        let audioHandles = pool.audios.compactMap(\.handle)
+        var prebuiltMatrix: [[PairEvidence]]?
+        if params.matcherFingerprintPrimary,
+           !importableVideoHandles.isEmpty, !audioHandles.isEmpty,
+           let job = try? engine.matchCandidatesGraphStart(
+               videos: importableVideoHandles, audios: audioHandles) {
+            // Consume the job's progress into the determinate match stage (main actor). The child
+            // task ends when the stream finishes (the job's terminal callback closes it).
+            let progressTask = Task { @MainActor [weak self] in
+                for await update in job.progress {
+                    guard let self, self.resolving else { continue }
+                    self.matchingActivity = AppModel.matchPhase(from: update)
+                    self.activity.refresh()
+                }
+            }
+            prebuiltMatrix = (try? await job.value()) ?? []
+            _ = await progressTask.value
+        }
+
+        let captured = prebuiltMatrix
         let rows = await Task.detached(priority: .userInitiated) {
-            Resolver.resolve(videos: videos, audios: audios, engine: engine, params: params)
+            Resolver.resolve(videos: videos, audios: audios, engine: engine,
+                             params: params, prebuiltMatrix: captured)
         }.value
         applyResolution(rows)
+        // GATE (late-final-frame, mirrors import): clear the matching signal SYNCHRONOUSLY as
+        // `resolving` flips false, so a stale 100% match frame from the job's progress task cannot
+        // outlive resolution and stick on the strip. The snapshot only reads it while `resolving`.
+        matchingActivity = nil
         resolving = false
+    }
+
+    /// Map a matching JOB `ProgressUpdate` (core phase string + 0…1) to the strip's `Matching`
+    /// signal (incremental-matching boundary). The three core phase strings map EXACTLY (Open
+    /// Decision 7); an unknown phase is ignored by holding the comparing stage at 0.
+    private static func matchPhase(from u: ProgressUpdate) -> ActivitySignals.Matching {
+        let phase: MatchPhase
+        switch u.phase {
+        case "MatchFingerprint": phase = .fingerprinting
+        case "MatchCorrelate":   phase = .comparing
+        case "MatchGraph":       phase = .crosschecking
+        default:                 phase = .fingerprinting
+        }
+        return ActivitySignals.Matching(phase: phase, fraction: u.fraction)
     }
 
     private func applyResolution(_ rows: [ResolvedRow]) {
@@ -366,7 +467,11 @@ final class AppModel {
             syncIndex = 0
             syncTotal = 0
             syncVideoName = nil
-            activity.refresh()               // queue drained ⇒ clear the sync summary
+            // The post-import sync queue has fully drained ⇒ the unified ingest operation is
+            // complete; drop the Ingest window so the unified bar reaches 1.0 and then CLEARS via
+            // the idle-clear (it must not stick at 100%, unified-bar boundary R7).
+            ingestInFlight = false
+            activity.refresh()               // queue drained ⇒ clear the sync/ingest summary
         }
     }
 
@@ -631,6 +736,9 @@ final class AppModel {
         poolDraggingKey = nil
         // Remove the persisted restore record so the cleared queue is not offered again.
         QueueStore.clear()
+        // Clear the activity strip so a stuck/in-flight bar from the discarded session does
+        // not linger into the empty import screen (TODO-001).
+        activity.reset()
     }
 
     /// Reset session-level export state on Clear Session (TODO-001). Per-couple

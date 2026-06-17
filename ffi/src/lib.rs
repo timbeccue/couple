@@ -3,7 +3,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use couple_core::job::{CancelToken, ProgressFn};
+use couple_core::job::{CancelToken, ProgressEmitter, ProgressFn};
 use couple_core::{Ctx, CtxConfig};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -857,6 +857,17 @@ pub unsafe extern "C" fn cpl_pair_correlate_params(
     }
 }
 
+/// FFI id-array → slice. A zero-length array yields `&[]` even when `ptr` is null;
+/// `from_raw_parts(null, 0)` is UB (the pointer must be non-null and aligned even for an
+/// empty slice). Callers still reject a null pointer paired with a positive count up front.
+unsafe fn id_slice<'a>(ptr: *const u64, len: usize) -> &'a [u64] {
+    if len == 0 {
+        &[]
+    } else {
+        std::slice::from_raw_parts(ptr, len)
+    }
+}
+
 /// Batch candidate matrix (SPEC-V2 §3.2): rows = videos, columns = audios. Returns a
 /// JSON array of arrays of PairCorrelation (same wire form as cpl_pair_correlate).
 /// Null on error; free with cpl_string_free.
@@ -876,8 +887,8 @@ pub unsafe extern "C" fn cpl_pair_candidates(
         set_error(&couple_core::CoupleError::invalid("null track id array"));
         return std::ptr::null_mut();
     }
-    let vs = std::slice::from_raw_parts(videos, n_videos);
-    let aus = std::slice::from_raw_parts(audios, n_audios);
+    let vs = id_slice(videos, n_videos);
+    let aus = id_slice(audios, n_audios);
     match ctx.pair_candidates(vs, aus, &couple_core::PairingParams::default()) {
         Ok(m) => to_cstring(serde_json::to_string(&m).unwrap()),
         Err(e) => {
@@ -909,8 +920,8 @@ pub unsafe extern "C" fn cpl_pair_candidates_params(
     let Some(params) = pairing_params_or_error(params_json) else {
         return std::ptr::null_mut();
     };
-    let vs = std::slice::from_raw_parts(videos, n_videos);
-    let aus = std::slice::from_raw_parts(audios, n_audios);
+    let vs = id_slice(videos, n_videos);
+    let aus = id_slice(audios, n_audios);
     match ctx.pair_candidates(vs, aus, &params) {
         Ok(m) => to_cstring(serde_json::to_string(&m).unwrap()),
         Err(e) => {
@@ -981,8 +992,8 @@ pub unsafe extern "C" fn cpl_match_candidates(
     let Some(params) = pairing_params_or_error(pairing_params_json) else {
         return std::ptr::null_mut();
     };
-    let vs = std::slice::from_raw_parts(videos, n_videos);
-    let aus = std::slice::from_raw_parts(audios, n_audios);
+    let vs = id_slice(videos, n_videos);
+    let aus = id_slice(audios, n_audios);
     match ctx.match_candidates(vs, aus, &params) {
         Ok(m) => to_cstring(serde_json::to_string(&m).unwrap()),
         Err(e) => {
@@ -1021,8 +1032,8 @@ pub unsafe extern "C" fn cpl_match_candidates_graph(
     let Some(params) = pairing_params_or_error(pairing_params_json) else {
         return std::ptr::null_mut();
     };
-    let vs = std::slice::from_raw_parts(videos, n_videos);
-    let aus = std::slice::from_raw_parts(audios, n_audios);
+    let vs = id_slice(videos, n_videos);
+    let aus = id_slice(audios, n_audios);
     match ctx.match_candidates_graph(vs, aus, &params) {
         Ok(m) => to_cstring(serde_json::to_string(&m).unwrap()),
         Err(e) => {
@@ -1030,6 +1041,65 @@ pub unsafe extern "C" fn cpl_match_candidates_graph(
             std::ptr::null_mut()
         }
     }
+}
+
+/// Start a GRAPH-ADJUSTED batch-matching JOB (incremental-matching boundary) — the asynchronous,
+/// progress-reporting twin of `cpl_match_candidates_graph`. Same domain arguments (`videos`/`audios`
+/// id arrays + an optional `PairingParams` JSON override), then the standard `(cb, user)` job
+/// callback pair. Returns the job id (0 on error), exactly like `cpl_autosync_start`/`cpl_export_start`.
+///
+/// The terminal "done" payload is the SAME `[[PairEvidence]]` array-of-arrays JSON that the
+/// synchronous `cpl_match_candidates_graph` returns (the graph-adjusted `videos × audios` matrix) — so
+/// a caller can switch a resolver from the blocking symbol to this job purely to gain a determinate
+/// bar, with NO change to the resolved output (the resolution authority is byte-identical; progress is
+/// observational). Non-terminal callbacks carry the phase name (`MatchFingerprint` while each track's
+/// fingerprint is built — the dominant first-match cost; `MatchCorrelate` per completed matrix row;
+/// `MatchGraph` around the §13 graph-consistency pass, ending at 1.0) and a fraction. Cancellation
+/// (`cpl_job_cancel`) yields a "cancelled" terminal callback and NEVER a partial matrix.
+///
+/// null/empty `pairing_params_json` ⇒ `PairingParams::default()`; malformed/validate()-failing JSON ⇒
+/// InvalidArgument (returns 0). null id arrays with a non-zero count ⇒ InvalidArgument. ADDITIVE —
+/// `cpl_abi_version` stays 1; the synchronous symbol and every other entry are unchanged.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_match_candidates_graph_start(
+    ctx: u64,
+    videos: *const u64,
+    n_videos: usize,
+    audios: *const u64,
+    n_audios: usize,
+    pairing_params_json: *const c_char,
+    cb: CplProgressCb,
+    user: *mut c_void,
+) -> u64 {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return 0;
+    };
+    if (videos.is_null() && n_videos > 0) || (audios.is_null() && n_audios > 0) {
+        set_error(&couple_core::CoupleError::invalid("null track id array"));
+        return 0;
+    }
+    let Some(params) = pairing_params_or_error(pairing_params_json) else {
+        return 0;
+    };
+    // Copy the id slices into OWNED Vecs BEFORE the spawn_job move — the caller's pointers are only
+    // valid for this call, and the job runs on a worker thread (mirrors how autosync/export capture
+    // their owned args). An empty array with a null pointer yields an empty Vec.
+    let vs: Vec<u64> = if n_videos == 0 {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(videos, n_videos).to_vec()
+    };
+    let aus: Vec<u64> = if n_audios == 0 {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(audios, n_audios).to_vec()
+    };
+    spawn_job(ctx, cb, user, move |ctx, progress, cancel| {
+        let mut prog = ProgressEmitter::new(0, progress);
+        let m = ctx.match_candidates_graph_prog(&vs, &aus, &params, &mut prog, cancel)?;
+        Ok(serde_json::to_string(&m).unwrap())
+    })
 }
 
 /// §13.4 audio-audio SIMULTANEITY predicate over affine evidence — the core-owned check the CLI and

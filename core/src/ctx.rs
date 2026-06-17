@@ -177,7 +177,9 @@ impl Ctx {
     pub fn job_wait(&self, job: JobId) -> Result<u64> {
         let thread = {
             let mut jobs = self.jobs.lock().unwrap();
-            let e = jobs.get_mut(&job).ok_or_else(|| CoupleError::invalid("unknown job"))?;
+            let e = jobs
+                .get_mut(&job)
+                .ok_or_else(|| CoupleError::invalid("unknown job"))?;
             e.thread.take()
         };
         let thread = thread.ok_or_else(|| CoupleError::invalid("job already waited"))?;
@@ -226,7 +228,11 @@ impl Ctx {
     ) -> Result<crate::pair::PairCorrelation> {
         let ta = self.track(a)?;
         let tb = self.track(b)?;
-        Ok(crate::pair::pair_correlate(&ta.pyramid, &tb.pyramid, params))
+        Ok(crate::pair::pair_correlate(
+            &ta.pyramid,
+            &tb.pyramid,
+            params,
+        ))
     }
 
     /// Batch candidate matrix: rows = `videos`, columns = `audios`. Cells run in
@@ -238,8 +244,14 @@ impl Ctx {
         audios: &[TrackId],
         params: &crate::pairing_params::PairingParams,
     ) -> Result<Vec<Vec<crate::pair::PairCorrelation>>> {
-        let vs: Vec<Arc<TrackData>> = videos.iter().map(|&id| self.track(id)).collect::<Result<_>>()?;
-        let aus: Vec<Arc<TrackData>> = audios.iter().map(|&id| self.track(id)).collect::<Result<_>>()?;
+        let vs: Vec<Arc<TrackData>> = videos
+            .iter()
+            .map(|&id| self.track(id))
+            .collect::<Result<_>>()?;
+        let aus: Vec<Arc<TrackData>> = audios
+            .iter()
+            .map(|&id| self.track(id))
+            .collect::<Result<_>>()?;
         use rayon::prelude::*;
         Ok(vs
             .par_iter()
@@ -381,8 +393,11 @@ impl Ctx {
                     shadow,
                     |_, _| {
                         if cached_legacy.is_none() {
-                            cached_legacy =
-                                Some(crate::pair::pair_correlate(&ta.pyramid, &tb.pyramid, params));
+                            cached_legacy = Some(crate::pair::pair_correlate(
+                                &ta.pyramid,
+                                &tb.pyramid,
+                                params,
+                            ));
                         }
                         cached_legacy.clone()
                     },
@@ -401,6 +416,8 @@ impl Ctx {
                     },
                     // BOUNDARY 10 (§12): the single (1×1) cell's metadata hint.
                     |_, _| cell_hint,
+                    // No progress for a single 1×1 cell (match_pair is not a job).
+                    |_| {},
                 );
                 Ok(matrix.remove(0).remove(0))
             }
@@ -425,20 +442,52 @@ impl Ctx {
         audios: &[TrackId],
         params: &crate::pairing_params::PairingParams,
     ) -> Result<Vec<Vec<crate::matching::PairEvidence>>> {
+        // Thin wrapper: the non-progress entry point delegates to the `_prog` variant with a no-op
+        // emitter and a fresh (un-cancelled) token. Byte-identical to the progress path by
+        // construction (the emitter is observational; the per-row hook never alters the fill).
+        let mut prog = ProgressEmitter::new(0, noop_progress());
+        let cancel = CancelToken::new();
+        self.match_candidates_prog(videos, audios, params, &mut prog, &cancel)
+    }
+
+    /// Progress-aware [`Self::match_candidates`] (incremental-matching boundary). IDENTICAL output to
+    /// `match_candidates`; the only additions are OBSERVATIONAL `prog.emit(...)` checkpoints and
+    /// `cancel.check()?` probes (the import/sync precedent). In the fingerprint path it emits
+    /// [`Phase::MatchFingerprint`] as each track's `fingerprint_v1()` is built (the dominant first-
+    /// match cost), then [`Phase::MatchCorrelate`] per completed matrix row. Cancellation returns
+    /// `Err(Cancelled)` and NEVER a partial matrix. The legacy path emits a coarse `MatchCorrelate`
+    /// 0→1 around the (already-parallel) `pair_correlate` matrix (Default 3: the rayon branch is not
+    /// instrumented per-cell).
+    pub fn match_candidates_prog(
+        &self,
+        videos: &[TrackId],
+        audios: &[TrackId],
+        params: &crate::pairing_params::PairingParams,
+        prog: &mut ProgressEmitter,
+        cancel: &CancelToken,
+    ) -> Result<Vec<Vec<crate::matching::PairEvidence>>> {
         use crate::matching::{evidence_from_legacy, FingerprintSlot};
         use crate::pairing_params::MatcherMode;
 
-        let vs: Vec<Arc<TrackData>> =
-            videos.iter().map(|&id| self.track(id)).collect::<Result<_>>()?;
-        let aus: Vec<Arc<TrackData>> =
-            audios.iter().map(|&id| self.track(id)).collect::<Result<_>>()?;
+        let vs: Vec<Arc<TrackData>> = videos
+            .iter()
+            .map(|&id| self.track(id))
+            .collect::<Result<_>>()?;
+        let aus: Vec<Arc<TrackData>> = audios
+            .iter()
+            .map(|&id| self.track(id))
+            .collect::<Result<_>>()?;
 
         match params.matcher_mode {
             // Legacy: the method-neutral wrapper over the existing parallel pair_correlate matrix.
             // NO fingerprint is built (§5.2) — shadow computation is not an accidental cost here.
             MatcherMode::LegacyEnvelope => {
                 use rayon::prelude::*;
-                Ok(vs
+                cancel.check()?;
+                // Coarse progress only: the legacy branch is rayon-parallel (Default 3 — no per-cell
+                // instrumentation), so we bracket it with a 0→1 MatchCorrelate.
+                prog.emit(Phase::MatchCorrelate, 0.0);
+                let matrix: Vec<Vec<crate::matching::PairEvidence>> = vs
                     .par_iter()
                     .map(|v| {
                         aus.iter()
@@ -453,7 +502,10 @@ impl Ctx {
                             })
                             .collect()
                     })
-                    .collect())
+                    .collect();
+                cancel.check()?;
+                prog.emit(Phase::MatchCorrelate, 1.0);
+                Ok(matrix)
             }
             // Fingerprint modes: build each audio's fingerprint, then the ONE batch index inside the
             // orchestrator, then fill the matrix. A track whose fingerprint is unavailable falls
@@ -461,10 +513,34 @@ impl Ctx {
             mode @ (MatcherMode::FingerprintShadow | MatcherMode::FingerprintPrimary) => {
                 let shadow = mode == MatcherMode::FingerprintShadow;
                 // Build/load every fingerprint once (held alive for the borrow); None ⇒ fallback.
-                let v_fps: Vec<Option<Arc<crate::fingerprint::FingerprintReader>>> =
-                    vs.iter().map(|t| t.fingerprint_v1().ok()).collect();
-                let a_fps: Vec<Option<Arc<crate::fingerprint::FingerprintReader>>> =
-                    aus.iter().map(|t| t.fingerprint_v1().ok()).collect();
+                // This is the dominant first-match cost (FFT; OnceLock-cached), so emit
+                // MatchFingerprint as each is built. `N` spans both sides (the graph path passes the
+                // dedup node set as both `videos` and `audios`, so the second loop is cache hits —
+                // the emitter throttle absorbs that burst). Cancel between builds (never partial).
+                let n_fp = vs.len() + aus.len();
+                let mut built = 0usize;
+                let mut build_fp =
+                    |t: &Arc<TrackData>| -> Option<Arc<crate::fingerprint::FingerprintReader>> {
+                        let fp = t.fingerprint_v1().ok();
+                        built += 1;
+                        if n_fp > 0 {
+                            prog.emit(Phase::MatchFingerprint, built as f64 / n_fp as f64);
+                        }
+                        fp
+                    };
+                let mut v_fps: Vec<Option<Arc<crate::fingerprint::FingerprintReader>>> =
+                    Vec::with_capacity(vs.len());
+                for t in &vs {
+                    cancel.check()?;
+                    v_fps.push(build_fp(t));
+                }
+                let mut a_fps: Vec<Option<Arc<crate::fingerprint::FingerprintReader>>> =
+                    Vec::with_capacity(aus.len());
+                for t in &aus {
+                    cancel.check()?;
+                    a_fps.push(build_fp(t));
+                }
+                prog.emit(Phase::MatchFingerprint, 1.0);
                 let v_slots: Vec<(FingerprintSlot, f64)> = vs
                     .iter()
                     .zip(&v_fps)
@@ -476,11 +552,17 @@ impl Ctx {
                     .map(|(t, fp)| (fp.as_deref(), t.pyramid.duration_s()))
                     .collect();
                 let fmt = crate::fingerprint::FingerprintFormatV1::fixed();
+                // A cancellation flag the per-row hook trips; checked after the fill so we discard a
+                // partial matrix (the orchestrator runs straight-line, so this is a clean boundary).
+                let n_rows = v_slots.len();
+                let mut cancelled = false;
                 // Legacy correlations are computed lazily per (vi, ai) only when the orchestrator
                 // needs one (a fallback cell or shadow attachment). A simple per-cell memo cache
                 // (keyed by (vi, ai)) avoids recomputing within a single batch.
-                let mut legacy_cache: std::collections::HashMap<(usize, usize), Option<crate::pair::PairCorrelation>> =
-                    std::collections::HashMap::new();
+                let mut legacy_cache: std::collections::HashMap<
+                    (usize, usize),
+                    Option<crate::pair::PairCorrelation>,
+                > = std::collections::HashMap::new();
                 let (matrix, _stats) = crate::matching::match_candidates_fingerprint(
                     &v_slots,
                     &a_slots,
@@ -515,8 +597,28 @@ impl Ctx {
                     // probed MediaInfo. Deterministic, cheap, and ADVISORY — consensus may seed a
                     // hypothesis / break an exact tie with it but never gate on it (§12.3). Computed
                     // per cell only for the fingerprint cells the orchestrator actually consults.
-                    |vi, ai| crate::fingerprint::TimeHint::from_media(&vs[vi].meta.info, &aus[ai].meta.info),
+                    |vi, ai| {
+                        crate::fingerprint::TimeHint::from_media(
+                            &vs[vi].meta.info,
+                            &aus[ai].meta.info,
+                        )
+                    },
+                    // OBSERVATIONAL per-row progress: emit MatchCorrelate at (row+1)/rows after each
+                    // completed row. The hook also samples the cancel token so a long fill can be
+                    // interrupted; the matrix is discarded below if so (never returned partial).
+                    |vi| {
+                        if n_rows > 0 {
+                            prog.emit(Phase::MatchCorrelate, (vi + 1) as f64 / n_rows as f64);
+                        }
+                        if cancel.is_cancelled() {
+                            cancelled = true;
+                        }
+                    },
                 );
+                if cancelled {
+                    return Err(crate::error::CoupleError::Cancelled);
+                }
+                cancel.check()?;
                 Ok(matrix)
             }
         }
@@ -547,12 +649,38 @@ impl Ctx {
         audios: &[TrackId],
         params: &crate::pairing_params::PairingParams,
     ) -> Result<Vec<Vec<crate::matching::PairEvidence>>> {
+        // Thin wrapper: delegate to the `_prog` variant with a no-op emitter and a fresh token, so
+        // the synchronous resolution output is byte-identical to the progress path (the parity test
+        // asserts this directly).
+        let mut prog = ProgressEmitter::new(0, noop_progress());
+        let cancel = CancelToken::new();
+        self.match_candidates_graph_prog(videos, audios, params, &mut prog, &cancel)
+    }
+
+    /// Progress-aware [`Self::match_candidates_graph`] (incremental-matching boundary). The matching
+    /// JOB body (`cpl_match_candidates_graph_start`) delegates here. Output is BYTE-IDENTICAL to
+    /// `match_candidates_graph`: the fingerprint-build + matrix-fill progress flows through the
+    /// `match_candidates_prog` call below, then this emits [`Phase::MatchGraph`] 0→1 around the
+    /// (observational) `match_graph::adjust` pass and a final terminal 1.0 so a determinate bar lands
+    /// cleanly. `cancel` is threaded into the inner build (it discards a partial matrix). Mirrors
+    /// `auto_sync_blocking` / `import_blocking`'s emitter+cancel plumbing.
+    pub fn match_candidates_graph_prog(
+        &self,
+        videos: &[TrackId],
+        audios: &[TrackId],
+        params: &crate::pairing_params::PairingParams,
+        prog: &mut ProgressEmitter,
+        cancel: &CancelToken,
+    ) -> Result<Vec<Vec<crate::matching::PairEvidence>>> {
         use crate::pairing_params::MatcherMode;
 
         // LEGACY mode has no affine landmark map for the graph to compose — return the plain
-        // bipartite matrix unchanged (graph consistency is a fingerprint-path facility).
+        // bipartite matrix unchanged (graph consistency is a fingerprint-path facility). The inner
+        // call carries the coarse legacy progress; a terminal 1.0 lands the bar.
         if params.matcher_mode == MatcherMode::LegacyEnvelope {
-            return self.match_candidates(videos, audios, params);
+            let m = self.match_candidates_prog(videos, audios, params, prog, cancel)?;
+            prog.emit(Phase::MatchGraph, 1.0);
+            return Ok(m);
         }
 
         // The unified node set = videos followed by audios, deduplicated by TrackId (a track may be
@@ -570,13 +698,13 @@ impl Ctx {
             audio_node_of.push(idx);
         }
 
-        // One full-graph matcher run: every node vs every node (§13.1). `match_candidates` builds the
-        // ONE audio-side index for the batch; here the "audios" side is the full node set, so each
-        // directed (i, j) cell is the evidence for that ordered pair. We then DROP the diagonal.
-        let full = self.match_candidates(&node_ids, &node_ids, params)?;
+        // One full-graph matcher run: every node vs every node (§13.1). `match_candidates_prog` builds
+        // the ONE audio-side index for the batch (and emits MatchFingerprint/MatchCorrelate through
+        // `prog`); here the "audios" side is the full node set, so each directed (i, j) cell is the
+        // evidence for that ordered pair. We then DROP the diagonal.
+        let full = self.match_candidates_prog(&node_ids, &node_ids, params, prog, cancel)?;
         let n = node_ids.len();
-        let mut directed: Vec<Vec<Option<crate::matching::PairEvidence>>> =
-            Vec::with_capacity(n);
+        let mut directed: Vec<Vec<Option<crate::matching::PairEvidence>>> = Vec::with_capacity(n);
         for (i, row) in full.into_iter().enumerate() {
             let mut out_row = Vec::with_capacity(n);
             for (j, cell) in row.into_iter().enumerate() {
@@ -591,7 +719,11 @@ impl Ctx {
             .map(|&id| self.track(id).map(|t| t.pyramid.duration_s()))
             .collect::<Result<_>>()?;
 
+        // OBSERVATIONAL: bracket the §13 graph-consistency pass with MatchGraph 0→1 (the pass itself
+        // is cheap relative to the matrix fill; the bar's tail lands here).
+        prog.emit(Phase::MatchGraph, 0.0);
         let adjusted = crate::match_graph::adjust(&directed, &coverage, params);
+        prog.emit(Phase::MatchGraph, 1.0);
 
         // Project the requested video→audio cells back to the `videos × audios` shape. Video `vi` is
         // node `vi`; audio `ai` is node `audio_node_of[ai]`.
@@ -602,14 +734,15 @@ impl Ctx {
                 let a_node = audio_node_of[ai];
                 // The diagonal (a video used as its own audio) has no edge cell; fall back to the
                 // direct evidence so the returned matrix is always fully populated.
-                let cell = adjusted[vi][a_node]
-                    .clone()
-                    .unwrap_or_else(|| self.match_pair(videos[vi], audios[ai], params).unwrap_or_else(|_| {
-                        crate::matching::PairEvidence::unavailable(
-                            crate::matching::MatchMethod::SpectralLandmarkV1,
-                            0.0,
-                        )
-                    }));
+                let cell = adjusted[vi][a_node].clone().unwrap_or_else(|| {
+                    self.match_pair(videos[vi], audios[ai], params)
+                        .unwrap_or_else(|_| {
+                            crate::matching::PairEvidence::unavailable(
+                                crate::matching::MatchMethod::SpectralLandmarkV1,
+                                0.0,
+                            )
+                        })
+                });
                 row.push(cell);
             }
             out.push(row);

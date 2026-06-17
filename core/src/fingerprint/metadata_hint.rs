@@ -194,10 +194,7 @@ impl TimeHint {
     /// to [`HintReliability::DebugOnly`].
     pub fn from_views(a: &MetadataView, b: &MetadataView) -> Option<TimeHint> {
         // ---- §12.1 #1: BWF sample reference, day-relative, comparable only with matching dates ----
-        if let (Some(sa), Some(sb)) = (
-            sample_reference_seconds(a),
-            sample_reference_seconds(b),
-        ) {
+        if let (Some(sa), Some(sb)) = (sample_reference_seconds(a), sample_reference_seconds(b)) {
             // Day-relative offsets are directly comparable ONLY when the BWF dates agree (same
             // recording day). With a wall-clock day offset available we could in principle add it,
             // but a date MISMATCH here is exactly the implausible/clock-misconfig signal §12.2 wants
@@ -225,20 +222,29 @@ impl TimeHint {
 
         // ---- §12.1 #2: BWF date + time (second-resolution wall clock) ----
         if let (Some(ta), Some(tb)) = (bwf_wallclock_seconds(a), bwf_wallclock_seconds(b)) {
-            if let Some(hint) = wallclock_hint(ta, tb, TimeHintSource::BwfDateTime, TOL_WALLCLOCK_MS) {
+            if let Some(hint) =
+                wallclock_hint(ta, tb, TimeHintSource::BwfDateTime, TOL_WALLCLOCK_MS)
+            {
                 return Some(hint);
             }
         }
 
         // ---- §12.1 #3: container creation_time (second-resolution wall clock, often cross-device)
         if let (Some(ta), Some(tb)) = (
-            a.creation_time_utc.as_deref().and_then(parse_iso8601_utc_seconds),
-            b.creation_time_utc.as_deref().and_then(parse_iso8601_utc_seconds),
+            a.creation_time_utc
+                .as_deref()
+                .and_then(parse_iso8601_utc_seconds),
+            b.creation_time_utc
+                .as_deref()
+                .and_then(parse_iso8601_utc_seconds),
         ) {
             // Cross-device creation time is LOW reliability when plausible; implausible ⇒ DebugOnly.
-            if let Some(mut hint) =
-                wallclock_hint(ta, tb, TimeHintSource::ContainerCreationTime, TOL_WALLCLOCK_MS)
-            {
+            if let Some(mut hint) = wallclock_hint(
+                ta,
+                tb,
+                TimeHintSource::ContainerCreationTime,
+                TOL_WALLCLOCK_MS,
+            ) {
                 if hint.reliability == HintReliability::Medium {
                     // wallclock_hint assigns Medium for a plausible disagreement; container creation
                     // time across devices is only LOW (§12.2). (Implausible stays DebugOnly.)
@@ -317,7 +323,9 @@ fn sample_reference_seconds(v: &MetadataView) -> Option<f64> {
 /// normalized exact-string compare; BWF dates are `YYYY-MM-DD` or `YYYY:MM:DD` (both accepted).
 fn bwf_dates_compatible(a: &MetadataView, b: &MetadataView) -> bool {
     match (a.bwf_date.as_deref(), b.bwf_date.as_deref()) {
-        (Some(da), Some(db)) => normalize_date(da) == normalize_date(db) && !normalize_date(da).is_empty(),
+        (Some(da), Some(db)) => {
+            normalize_date(da) == normalize_date(db) && !normalize_date(da).is_empty()
+        }
         _ => false,
     }
 }
@@ -356,8 +364,12 @@ fn same_device_order_sign(a: &MetadataView, b: &MetadataView) -> Option<f64> {
         return Some(cmp(ta, tb));
     }
     if let (Some(ta), Some(tb)) = (
-        a.creation_time_utc.as_deref().and_then(parse_iso8601_utc_seconds),
-        b.creation_time_utc.as_deref().and_then(parse_iso8601_utc_seconds),
+        a.creation_time_utc
+            .as_deref()
+            .and_then(parse_iso8601_utc_seconds),
+        b.creation_time_utc
+            .as_deref()
+            .and_then(parse_iso8601_utc_seconds),
     ) {
         return Some(cmp(ta, tb));
     }
@@ -399,7 +411,11 @@ fn parse_hms(s: &str) -> Option<(u32, u32, u32)> {
     // Seconds may carry a fractional part or a zone; take the leading integer run.
     let s_field = it.next().unwrap_or("0");
     let sec_int: String = s_field.chars().take_while(|c| c.is_ascii_digit()).collect();
-    let se: u32 = if sec_int.is_empty() { 0 } else { sec_int.parse().ok()? };
+    let se: u32 = if sec_int.is_empty() {
+        0
+    } else {
+        sec_int.parse().ok()?
+    };
     if h >= 24 || mi >= 60 || se >= 61 {
         return None;
     }
@@ -470,8 +486,16 @@ mod tests {
         let b = view_bwf(24_000, 48_000, "2026-06-14", "10:00:00");
         let h = TimeHint::from_views(&a, &b).expect("sample-ref hint");
         assert_eq!(h.source, TimeHintSource::BwfSampleReference);
-        assert_eq!(h.reliability, HintReliability::Medium, "BWF sample-ref + matching dates ⇒ medium");
-        assert!((h.lag_ms - 1500.0).abs() < 1e-9, "lag {} ms ≠ +1500", h.lag_ms);
+        assert_eq!(
+            h.reliability,
+            HintReliability::Medium,
+            "BWF sample-ref + matching dates ⇒ medium"
+        );
+        assert!(
+            (h.lag_ms - 1500.0).abs() < 1e-9,
+            "lag {} ms ≠ +1500",
+            h.lag_ms
+        );
         assert!(h.lag_ms.is_finite() && h.tolerance_ms.is_finite());
     }
 
@@ -493,7 +517,11 @@ mod tests {
         let a = view_bwf(96_000, 48_000, "2026-06-14", "10:00:02");
         let b = view_bwf(24_000, 48_000, "2026-06-15", "10:00:00"); // next day
         let h = TimeHint::from_views(&a, &b).unwrap();
-        assert_eq!(h.source, TimeHintSource::BwfDateTime, "incompatible dates ⇒ not sample-ref");
+        assert_eq!(
+            h.source,
+            TimeHintSource::BwfDateTime,
+            "incompatible dates ⇒ not sample-ref"
+        );
         // A is 2026-06-14 10:00:02, B is 2026-06-15 10:00:00 ⇒ A is ~1 day earlier ⇒ large negative.
         assert!(h.lag_ms < 0.0 && h.lag_ms.is_finite());
     }
@@ -511,8 +539,16 @@ mod tests {
         };
         let h = TimeHint::from_views(&a, &b).unwrap();
         assert_eq!(h.source, TimeHintSource::ContainerCreationTime);
-        assert_eq!(h.reliability, HintReliability::Low, "cross-device creation time ⇒ low");
-        assert!((h.lag_ms - 5000.0).abs() < 1e-9, "A 5 s after B ⇒ +5000 ms, got {}", h.lag_ms);
+        assert_eq!(
+            h.reliability,
+            HintReliability::Low,
+            "cross-device creation time ⇒ low"
+        );
+        assert!(
+            (h.lag_ms - 5000.0).abs() < 1e-9,
+            "A 5 s after B ⇒ +5000 ms, got {}",
+            h.lag_ms
+        );
         assert!(h.reliability.can_rank() && h.reliability.can_order());
     }
 
@@ -525,8 +561,15 @@ mod tests {
         let a = view_bwf(0, 48_000, "2004-01-01", "00:00:00");
         let b = view_bwf(0, 48_000, "2015-08-01", "12:00:00"); // ~11.6 years later
         let h = TimeHint::from_views(&a, &b).unwrap();
-        assert_eq!(h.reliability, HintReliability::DebugOnly, "11.6-year gap ⇒ debug-only");
-        assert!(!h.reliability.can_rank(), "DebugOnly must NOT seed a hypothesis");
+        assert_eq!(
+            h.reliability,
+            HintReliability::DebugOnly,
+            "11.6-year gap ⇒ debug-only"
+        );
+        assert!(
+            !h.reliability.can_rank(),
+            "DebugOnly must NOT seed a hypothesis"
+        );
         assert!(!h.reliability.can_order(), "DebugOnly must NOT order a tie");
         // The lag is still finite and present (for debug explanation), just not usable.
         assert!(h.lag_ms.is_finite() && h.lag_ms.abs() > IMPLAUSIBLE_DISAGREEMENT_MS);
@@ -550,11 +593,21 @@ mod tests {
         let h = TimeHint::from_views(&a, &b).unwrap();
         assert_eq!(h.source, TimeHintSource::SameDeviceOrdering);
         assert_eq!(h.reliability, HintReliability::OrderOnly);
-        assert!(!h.reliability.can_rank(), "OrderOnly must NOT seed a hypothesis");
-        assert!(h.reliability.can_order(), "OrderOnly MAY order an exact tie");
+        assert!(
+            !h.reliability.can_rank(),
+            "OrderOnly must NOT seed a hypothesis"
+        );
+        assert!(
+            h.reliability.can_order(),
+            "OrderOnly MAY order an exact tie"
+        );
         // The sign reflects A-later (sample ref via §12.1 #4 sign, both on same device).
         // (Dates differ, so wall-clock sign would also apply; sample-ref sign is checked first.)
-        assert!(h.lag_ms > 0.0, "A later ⇒ positive order sign, got {}", h.lag_ms);
+        assert!(
+            h.lag_ms > 0.0,
+            "A later ⇒ positive order sign, got {}",
+            h.lag_ms
+        );
     }
 
     // ---- determinism + graceful absence ----

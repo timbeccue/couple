@@ -353,6 +353,35 @@ char *cpl_match_candidates_graph(uint64_t ctx,
                                  const char *pairing_params_json);
 
 /*
+ Start a GRAPH-ADJUSTED batch-matching JOB (incremental-matching boundary) — the asynchronous,
+ progress-reporting twin of `cpl_match_candidates_graph`. Same domain arguments (`videos`/`audios`
+ id arrays + an optional `PairingParams` JSON override), then the standard `(cb, user)` job
+ callback pair. Returns the job id (0 on error), exactly like `cpl_autosync_start`/`cpl_export_start`.
+
+ The terminal "done" payload is the SAME `[[PairEvidence]]` array-of-arrays JSON that the
+ synchronous `cpl_match_candidates_graph` returns (the graph-adjusted `videos × audios` matrix) — so
+ a caller can switch a resolver from the blocking symbol to this job purely to gain a determinate
+ bar, with NO change to the resolved output (the resolution authority is byte-identical; progress is
+ observational). Non-terminal callbacks carry the phase name (`MatchFingerprint` while each track's
+ fingerprint is built — the dominant first-match cost; `MatchCorrelate` per completed matrix row;
+ `MatchGraph` around the §13 graph-consistency pass, ending at 1.0) and a fraction. Cancellation
+ (`cpl_job_cancel`) yields a "cancelled" terminal callback and NEVER a partial matrix.
+
+ null/empty `pairing_params_json` ⇒ `PairingParams::default()`; malformed/validate()-failing JSON ⇒
+ InvalidArgument (returns 0). null id arrays with a non-zero count ⇒ InvalidArgument. ADDITIVE —
+ `cpl_abi_version` stays 1; the synchronous symbol and every other entry are unchanged.
+ */
+
+uint64_t cpl_match_candidates_graph_start(uint64_t ctx,
+                                          const uint64_t *videos,
+                                          uintptr_t n_videos,
+                                          const uint64_t *audios,
+                                          uintptr_t n_audios,
+                                          const char *pairing_params_json,
+                                          CplProgressCb cb,
+                                          void *user);
+
+/*
  §13.4 audio-audio SIMULTANEITY predicate over affine evidence — the core-owned check the CLI and
  Swift resolvers SHARE so neither shell reimplements the affine composition / closure tolerances
  (invariant 8). `request_json` is `{"va":{"lagMs","driftPpm"},"ab":{"lagMs","driftPpm"},

@@ -82,6 +82,18 @@ final class ActivityStrip {
         }
     }
 
+    /// Hard-reset to idle (Clear Session, TODO-001): drop any shown line, the debounce
+    /// clock, the monotonic floor, and any pending failure, so a fresh session starts
+    /// clean with no stale bar carried over from the discarded one.
+    func reset() {
+        activeSince = nil
+        debounceTask?.cancel(); debounceTask = nil
+        floorPhaseKey = nil; phaseFloor = 0
+        failureMessage = nil
+        failureClearTask?.cancel(); failureClearTask = nil
+        if summary != nil { summary = nil }
+    }
+
     // MARK: - Debug seam (COUPLE_ACTIVITY_TEST)
 
     /// When set, `snapshot()` returns this instead of reading the live model, so the
@@ -122,23 +134,52 @@ final class ActivityStrip {
         var s = ActivitySignals()
         s.failure = failureMessage
 
-        // Import: MediaPool's structured progress (determinate; honest phase + %).
-        s.importing = model.pool.importActivity
+        // The per-stage signals, each gated on its late-final-frame flag (so a stale 100% frame
+        // from a finished stage's progress task cannot stick): import on `pool.importing`, matching
+        // on `model.resolving`, sync on the live queue position.
+        let importSignal: ActivitySignals.Importing? =
+            model.pool.importing ? model.pool.importActivity : nil
+        // Matching: the determinate JOB's phase+fraction (incremental-matching boundary), gated on
+        // `resolving` exactly like import is gated on `importing` (R3). While resolving but BEFORE
+        // the job's first progress frame, show the match stage at 0 (it has honestly started —
+        // `resolving` is true — just not reported yet) so the import→match hand-off reads "Matching
+        // couples…" held at the import top, not a bare gap.
+        let matchSignal: ActivitySignals.Matching? =
+            model.resolving ? (model.matchingActivity
+                               ?? ActivitySignals.Matching(phase: .fingerprinting, fraction: 0)) : nil
+        let syncSignal: ActivitySignals.Syncing? =
+            (model.syncTotal > 0 && model.syncIndex > 0)
+            ? ActivitySignals.Syncing(index: model.syncIndex, total: model.syncTotal,
+                                      videoName: model.syncVideoName)
+            : nil
 
-        // Pairing: AppModel.resolving + live pool counts (always indeterminate — the
-        // matrix is one synchronous FFI call with no fraction, TODO-005).
-        if model.resolving {
-            s.pairing = ActivitySignals.Pairing(
-                videoCount: model.pool.videos.count,
-                audioCount: model.pool.audios.count,
-                resolving: false,
-                afterImport: model.resolveIsUpdateForStrip)
-        }
+        if model.ingestInFlight {
+            // UNIFIED ingest (unified-bar boundary): import → match → sync is ONE 0→100% bar. Feed
+            // the per-stage signals into the single `Ingest` descriptor and leave the standalone
+            // import/pairing/sync members nil so `winningLine` routes to the unified summary.
+            s.ingest = ActivitySignals.Ingest(
+                importing: importSignal,
+                matching: matchSignal,
+                syncing: syncSignal,
+                stagesPlanned: model.ingestStages)
+        } else {
+            // Standalone operations (no preceding import) keep today's per-kind behavior
+            // (Open Decision 6: only the import-tail path is unified for v1).
+            s.importing = importSignal
 
-        // Queued / running per-couple sync (summary: position; detail stays per-couple).
-        if model.syncTotal > 0, model.syncIndex > 0 {
-            s.syncing = ActivitySignals.Syncing(
-                index: model.syncIndex, total: model.syncTotal, videoName: model.syncVideoName)
+            // Pairing: AppModel.resolving + live pool counts (always indeterminate for a standalone
+            // re-resolve — the determinate matching JOB feeds the unified bar, not this line).
+            if model.resolving {
+                s.pairing = ActivitySignals.Pairing(
+                    videoCount: model.pool.videos.count,
+                    audioCount: model.pool.audios.count,
+                    resolving: false,
+                    afterImport: model.resolveIsUpdateForStrip,
+                    importTail: model.resolveIsImportTailForStrip)
+            }
+
+            // Queued / running per-couple sync (summary: position; detail stays per-couple).
+            s.syncing = syncSignal
         }
 
         // Batch export: BatchExport phase + the running row's per-row fraction.

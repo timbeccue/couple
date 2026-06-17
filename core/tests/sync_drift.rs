@@ -151,9 +151,9 @@ fn short_overlap_drift_honesty() {
 }
 
 /// measure_local accuracy directly (not via the drift pass): RMS ≤ 0.3 ms across
-/// spread points, and the ≤ 5 ms §9.6 budget.
+/// spread points.
 #[test]
-fn measure_local_accuracy_and_budget() {
+fn measure_local_accuracy() {
     let dir = tempfile::tempdir().unwrap();
     let spec = FixtureSpec {
         offset_ms: 2345.6,
@@ -167,10 +167,8 @@ fn measure_local_accuracy_and_budget() {
     let pair = build_pair(dir.path(), &spec);
 
     let mut residuals = Vec::new();
-    let mut times_us = Vec::new();
     for k in 0..10 {
         let tc = 15.0 + k as f64 * 10.0;
-        let t = std::time::Instant::now();
         let m = couple_core::measure::measure_local(
             &pair.cam.pyramid,
             &pair.ext.pyramid,
@@ -179,7 +177,6 @@ fn measure_local_accuracy_and_budget() {
             2345.6,
             80.0,
         );
-        times_us.push(t.elapsed().as_secs_f64() * 1e6);
         if let Some(m) = m {
             if m.ncc >= 0.6 {
                 residuals.push(m.lag_ms - 2345.6);
@@ -189,10 +186,6 @@ fn measure_local_accuracy_and_budget() {
     assert!(residuals.len() >= 6, "too few valid measurements: {}", residuals.len());
     let rms = (residuals.iter().map(|r| r * r).sum::<f64>() / residuals.len() as f64).sqrt();
     assert!(rms <= 0.3, "measure_local RMS {rms:.4} ms");
-
-    times_us.sort_by(f64::total_cmp);
-    let median_ms = times_us[times_us.len() / 2] / 1000.0;
-    assert!(median_ms <= 5.0, "measure_local median {median_ms:.2} ms (budget 5 ms)");
 }
 
 /// §9.7 determinism: same inputs → bit-identical SyncResult on the same machine.

@@ -1,6 +1,6 @@
 //! CLI progress rendering (§10.1), SIGINT → job cancellation (§10.3), PNG eyeball dump.
 
-use couple_core::{Band, CancelToken, Ctx, Phase, ProgressFn};
+use couple_core::{Band, CancelToken, Ctx, ProgressFn};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -25,23 +25,6 @@ pub fn install_sigint_cancel() -> CancelToken {
         libc::signal(libc::SIGINT, on_sigint as *const () as libc::sighandler_t);
     }
     token
-}
-
-/// Maps per-phase fractions onto one 0–100% bar using the §4.6 ranges.
-fn overall(phase: Phase, fraction: f64) -> f64 {
-    let (lo, hi) = match phase {
-        Phase::Probe => (0.0, 0.02),
-        Phase::Decode => (0.02, 0.80),
-        Phase::Pyramid => (0.80, 0.95),
-        Phase::Finalize => (0.95, 1.0),
-        Phase::SyncCoarse => (0.0, 0.70),
-        Phase::SyncRefine => (0.70, 0.75),
-        Phase::SyncWindows => (0.75, 0.98),
-        Phase::SyncFit => (0.98, 1.0),
-        Phase::ExportRender => (0.0, 0.70),
-        Phase::ExportMux => (0.70, 1.0),
-    };
-    lo + (hi - lo) * fraction.clamp(0.0, 1.0)
 }
 
 pub struct Reporter {
@@ -84,7 +67,7 @@ impl Reporter {
         Arc::new(move |p: &couple_core::Progress| {
             let _g = lock.lock().unwrap();
             if let Some(b) = &bar {
-                b.set_position((overall(p.phase, p.fraction) * 1000.0) as u64);
+                b.set_position((p.phase.overall(p.fraction) * 1000.0) as u64);
                 b.set_message(p.phase.label().to_string());
             }
             if ndjson {

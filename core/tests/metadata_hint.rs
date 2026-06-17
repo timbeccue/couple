@@ -98,13 +98,31 @@ fn media(
 #[test]
 fn reliability_table_bwf_with_dates_is_medium() {
     // BWF sample reference, matching dates ⇒ Medium (§12.2). A 2.0 s sample-ref difference.
-    let a = media(Some(96_000), 48_000, Some("2026-06-14"), Some("10:00:02"), None, None);
-    let b = media(Some(0), 48_000, Some("2026-06-14"), Some("10:00:00"), None, None);
+    let a = media(
+        Some(96_000),
+        48_000,
+        Some("2026-06-14"),
+        Some("10:00:02"),
+        None,
+        None,
+    );
+    let b = media(
+        Some(0),
+        48_000,
+        Some("2026-06-14"),
+        Some("10:00:00"),
+        None,
+        None,
+    );
     let h = TimeHint::from_media(&a, &b).expect("BWF sample-ref hint");
     assert_eq!(h.source, TimeHintSource::BwfSampleReference);
     assert_eq!(h.reliability, HintReliability::Medium);
     assert!(h.reliability.can_rank(), "medium ⇒ may seed a hypothesis");
-    assert!((h.lag_ms - 2000.0).abs() < 1e-6, "A − B = +2.0 s, got {} ms", h.lag_ms);
+    assert!(
+        (h.lag_ms - 2000.0).abs() < 1e-6,
+        "A − B = +2.0 s, got {} ms",
+        h.lag_ms
+    );
 }
 
 #[test]
@@ -115,17 +133,42 @@ fn reliability_table_creation_only_is_low() {
     let h = TimeHint::from_media(&a, &b).expect("creation-time hint");
     assert_eq!(h.source, TimeHintSource::ContainerCreationTime);
     assert_eq!(h.reliability, HintReliability::Low);
-    assert!(h.reliability.can_rank(), "low ⇒ still may seed (it loses if wrong)");
-    assert!((h.lag_ms - 3000.0).abs() < 1e-6, "A − B = +3.0 s, got {} ms", h.lag_ms);
+    assert!(
+        h.reliability.can_rank(),
+        "low ⇒ still may seed (it loses if wrong)"
+    );
+    assert!(
+        (h.lag_ms - 3000.0).abs() < 1e-6,
+        "A − B = +3.0 s, got {} ms",
+        h.lag_ms
+    );
 }
 
 #[test]
 fn reliability_table_implausible_disagreement_is_debug_only() {
     // The camera/Zoom case: dates ~11.6 years apart ⇒ DebugOnly, NOT ranked (§12.2).
-    let a = media(Some(0), 48_000, Some("2004-01-01"), Some("00:00:00"), None, None);
-    let b = media(Some(0), 48_000, Some("2015-08-01"), Some("12:00:00"), None, None);
+    let a = media(
+        Some(0),
+        48_000,
+        Some("2004-01-01"),
+        Some("00:00:00"),
+        None,
+        None,
+    );
+    let b = media(
+        Some(0),
+        48_000,
+        Some("2015-08-01"),
+        Some("12:00:00"),
+        None,
+        None,
+    );
     let h = TimeHint::from_media(&a, &b).expect("a (debug-only) hint is still produced");
-    assert_eq!(h.reliability, HintReliability::DebugOnly, "11.6-year gap ⇒ debug-only");
+    assert_eq!(
+        h.reliability,
+        HintReliability::DebugOnly,
+        "11.6-year gap ⇒ debug-only"
+    );
     assert!(!h.reliability.can_rank(), "DebugOnly must NOT be ranked");
     assert!(!h.reliability.can_order(), "DebugOnly must NOT order a tie");
 }
@@ -135,15 +178,39 @@ fn reliability_table_same_device_is_order_only() {
     // Same device tag, BWF sample reference present but dates DIFFER (so the sample-ref ranking path
     // declines), and NO BWF time / creation time (so neither wall-clock ranking path applies) ⇒ the
     // only signal left is the §12.1 #4 same-device ORDERING (the sign of the sample reference).
-    let a = media(Some(480_000), 48_000, Some("2026-06-14"), None, None, Some("ZOOM H4n"));
-    let b = media(Some(240_000), 48_000, Some("2026-06-13"), None, None, Some("ZOOM H4n"));
+    let a = media(
+        Some(480_000),
+        48_000,
+        Some("2026-06-14"),
+        None,
+        None,
+        Some("ZOOM H4n"),
+    );
+    let b = media(
+        Some(240_000),
+        48_000,
+        Some("2026-06-13"),
+        None,
+        None,
+        Some("ZOOM H4n"),
+    );
     let h = TimeHint::from_media(&a, &b).expect("same-device order hint");
     assert_eq!(h.source, TimeHintSource::SameDeviceOrdering);
     assert_eq!(h.reliability, HintReliability::OrderOnly);
-    assert!(!h.reliability.can_rank(), "OrderOnly must NOT seed a hypothesis");
-    assert!(h.reliability.can_order(), "OrderOnly MAY order an exact tie");
+    assert!(
+        !h.reliability.can_rank(),
+        "OrderOnly must NOT seed a hypothesis"
+    );
+    assert!(
+        h.reliability.can_order(),
+        "OrderOnly MAY order an exact tie"
+    );
     // A's sample reference (480k) is later than B's (240k) ⇒ positive order sign.
-    assert!(h.lag_ms > 0.0, "A later ⇒ positive order key, got {}", h.lag_ms);
+    assert!(
+        h.lag_ms > 0.0,
+        "A later ⇒ positive order key, got {}",
+        h.lag_ms
+    );
 }
 
 #[test]
@@ -151,7 +218,10 @@ fn reliability_table_no_metadata_no_hint() {
     // The synthetic-fixture reality: WAVs with no BWF / creation time / device ⇒ no hint at all.
     let a = media(None, 48_000, None, None, None, None);
     let b = media(None, 48_000, None, None, None, None);
-    assert!(TimeHint::from_media(&a, &b).is_none(), "no metadata ⇒ no hint (graceful absence)");
+    assert!(
+        TimeHint::from_media(&a, &b).is_none(),
+        "no metadata ⇒ no hint (graceful absence)"
+    );
 }
 
 // ===================================================================================================
@@ -204,11 +274,25 @@ fn evidence_with_hint(
         &fmt,
         params,
         true, // shadow (attach legacy for parity, like Ctx::match_pair in shadow)
-        |_, _| Some(couple_core::pair::pair_correlate(&tv.pyramid, &ta.pyramid, params)),
+        |_, _| {
+            Some(couple_core::pair::pair_correlate(
+                &tv.pyramid,
+                &ta.pyramid,
+                params,
+            ))
+        },
         |_, _, lag_ms, drift_ppm, t_min, t_max| {
-            couple_core::match_refine::refine_affine(&tv.pyramid, &ta.pyramid, lag_ms, drift_ppm, t_min, t_max)
+            couple_core::match_refine::refine_affine(
+                &tv.pyramid,
+                &ta.pyramid,
+                lag_ms,
+                drift_ppm,
+                t_min,
+                t_max,
+            )
         },
         |_, _| hint,
+        |_| {},
     );
     matrix.remove(0).remove(0)
 }
@@ -218,13 +302,24 @@ fn eleven_point_six_year_disagreement_cannot_harm_true_match() {
     let dir = tempfile::tempdir().unwrap();
     // A genuine same-master pair: B is +1800 ms, +60 ppm relative to A. The CORRECT audio match.
     let (ctx, v, a) = true_pair(dir.path(), 1800.0, 60.0);
-    let params = PairingParams { matcher_mode: MatcherMode::FingerprintShadow, ..Default::default() };
+    let params = PairingParams {
+        matcher_mode: MatcherMode::FingerprintShadow,
+        ..Default::default()
+    };
 
     // Baseline: NO metadata hint (the synthetic fixtures have none anyway). The correct audio Match.
     let base = evidence_with_hint(&ctx, v, a, &params, None);
     assert_eq!(base.method, MatchMethod::SpectralLandmarkV1);
-    assert_eq!(base.classification, MatchClassification::Match, "the true pair Matches without metadata");
-    assert!((base.lag_ms - 1800.0).abs() < 30.0, "baseline lag ~+1800 ms, got {}", base.lag_ms);
+    assert_eq!(
+        base.classification,
+        MatchClassification::Match,
+        "the true pair Matches without metadata"
+    );
+    assert!(
+        (base.lag_ms - 1800.0).abs() < 30.0,
+        "baseline lag ~+1800 ms, got {}",
+        base.lag_ms
+    );
 
     // The 11.6-year clock-misconfig hint: a real camera (1904 QuickTime epoch) vs a 2016 Zoom. Build
     // the EXACT TimeHint our parser yields for that disagreement and FORCE it to the worst case —
@@ -243,20 +338,41 @@ fn eleven_point_six_year_disagreement_cannot_harm_true_match() {
     // 1) The classification is UNCHANGED — still the correct Match (not turned wrong, not suppressed).
     assert_eq!(
         with_bad.classification, base.classification,
-        "the 11.6-year hint must not change the classification (still {:?})", base.classification
+        "the 11.6-year hint must not change the classification (still {:?})",
+        base.classification
     );
-    assert_eq!(with_bad.classification, MatchClassification::Match, "still the correct Match");
+    assert_eq!(
+        with_bad.classification,
+        MatchClassification::Match,
+        "still the correct Match"
+    );
     // 2) The accepted/refined mapping is UNCHANGED — the bad hint's hypothesis earned no inliers and
     //    lost; the winning lag is still the AUDIO lag, nowhere near 11.6 years.
-    assert!((with_bad.lag_ms - base.lag_ms).abs() < 1e-6, "accepted lag unchanged by the bad hint");
-    assert_eq!(with_bad.refined_lag_ms, base.refined_lag_ms, "refined lag unchanged");
-    assert_eq!(with_bad.refined_drift_ppm, base.refined_drift_ppm, "refined drift unchanged");
-    assert!(with_bad.lag_ms.abs() < 60_000.0, "winner is the audio lag, not 11.6 years ({} ms)", with_bad.lag_ms);
+    assert!(
+        (with_bad.lag_ms - base.lag_ms).abs() < 1e-6,
+        "accepted lag unchanged by the bad hint"
+    );
+    assert_eq!(
+        with_bad.refined_lag_ms, base.refined_lag_ms,
+        "refined lag unchanged"
+    );
+    assert_eq!(
+        with_bad.refined_drift_ppm, base.refined_drift_ppm,
+        "refined drift unchanged"
+    );
+    assert!(
+        with_bad.lag_ms.abs() < 60_000.0,
+        "winner is the audio lag, not 11.6 years ({} ms)",
+        with_bad.lag_ms
+    );
     // 3) Byte-identical evidence: the wrong hint perturbs nothing in the serialized result (§12.3 +
     //    §20 no NaN/Inf). The strongest non-veto statement: with vs without are the same bytes.
     let j_base = serde_json::to_string(&base).unwrap();
     let j_bad = serde_json::to_string(&with_bad).unwrap();
-    assert_eq!(j_base, j_bad, "the 11.6-year hint must produce a byte-identical PairEvidence");
+    assert_eq!(
+        j_base, j_bad,
+        "the 11.6-year hint must produce a byte-identical PairEvidence"
+    );
     for bad in ["NaN", "Infinity"] {
         assert!(!j_bad.contains(bad), "no {bad} in evidence JSON");
     }
@@ -271,7 +387,10 @@ fn metadata_does_not_restrict_landmark_lookup() {
     // the correspondence count would shrink toward the hint's window; it does not.
     let dir = tempfile::tempdir().unwrap();
     let (ctx, v, a) = true_pair(dir.path(), 1800.0, 60.0);
-    let params = PairingParams { matcher_mode: MatcherMode::FingerprintShadow, ..Default::default() };
+    let params = PairingParams {
+        matcher_mode: MatcherMode::FingerprintShadow,
+        ..Default::default()
+    };
 
     let base = evidence_with_hint(&ctx, v, a, &params, None);
     // A wrong, far-away hint that — IF it gated the lookup — would exclude the true correspondences.
@@ -292,5 +411,8 @@ fn metadata_does_not_restrict_landmark_lookup() {
     );
     // And the match is still correct (the far hint lost), confirming the lookup was not narrowed.
     assert_eq!(with_far.classification, MatchClassification::Match);
-    assert!((with_far.lag_ms - base.lag_ms).abs() < 1e-6, "accepted lag unchanged");
+    assert!(
+        (with_far.lag_ms - base.lag_ms).abs() < 1e-6,
+        "accepted lag unchanged"
+    );
 }

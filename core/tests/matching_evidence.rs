@@ -65,14 +65,20 @@ fn legacy_match_pair_agrees_with_pair_correlate() {
     let (ctx, v, a) = true_pair(dir.path(), 2500.0, 0.0, 30.0, 40.0);
     // Boundary 13 flipped the DEFAULT to FingerprintPrimary; this test exercises the legacy wrapper,
     // so request the LegacyEnvelope developer override explicitly (§16.1).
-    let params =
-        PairingParams { matcher_mode: MatcherMode::LegacyEnvelope, ..PairingParams::default() };
+    let params = PairingParams {
+        matcher_mode: MatcherMode::LegacyEnvelope,
+        ..PairingParams::default()
+    };
     assert_eq!(params.matcher_mode, MatcherMode::LegacyEnvelope);
 
     let ev = ctx.match_pair(v, a, &params).unwrap();
     let corr = ctx.pair_correlate(v, a, &params).unwrap();
 
-    assert_eq!(ev.method, MatchMethod::EnvelopeV1, "legacy mode ⇒ EnvelopeV1");
+    assert_eq!(
+        ev.method,
+        MatchMethod::EnvelopeV1,
+        "legacy mode ⇒ EnvelopeV1"
+    );
     // The method-neutral wrapper reports the legacy lag within tolerance of pair_correlate's lag.
     assert!(
         (ev.lag_ms - corr.lag_ms).abs() < 1.0,
@@ -82,7 +88,11 @@ fn legacy_match_pair_agrees_with_pair_correlate() {
     );
     // A clean true pair is a legacy candidate ⇒ Match; the lag is near the truth.
     assert_eq!(ev.classification, MatchClassification::Match);
-    assert!((ev.lag_ms - 2500.0).abs() < 20.0, "lag {} near +2500 ms truth", ev.lag_ms);
+    assert!(
+        (ev.lag_ms - 2500.0).abs() < 20.0,
+        "lag {} near +2500 ms truth",
+        ev.lag_ms
+    );
     // Legacy stage-1 carries no drift and no refined fields (boundary 7).
     assert_eq!(ev.drift_ppm, 0.0);
     assert_eq!(ev.refined_lag_ms, None);
@@ -99,11 +109,17 @@ fn fingerprint_shadow_true_pair_is_spectral_match() {
     let dir = tempfile::tempdir().unwrap();
     // A true pair with a positive offset and a small positive drift, so we can check BOTH signs.
     let (ctx, v, a) = true_pair(dir.path(), 1800.0, 60.0, 40.0, 55.0);
-    let params =
-        PairingParams { matcher_mode: MatcherMode::FingerprintShadow, ..Default::default() };
+    let params = PairingParams {
+        matcher_mode: MatcherMode::FingerprintShadow,
+        ..Default::default()
+    };
 
     let ev = ctx.match_pair(v, a, &params).unwrap();
-    assert_eq!(ev.method, MatchMethod::SpectralLandmarkV1, "fingerprint mode ⇒ SpectralLandmarkV1");
+    assert_eq!(
+        ev.method,
+        MatchMethod::SpectralLandmarkV1,
+        "fingerprint mode ⇒ SpectralLandmarkV1"
+    );
     assert_eq!(
         ev.classification,
         MatchClassification::Match,
@@ -113,17 +129,38 @@ fn fingerprint_shadow_true_pair_is_spectral_match() {
         ev.support
     );
     // Lag sign + magnitude: B is +1800 ms relative to A.
-    assert!(ev.lag_ms > 0.0, "positive offset ⇒ positive lag, got {}", ev.lag_ms);
-    assert!((ev.lag_ms - 1800.0).abs() < 30.0, "consensus lag {} near +1800 ms", ev.lag_ms);
+    assert!(
+        ev.lag_ms > 0.0,
+        "positive offset ⇒ positive lag, got {}",
+        ev.lag_ms
+    );
+    assert!(
+        (ev.lag_ms - 1800.0).abs() < 30.0,
+        "consensus lag {} near +1800 ms",
+        ev.lag_ms
+    );
     // Drift sign: +60 ppm. The coarse consensus drift is approximate at the 50 ms inlier tolerance
     // (fine drift is boundary 7), so assert the SIGN and a generous magnitude band.
-    assert!(ev.drift_ppm > 0.0, "positive drift sign expected, got {}", ev.drift_ppm);
-    assert!(ev.drift_ppm.abs() <= params.fingerprint_match.max_abs_drift_ppm, "drift within bound");
+    assert!(
+        ev.drift_ppm > 0.0,
+        "positive drift sign expected, got {}",
+        ev.drift_ppm
+    );
+    assert!(
+        ev.drift_ppm.abs() <= params.fingerprint_match.max_abs_drift_ppm,
+        "drift within bound"
+    );
     // In shadow mode the legacy correlation is attached for comparison.
-    assert!(ev.legacy.is_some(), "shadow mode attaches the legacy correlation");
+    assert!(
+        ev.legacy.is_some(),
+        "shadow mode attaches the legacy correlation"
+    );
     // BOUNDARY 7 (§11.2): refined fields ARE now populated for a refined Match (boundary 6 left them
     // None; the dedicated accuracy gates live in tests/match_refine.rs). They are finite (§20).
-    assert!(ev.refined_lag_ms.is_some_and(|l| l.is_finite()), "refined lag populated by boundary 7");
+    assert!(
+        ev.refined_lag_ms.is_some_and(|l| l.is_finite()),
+        "refined lag populated by boundary 7"
+    );
     assert!(ev.refined_drift_ppm.is_some_and(|d| d.is_finite()));
     assert!(ev.refined_rms_ms.is_some_and(|r| r.is_finite()));
     // Residuals present for a Match (a fittable line); finite.
@@ -159,16 +196,26 @@ fn fingerprint_shadow_unrelated_pair_is_no_match() {
     // An independent master (different seed) of comparable length, written as its own WAV via the
     // fixture generator into a sibling dir, then imported into the SAME ctx.
     let dir2 = tempfile::tempdir().unwrap();
-    let spec2 = FixtureSpec { seed: 99, dur_cam_s: 30.0, dur_ext_s: 40.0, snr_db: Some(25.0), agc: false, ..Default::default() };
+    let spec2 = FixtureSpec {
+        seed: 99,
+        dur_cam_s: 30.0,
+        dur_ext_s: 40.0,
+        snr_db: Some(25.0),
+        agc: false,
+        ..Default::default()
+    };
     generate(dir2.path(), &spec2, &ffmpeg()).unwrap();
 
     let ctx = common::test_ctx(&dir.path().join("cache"));
     let v = common::import(&ctx, &dir.path().join("camera.wav"), TrackRole::Camera).unwrap();
     // The unrelated audio is the INDEPENDENT master's external file.
-    let a_unrelated = common::import(&ctx, &dir2.path().join("external.wav"), TrackRole::External).unwrap();
+    let a_unrelated =
+        common::import(&ctx, &dir2.path().join("external.wav"), TrackRole::External).unwrap();
 
-    let params =
-        PairingParams { matcher_mode: MatcherMode::FingerprintShadow, ..Default::default() };
+    let params = PairingParams {
+        matcher_mode: MatcherMode::FingerprintShadow,
+        ..Default::default()
+    };
     let ev = ctx.match_pair(v, a_unrelated, &params).unwrap();
     assert_eq!(ev.method, MatchMethod::SpectralLandmarkV1);
     assert_ne!(
@@ -182,7 +229,10 @@ fn fingerprint_shadow_unrelated_pair_is_no_match() {
     // §9.3). It must not be a confident Match; NoMatch or honest Ambiguity are both acceptable, but
     // for clearly independent content we expect NoMatch.
     assert!(
-        matches!(ev.classification, MatchClassification::NoMatch | MatchClassification::Ambiguous),
+        matches!(
+            ev.classification,
+            MatchClassification::NoMatch | MatchClassification::Ambiguous
+        ),
         "unrelated ⇒ NoMatch/Ambiguous, got {:?}",
         ev.classification
     );
@@ -194,8 +244,10 @@ fn sub_floor_overlap_is_insufficient_overlap() {
     let dir = tempfile::tempdir().unwrap();
     // Two short clips (4 s each) — below the 8 s default pairing floor.
     let (ctx, v, a) = true_pair(dir.path(), 500.0, 0.0, 4.0, 4.0);
-    let params =
-        PairingParams { matcher_mode: MatcherMode::FingerprintShadow, ..Default::default() };
+    let params = PairingParams {
+        matcher_mode: MatcherMode::FingerprintShadow,
+        ..Default::default()
+    };
     // The default floor is 8 s; 4 s overlap is below it.
     assert_eq!(params.min_overlap_s, 8.0);
 
@@ -217,20 +269,37 @@ fn match_candidates_returns_matrix_over_batch() {
     // column. One video, two audios.
     let (ctx, v0, a0) = true_pair(dir.path(), 1200.0, 0.0, 30.0, 40.0);
     let dir2 = tempfile::tempdir().unwrap();
-    let spec2 = FixtureSpec { seed: 55, dur_cam_s: 30.0, dur_ext_s: 40.0, snr_db: Some(25.0), agc: false, ..Default::default() };
+    let spec2 = FixtureSpec {
+        seed: 55,
+        dur_cam_s: 30.0,
+        dur_ext_s: 40.0,
+        snr_db: Some(25.0),
+        agc: false,
+        ..Default::default()
+    };
     generate(dir2.path(), &spec2, &ffmpeg()).unwrap();
     let a1 = common::import(&ctx, &dir2.path().join("external.wav"), TrackRole::External).unwrap();
 
-    let params =
-        PairingParams { matcher_mode: MatcherMode::FingerprintShadow, ..Default::default() };
+    let params = PairingParams {
+        matcher_mode: MatcherMode::FingerprintShadow,
+        ..Default::default()
+    };
 
     let matrix = ctx.match_candidates(&[v0], &[a0, a1], &params).unwrap();
     assert_eq!(matrix.len(), 1, "one video row");
     assert_eq!(matrix[0].len(), 2, "two audio columns");
     // The true column Matches; the independent column does not.
-    assert_eq!(matrix[0][0].classification, MatchClassification::Match, "v0↔a0 true pair");
+    assert_eq!(
+        matrix[0][0].classification,
+        MatchClassification::Match,
+        "v0↔a0 true pair"
+    );
     assert_eq!(matrix[0][0].method, MatchMethod::SpectralLandmarkV1);
-    assert_ne!(matrix[0][1].classification, MatchClassification::Match, "v0↔a1 unrelated");
+    assert_ne!(
+        matrix[0][1].classification,
+        MatchClassification::Match,
+        "v0↔a1 unrelated"
+    );
 
     // Cross-check: match_pair on the same true cell agrees with the matrix cell (byte-identical).
     let single = ctx.match_pair(v0, a0, &params).unwrap();
@@ -242,11 +311,19 @@ fn match_candidates_returns_matrix_over_batch() {
 
     // The whole batch also works in LegacyEnvelope mode (the method-neutral legacy matrix). Boundary
     // 13 made FingerprintPrimary the default, so request the legacy override explicitly (§16.1).
-    let legacy_params =
-        PairingParams { matcher_mode: MatcherMode::LegacyEnvelope, ..PairingParams::default() };
-    let legacy_matrix = ctx.match_candidates(&[v0], &[a0, a1], &legacy_params).unwrap();
+    let legacy_params = PairingParams {
+        matcher_mode: MatcherMode::LegacyEnvelope,
+        ..PairingParams::default()
+    };
+    let legacy_matrix = ctx
+        .match_candidates(&[v0], &[a0, a1], &legacy_params)
+        .unwrap();
     assert_eq!(legacy_matrix[0][0].method, MatchMethod::EnvelopeV1);
-    assert_eq!(legacy_matrix[0][0].classification, MatchClassification::Match, "legacy true pair");
+    assert_eq!(
+        legacy_matrix[0][0].classification,
+        MatchClassification::Match,
+        "legacy true pair"
+    );
 }
 
 // ---- §13.4 match_candidates_graph: graph-adjusted evidence over a real batch (OBSERVATIONAL) ----
@@ -271,11 +348,15 @@ fn match_candidates_graph_is_observational_on_real_batch() {
     generate(dir2.path(), &spec2, &ffmpeg()).unwrap();
     let a1 = common::import(&ctx, &dir2.path().join("external.wav"), TrackRole::External).unwrap();
 
-    let params =
-        PairingParams { matcher_mode: MatcherMode::FingerprintShadow, ..Default::default() };
+    let params = PairingParams {
+        matcher_mode: MatcherMode::FingerprintShadow,
+        ..Default::default()
+    };
 
     let plain = ctx.match_candidates(&[v0], &[a0, a1], &params).unwrap();
-    let graph = ctx.match_candidates_graph(&[v0], &[a0, a1], &params).unwrap();
+    let graph = ctx
+        .match_candidates_graph(&[v0], &[a0, a1], &params)
+        .unwrap();
 
     // Same shape.
     assert_eq!(graph.len(), plain.len());
@@ -286,18 +367,31 @@ fn match_candidates_graph_is_observational_on_real_batch() {
         for (gcell, pcell) in grow.iter().zip(prow) {
             let gj = serde_json::to_string(gcell).unwrap();
             let pj = serde_json::to_string(pcell).unwrap();
-            assert_eq!(gj, pj, "graph-adjusted cell must equal the plain cell (observational)");
+            assert_eq!(
+                gj, pj,
+                "graph-adjusted cell must equal the plain cell (observational)"
+            );
             for bad in ["NaN", "Infinity"] {
                 assert!(!gj.contains(bad), "no {bad} in graph-adjusted evidence");
             }
         }
     }
     // The true pair is still a Match through the graph surface; the unrelated column is not.
-    assert_eq!(graph[0][0].classification, MatchClassification::Match, "v0↔a0 true pair");
-    assert_ne!(graph[0][1].classification, MatchClassification::Match, "v0↔a1 unrelated");
+    assert_eq!(
+        graph[0][0].classification,
+        MatchClassification::Match,
+        "v0↔a0 true pair"
+    );
+    assert_ne!(
+        graph[0][1].classification,
+        MatchClassification::Match,
+        "v0↔a1 unrelated"
+    );
 
     // Determinism: a second graph call is byte-identical.
-    let graph2 = ctx.match_candidates_graph(&[v0], &[a0, a1], &params).unwrap();
+    let graph2 = ctx
+        .match_candidates_graph(&[v0], &[a0, a1], &params)
+        .unwrap();
     for (r1, r2) in graph.iter().zip(&graph2) {
         for (c1, c2) in r1.iter().zip(r2) {
             assert_eq!(
@@ -310,11 +404,16 @@ fn match_candidates_graph_is_observational_on_real_batch() {
 
     // LegacyEnvelope: the graph pass is a no-op ⇒ equals the plain legacy matrix. Boundary 13 made
     // FingerprintPrimary the default, so request the legacy override explicitly (§16.1).
-    let legacy_params =
-        PairingParams { matcher_mode: MatcherMode::LegacyEnvelope, ..PairingParams::default() };
-    let legacy_plain = ctx.match_candidates(&[v0], &[a0, a1], &legacy_params).unwrap();
-    let legacy_graph =
-        ctx.match_candidates_graph(&[v0], &[a0, a1], &legacy_params).unwrap();
+    let legacy_params = PairingParams {
+        matcher_mode: MatcherMode::LegacyEnvelope,
+        ..PairingParams::default()
+    };
+    let legacy_plain = ctx
+        .match_candidates(&[v0], &[a0, a1], &legacy_params)
+        .unwrap();
+    let legacy_graph = ctx
+        .match_candidates_graph(&[v0], &[a0, a1], &legacy_params)
+        .unwrap();
     for (gr, pr) in legacy_graph.iter().zip(&legacy_plain) {
         for (gc, pc) in gr.iter().zip(pr) {
             assert_eq!(
@@ -324,6 +423,109 @@ fn match_candidates_graph_is_observational_on_real_batch() {
             );
         }
     }
+}
+
+// ---- incremental-matching: `_prog` parity + an honest progress stream (CONSTRAINT 1) ----
+// The progress-aware `match_candidates_graph_prog` must produce a matrix BYTE-IDENTICAL to the
+// non-progress `match_candidates_graph` (the synchronous resolution authority), and the injected
+// emitter must receive a per-phase MONOTONE, in-[0,1] fraction sequence that ENDS at 1.0 on the
+// terminal `MatchGraph` phase. Parity is by construction (the non-progress method IS a no-op-emitter
+// wrapper around `_prog`); this asserts it directly on a real fingerprint batch, and proves the
+// observational emitter never perturbs the cells. Run with `--release` (fixture generation is heavy).
+#[test]
+fn match_candidates_graph_prog_is_byte_identical_and_emits_monotone_progress() {
+    use couple_core::job::{CancelToken, Phase, Progress, ProgressEmitter};
+    use std::sync::{Arc, Mutex};
+
+    let dir = tempfile::tempdir().unwrap();
+    // A true pair (v0 ↔ a0) plus an independent recording (a1) — same batch shape as the
+    // observational test, so the fingerprint + correlate + graph phases all run.
+    let (ctx, v0, a0) = true_pair(dir.path(), 1500.0, 0.0, 30.0, 40.0);
+    let dir2 = tempfile::tempdir().unwrap();
+    let spec2 = FixtureSpec {
+        seed: 41,
+        dur_cam_s: 30.0,
+        dur_ext_s: 40.0,
+        snr_db: Some(25.0),
+        agc: false,
+        ..Default::default()
+    };
+    generate(dir2.path(), &spec2, &ffmpeg()).unwrap();
+    let a1 = common::import(&ctx, &dir2.path().join("external.wav"), TrackRole::External).unwrap();
+
+    let params = PairingParams {
+        matcher_mode: MatcherMode::FingerprintShadow,
+        ..Default::default()
+    };
+
+    // The synchronous (no-op-emitter) authority.
+    let plain = ctx
+        .match_candidates_graph(&[v0], &[a0, a1], &params)
+        .unwrap();
+
+    // The progress path: capture every emitted Progress.
+    let captured: Arc<Mutex<Vec<Progress>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&captured);
+    let f: couple_core::job::ProgressFn = Arc::new(move |p: &Progress| {
+        sink.lock().unwrap().push(p.clone());
+    });
+    let mut prog = ProgressEmitter::new(0, f);
+    let cancel = CancelToken::new();
+    let with_prog = ctx
+        .match_candidates_graph_prog(&[v0], &[a0, a1], &params, &mut prog, &cancel)
+        .unwrap();
+
+    // (1) BYTE-IDENTICAL output (CONSTRAINT 1): every cell serializes the same.
+    assert_eq!(with_prog.len(), plain.len());
+    for (pr, gr) in with_prog.iter().zip(&plain) {
+        assert_eq!(pr.len(), gr.len());
+        for (pc, gc) in pr.iter().zip(gr) {
+            assert_eq!(
+                serde_json::to_string(pc).unwrap(),
+                serde_json::to_string(gc).unwrap(),
+                "_prog cell must equal the non-progress cell (byte-identical resolution)"
+            );
+        }
+    }
+    // Sanity: the true pair still Matches through the progress surface.
+    assert_eq!(with_prog[0][0].classification, MatchClassification::Match);
+
+    // (2) An HONEST progress stream: at least one update; each fraction is in [0,1]; monotone WITHIN
+    // a phase; and the LAST emission is the terminal MatchGraph at 1.0 (the bar lands cleanly).
+    let updates = captured.lock().unwrap().clone();
+    assert!(!updates.is_empty(), "the matching job must emit progress");
+    let mut last_per_phase: std::collections::HashMap<String, f64> =
+        std::collections::HashMap::new();
+    for u in &updates {
+        assert!(
+            (0.0..=1.0).contains(&u.fraction),
+            "fraction {} out of [0,1] on {:?}",
+            u.fraction,
+            u.phase
+        );
+        let key = format!("{:?}", u.phase);
+        if let Some(prev) = last_per_phase.get(&key) {
+            assert!(
+                u.fraction >= *prev,
+                "phase {key} regressed {prev} -> {}",
+                u.fraction
+            );
+        }
+        last_per_phase.insert(key, u.fraction);
+    }
+    // We expect the fingerprint phase to have fired (the dominant cost) and the graph phase to be the
+    // terminal one at exactly 1.0.
+    assert!(
+        updates.iter().any(|u| u.phase == Phase::MatchFingerprint),
+        "fingerprint-build progress must be emitted"
+    );
+    let last = updates.last().unwrap();
+    assert_eq!(
+        last.phase,
+        Phase::MatchGraph,
+        "terminal phase is MatchGraph"
+    );
+    assert_eq!(last.fraction, 1.0, "the bar lands at 1.0");
 }
 
 // ---- §15 boundary 12: the FINGERPRINT corpus metrics are byte-reproducible (cold cache) ----
@@ -336,7 +538,9 @@ fn match_candidates_graph_is_observational_on_real_batch() {
 #[test]
 fn fingerprint_corpus_metrics_are_byte_reproducible() {
     use couple_core::fingerprint::FingerprintMatchParams;
-    use couple_core::matcher_corpus::{score_manifest_with, CorpusManifest, Matcher, CORPUS_SCHEMA};
+    use couple_core::matcher_corpus::{
+        score_manifest_with, CorpusManifest, Matcher, CORPUS_SCHEMA,
+    };
 
     // A tiny one-case synthetic manifest: a clean 12 s true pair (reaches the matcher, a confident
     // Match under profile_v1). The synthetic `gen` block regenerates the media deterministically.
@@ -389,10 +593,16 @@ fn fingerprint_corpus_metrics_are_byte_reproducible() {
 
     let j1 = run();
     let j2 = run();
-    assert_eq!(j1, j2, "fingerprint corpus metrics must be byte-identical across cold runs");
+    assert_eq!(
+        j1, j2,
+        "fingerprint corpus metrics must be byte-identical across cold runs"
+    );
     // The clean 12 s pair Matches under profile_v1 (a sanity check that we measured a real verdict,
     // not an empty manifest), and no NaN/Infinity reaches the JSON (§20).
-    assert!(j1.contains("\"truePositives\":1"), "the clean 12 s true pair Matches: {j1}");
+    assert!(
+        j1.contains("\"truePositives\":1"),
+        "the clean 12 s true pair Matches: {j1}"
+    );
     for bad in ["NaN", "Infinity"] {
         assert!(!j1.contains(bad), "no {bad} in metrics JSON");
     }

@@ -247,13 +247,22 @@ enum Resolver {
     /// safe to run off the main actor (Engine/TrackHandle are Sendable). The
     /// returned rows are in video input order; unused audio is anything no row
     /// selects (computed by the caller from the pool).
+    /// `prebuiltMatrix` (incremental-matching boundary): when the caller already obtained the
+    /// graph-adjusted `[[PairEvidence]]` matrix from the determinate JOB
+    /// (`Engine.matchCandidatesGraphStart`), it is passed in here so `resolveFingerprint` consumes it
+    /// instead of making its own synchronous `matchCandidatesGraph` call — the per-row resolution
+    /// policy is byte-identical either way (the matrix IS the only input). It is indexed over the
+    /// IMPORTABLE videos (handle != nil), exactly as the synchronous call returns. `nil` ⇒ the
+    /// synchronous fallback (every non-app caller, e.g. the CLI tests).
     static func resolve(videos: [ResolverVideo], audios: [ResolverAudio],
-                        engine: Engine, params: PairParams = PairParams()) -> [ResolvedRow] {
+                        engine: Engine, params: PairParams = PairParams(),
+                        prebuiltMatrix: [[PairEvidence]]? = nil) -> [ResolvedRow] {
         // BOUNDARY 13 (§16.1): the DEFAULT resolves from the core graph-adjusted `PairEvidence`
         // matrix; `--matcher legacy`'s equivalent (matcherFingerprintPrimary == false) keeps the
         // proven envelope resolver below. The fingerprint resolver is a SEPARATE single-pass path.
         if params.matcherFingerprintPrimary {
-            return resolveFingerprint(videos: videos, audios: audios, engine: engine, params: params)
+            return resolveFingerprint(videos: videos, audios: audios, engine: engine,
+                                      params: params, prebuiltMatrix: prebuiltMatrix)
         }
         // Candidate matrix over the analyzable videos only (a stripped-audio
         // video has no handle and resolves `no match` without a matrix row).
@@ -372,15 +381,23 @@ enum Resolver {
     /// gives the deterministic order. Single-pass: the legacy two-pass RMS escalation is a z-margin
     /// facility; fingerprint identity is core's classification + the affine triangle.
     private static func resolveFingerprint(videos: [ResolverVideo], audios: [ResolverAudio],
-                                           engine: Engine, params: PairParams) -> [ResolvedRow] {
+                                           engine: Engine, params: PairParams,
+                                           prebuiltMatrix: [[PairEvidence]]? = nil) -> [ResolvedRow] {
         let importable = videos.filter { $0.handle != nil }
         // The graph-adjusted matrix under the core default (FingerprintPrimary + profile 2): pass nil
         // params so core uses its default matcher (§16.1). §16.2 fallback (a cell whose fingerprint is
-        // unavailable ⇒ EnvelopeV1) is handled INSIDE core; the cell's `method` records it.
-        let matrix = importable.isEmpty || audios.isEmpty
-            ? []
-            : (engine.matchCandidatesGraph(videos: importable.compactMap(\.handle),
-                                           audios: audios.map(\.handle)) ?? [])
+        // unavailable ⇒ EnvelopeV1) is handled INSIDE core; the cell's `method` records it. When the
+        // caller supplied a `prebuiltMatrix` (from the determinate matching JOB) we consume it as-is —
+        // the resolution policy below is identical to building it synchronously here.
+        let matrix: [[PairEvidence]]
+        if let prebuiltMatrix {
+            matrix = prebuiltMatrix
+        } else {
+            matrix = importable.isEmpty || audios.isEmpty
+                ? []
+                : (engine.matchCandidatesGraph(videos: importable.compactMap(\.handle),
+                                               audios: audios.map(\.handle)) ?? [])
+        }
 
         // Map importable-indexed rows back onto the full video list (an audio-less video ⇒ no match).
         var perVideoEvidence: [[PairEvidence]?] = Array(repeating: nil, count: videos.count)

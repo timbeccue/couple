@@ -82,16 +82,16 @@ final class MediaPool {
     var entries: [Entry] = []
     /// Unrecognized files, surfaced once (§2.1 "skipped N unrecognized files").
     var skipped: [String] = []
-    /// True while a drop is being probed/imported (drives the load spinner).
+    /// True while a drop is being probed/imported. Also the activity strip's GATE for the
+    /// import line: it is cleared synchronously when a batch ends, so the strip stops
+    /// trusting `importActivity` even if the job's progress task posts one last late frame.
     var importing = false
-    private(set) var importProgress = ""
 
-    /// Structured import progress for the unified activity strip (TODO-005), kept
-    /// alongside the human `importProgress` string (which the initial LoadSurface
-    /// still renders verbatim). `nil` when no import is running. Carries the honest
-    /// phase + trustworthy fraction + the 1-based file position so the strip can show a
-    /// determinate bar (`Building waveform 2 of 5: clip.mov - 68%`). The pure
-    /// `ActivitySummaryPolicy` formats it; this only reports the raw signal.
+    /// Structured import progress for the unified activity strip (TODO-005). `nil` when no
+    /// import is running. Carries the honest phase + trustworthy fraction + the 1-based
+    /// file position; the pure `ActivitySummaryPolicy` turns it into the unified
+    /// import→match bar (one continuous fill across the batch, not a per-file reset). This
+    /// only reports the raw signal — the single source the strip reads on every surface.
     private(set) var importActivity: ActivitySignals.Importing?
     /// Called whenever `importing` / `importActivity` changes, so the owner (AppModel)
     /// can recompute the activity strip. Set by AppModel; the pool stays decoupled.
@@ -121,7 +121,7 @@ final class MediaPool {
         let files = Self.expand(urls)
         importing = true
         defer {
-            importing = false; importProgress = ""; importActivity = nil
+            importing = false; importActivity = nil
             onImportChange?()   // clear the strip's import summary on completion (TODO-005)
         }
         let total = files.count
@@ -133,8 +133,8 @@ final class MediaPool {
             // bytes via a different path) happens post-import on the content key.
             if entries.contains(where: { $0.url == url }) { continue }
 
-            importProgress = "Reading \(name)…"
-            // Probe sub-phase: no trustworthy fraction yet (indeterminate, TODO-005).
+            // Probe sub-phase: no per-file fraction yet — the unified bar shows the
+            // batch position for this file (TODO-005).
             importActivity = ActivitySignals.Importing(
                 phase: .probing, fraction: 0, index: idx + 1, total: total, filename: name)
             onImportChange?()
@@ -186,7 +186,6 @@ final class MediaPool {
         let job = try engine.importStart(url.path, role: role == .video ? .camera : .external)
         let progressTask = Task {
             for await p in job.progress {
-                self.importProgress = "\(name) — \(Self.phaseLabel(p.phase)) \(Int(p.fraction * 100))%"
                 // Structured signal for the activity strip (TODO-005): honest phase +
                 // the job's trustworthy fraction + the batch position.
                 self.importActivity = ActivitySignals.Importing(
@@ -197,14 +196,6 @@ final class MediaPool {
         }
         defer { progressTask.cancel() }
         return try await job.value()
-    }
-
-    static func phaseLabel(_ phase: String) -> String {
-        switch phase {
-        case "Decode": return "decoding"
-        case "Pyramid": return "peaks"
-        default: return "finishing"
-        }
     }
 
     /// Map the core job's phase string to the strip's honest `ImportPhase` (TODO-005).
@@ -224,6 +215,10 @@ final class MediaPool {
     func teardown() {
         for e in entries { e.handle?.free() }
         entries = []
+        // Drop any in-flight/stale import state so a discarded session leaves no trace for
+        // the activity strip (paired with `ActivityStrip.reset()` in Clear Session).
+        importing = false
+        importActivity = nil
     }
 
     /// Remove the given content keys from the OPEN SESSION (TODO-001). The pool is the

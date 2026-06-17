@@ -281,7 +281,11 @@ pub fn evidence_from_legacy(
         refined_lag_ms: None,
         refined_drift_ppm: None,
         refined_rms_ms: None,
-        legacy: if attach_legacy { Some(corr.clone()) } else { None },
+        legacy: if attach_legacy {
+            Some(corr.clone())
+        } else {
+            None
+        },
         refine_reason: crate::match_refine::RefineReason::NotAttempted,
     }
 }
@@ -461,15 +465,24 @@ pub struct MatchBatchStats {
 /// threshold, or overrides a better audio hypothesis. A caller with no metadata (the unit tests)
 /// passes `|_, _| None`, making the cell byte-identical to the no-hint consensus.
 ///
+/// `on_row` is the OBSERVATIONAL progress hook (incremental-matching boundary): it is invoked once
+/// with the 0-based video row index AFTER that row's cells are fully filled and pushed, so a caller
+/// can emit a determinate "Comparing…" fraction (`(vi+1)/videos.len()`). It is purely a side-channel
+/// — it receives only the completed row index, runs at the established loop boundary, and CANNOT
+/// touch the matrix fill, so the produced evidence is byte-identical whether `on_row` is a no-op
+/// (`|_| {}`, the unit-test callers) or an emitter. Like `legacy`/`refine`/`hint`, it is injected
+/// because the pure orchestrator owns no `ProgressEmitter`.
+///
 /// Returns the matrix and [`MatchBatchStats`] (with `index_builds == 1` whenever at least one
 /// audio has a fingerprint; `0` when none do, i.e. every cell is a legacy fallback).
 // The parameter count is intrinsic to the design: the pure orchestrator owns the batch index +
-// §9.3 mapping, and the three per-cell DEPENDENCIES it cannot have itself (the legacy correlation,
-// the §11 pyramid refinement, and the §12 metadata hint) are INJECTED as closures so the function
-// is unit-testable without the PCM/ffmpeg pipeline. Bundling them into a struct would only obscure
-// that. (`Ctx::match_pair`/`match_candidates` are the two production callers.)
+// §9.3 mapping, and the per-cell DEPENDENCIES it cannot have itself (the legacy correlation, the §11
+// pyramid refinement, the §12 metadata hint, and the per-row progress side-channel) are INJECTED as
+// closures so the function is unit-testable without the PCM/ffmpeg pipeline. Bundling them into a
+// struct would only obscure that. (`Ctx::match_pair`/`match_candidates` are the two production
+// callers.)
 #[allow(clippy::too_many_arguments)]
-pub fn match_candidates_fingerprint<F, R, H>(
+pub fn match_candidates_fingerprint<F, R, H, P>(
     videos: &[(FingerprintSlot, f64)],
     audios: &[(FingerprintSlot, f64)],
     fmt: &FingerprintFormatV1,
@@ -478,11 +491,13 @@ pub fn match_candidates_fingerprint<F, R, H>(
     mut legacy: F,
     mut refine: R,
     mut hint: H,
+    mut on_row: P,
 ) -> (Vec<Vec<PairEvidence>>, MatchBatchStats)
 where
     F: FnMut(usize, usize) -> Option<PairCorrelation>,
     R: FnMut(usize, usize, f64, f64, f64, f64) -> crate::match_refine::RefineOutcome,
     H: FnMut(usize, usize) -> Option<TimeHint>,
+    P: FnMut(usize),
 {
     let fp_params = &params.fingerprint_match;
     let mut stats = MatchBatchStats::default();
@@ -520,7 +535,10 @@ where
 
             // §9.3 #1: below the pairing floor ⇒ InsufficientOverlap, before any matcher runs.
             if overlap < params.min_overlap_s {
-                row.push(PairEvidence::insufficient_overlap(MatchMethod::SpectralLandmarkV1, overlap));
+                row.push(PairEvidence::insufficient_overlap(
+                    MatchMethod::SpectralLandmarkV1,
+                    overlap,
+                ));
                 continue;
             }
 
@@ -539,7 +557,8 @@ where
             // more candidate hypothesis + an exact-tie order key.
             let pc = correspondences_for_pair(video_fp, idx, audio_idx, fmt, fp_params);
             let cell_hint = hint(vi, ai);
-            let cons = consensus_with_hint(&pc.correspondences, overlap, fp_params, cell_hint.as_ref());
+            let cons =
+                consensus_with_hint(&pc.correspondences, overlap, fp_params, cell_hint.as_ref());
             // In shadow mode attach the legacy correlation (if the caller can supply one) for
             // comparison; in primary mode leave it None (§5.3). The legacy closure is only invoked
             // when shadow is on, so a primary fingerprint cell pays no legacy cost.
@@ -555,6 +574,9 @@ where
             row.push(ev);
         }
         matrix.push(row);
+        // OBSERVATIONAL: signal this video row is complete (progress only). Runs at the established
+        // loop boundary, after the row is pushed; it cannot alter the fill above.
+        on_row(vi);
     }
 
     (matrix, stats)
@@ -707,7 +729,10 @@ mod tests {
     fn consensus_match() -> AffineConsensus {
         AffineConsensus {
             classification: AffineClass::Match,
-            model: AffineModel { intercept_s: 1.25, scale: 1.000_08 },
+            model: AffineModel {
+                intercept_s: 1.25,
+                scale: 1.000_08,
+            },
             lag_ms: 1250.0,
             drift_ppm: 80.0,
             score: 5.0,
@@ -730,20 +755,31 @@ mod tests {
     /// the GENUINE §9.3 resource ceiling (`hard_ceiling_exceeded`) OFF. Used to prove that the
     /// routine sample cap alone is scored NORMALLY (no Ambiguous override) — the §9.2/§9.3 separation.
     fn stats(capped: bool) -> CorrespondenceStats {
-        CorrespondenceStats { capped, hard_ceiling_exceeded: false, ..Default::default() }
+        CorrespondenceStats {
+            capped,
+            hard_ceiling_exceeded: false,
+            ..Default::default()
+        }
     }
 
     /// `CorrespondenceStats` for the GENUINE §9.3 resource ceiling: `hard_ceiling_exceeded` ON (and
     /// `capped` ON too, since a pair past the hard ceiling is necessarily past the §9.2 sample cap).
     fn stats_hard_ceiling() -> CorrespondenceStats {
-        CorrespondenceStats { capped: true, hard_ceiling_exceeded: true, ..Default::default() }
+        CorrespondenceStats {
+            capped: true,
+            hard_ceiling_exceeded: true,
+            ..Default::default()
+        }
     }
 
     /// A JSON string must contain NO NaN/Infinity token (serde_json emits `null` for non-finite
     /// f64, which would also be wrong here — we assert neither path occurs for a clean evidence).
     fn assert_no_nan_inf(json: &str) {
         for bad in ["NaN", "Infinity", "inf", "nan"] {
-            assert!(!json.contains(bad), "evidence JSON must not contain {bad:?}: {json}");
+            assert!(
+                !json.contains(bad),
+                "evidence JSON must not contain {bad:?}: {json}"
+            );
         }
     }
 
@@ -752,15 +788,26 @@ mod tests {
     #[test]
     fn evidence_round_trip_and_null_residuals() {
         // A Match with residuals present.
-        let ev = evidence_from_consensus(&consensus_match(), &stats(false), &PairingParams::default(), None);
+        let ev = evidence_from_consensus(
+            &consensus_match(),
+            &stats(false),
+            &PairingParams::default(),
+            None,
+        );
         let json = serde_json::to_string(&ev).unwrap();
         assert_no_nan_inf(&json);
         // camelCase on the wire; residuals serialized as numbers (present).
-        assert!(json.contains("\"method\":\"spectralLandmarkV1\""), "wire: {json}");
+        assert!(
+            json.contains("\"method\":\"spectralLandmarkV1\""),
+            "wire: {json}"
+        );
         assert!(json.contains("\"classification\":\"match\""));
         assert!(json.contains("\"residualRmsMs\":0.4"));
         // refined_* are None ⇒ null.
-        assert!(json.contains("\"refinedLagMs\":null"), "refined fields null: {json}");
+        assert!(
+            json.contains("\"refinedLagMs\":null"),
+            "refined fields null: {json}"
+        );
         assert!(json.contains("\"refinedDriftPpm\":null"));
         assert!(json.contains("\"refinedRmsMs\":null"));
         let back: PairEvidence = serde_json::from_str(&json).unwrap();
@@ -813,7 +860,10 @@ mod tests {
         assert_eq!(ev.lag_ms, 0.0);
         assert_eq!(ev.score, 0.0);
         assert_eq!(ev.inlier_fraction, 0.0);
-        assert_eq!(ev.residual_rms_ms, None, "non-finite residual scrubbed to None");
+        assert_eq!(
+            ev.residual_rms_ms, None,
+            "non-finite residual scrubbed to None"
+        );
         let json = serde_json::to_string(&ev).unwrap();
         assert_no_nan_inf(&json);
     }
@@ -829,7 +879,10 @@ mod tests {
         assert_eq!(ev.lag_ms, 1500.0);
         assert_eq!(ev.score, 9.0);
         assert_eq!(ev.drift_ppm, 0.0, "legacy stage-1 carries no drift");
-        assert_eq!(ev.legacy, None, "pure-legacy does not duplicate into legacy field");
+        assert_eq!(
+            ev.legacy, None,
+            "pure-legacy does not duplicate into legacy field"
+        );
 
         // legacy_candidate false ⇒ NoMatch.
         let ev2 = evidence_from_legacy(&legacy_corr(2.0, 100.0, false), 30.0, false);
@@ -843,7 +896,10 @@ mod tests {
         // attach_legacy true ⇒ embed the PairCorrelation for shadow comparison.
         let ev = evidence_from_legacy(&corr, 5.0, true);
         assert_eq!(ev.classification, MatchClassification::InsufficientOverlap);
-        assert!(ev.legacy.is_some(), "shadow fallback attaches the legacy correlation");
+        assert!(
+            ev.legacy.is_some(),
+            "shadow fallback attaches the legacy correlation"
+        );
         assert_eq!(ev.overlap_s, 5.0);
     }
 
@@ -851,7 +907,12 @@ mod tests {
 
     #[test]
     fn consensus_match_maps_to_match() {
-        let ev = evidence_from_consensus(&consensus_match(), &stats(false), &PairingParams::default(), None);
+        let ev = evidence_from_consensus(
+            &consensus_match(),
+            &stats(false),
+            &PairingParams::default(),
+            None,
+        );
         assert_eq!(ev.classification, MatchClassification::Match);
         assert_eq!(ev.lag_ms, 1250.0);
         assert!((ev.drift_ppm - 80.0).abs() < 1e-9);
@@ -934,7 +995,12 @@ mod tests {
     #[test]
     fn routine_sample_cap_is_scored_normally_not_ambiguous() {
         // A capped-but-all-gates-passing dense pair ⇒ Match (the §9.2 sample's consensus is a Match).
-        let ev = evidence_from_consensus(&consensus_match(), &stats(true), &PairingParams::default(), None);
+        let ev = evidence_from_consensus(
+            &consensus_match(),
+            &stats(true),
+            &PairingParams::default(),
+            None,
+        );
         assert_eq!(
             ev.classification,
             MatchClassification::Match,
@@ -948,7 +1014,11 @@ mod tests {
         c.support = 0.0;
         c.inlier_count = 0;
         let ev2 = evidence_from_consensus(&c, &stats(true), &PairingParams::default(), None);
-        assert_eq!(ev2.classification, MatchClassification::NoMatch, "a capped NoMatch stays NoMatch");
+        assert_eq!(
+            ev2.classification,
+            MatchClassification::NoMatch,
+            "a capped NoMatch stays NoMatch"
+        );
     }
 
     // BOUNDARY TEST (4) — the genuine resource ceiling still ⇒ Ambiguous, NEVER NoMatch (§9.3/§20).
@@ -960,7 +1030,8 @@ mod tests {
         c.classification = AffineClass::NoMatch;
         c.support = 0.0;
         c.inlier_count = 0;
-        let ev = evidence_from_consensus(&c, &stats_hard_ceiling(), &PairingParams::default(), None);
+        let ev =
+            evidence_from_consensus(&c, &stats_hard_ceiling(), &PairingParams::default(), None);
         assert_eq!(
             ev.classification,
             MatchClassification::Ambiguous,
@@ -968,7 +1039,12 @@ mod tests {
         );
 
         // And it also overrides a would-be Match (a truly-exhausted input is not confidently unique).
-        let ev2 = evidence_from_consensus(&consensus_match(), &stats_hard_ceiling(), &PairingParams::default(), None);
+        let ev2 = evidence_from_consensus(
+            &consensus_match(),
+            &stats_hard_ceiling(),
+            &PairingParams::default(),
+            None,
+        );
         assert_eq!(ev2.classification, MatchClassification::Ambiguous);
     }
 
@@ -981,8 +1057,10 @@ mod tests {
     // §11.1 anchor span is threaded through from the consensus, not the global scan).
     #[test]
     fn refinement_success_populates_refined_and_keeps_match() {
-        let mut params =
-            PairingParams { matcher_mode: MatcherMode::FingerprintShadow, ..Default::default() };
+        let mut params = PairingParams {
+            matcher_mode: MatcherMode::FingerprintShadow,
+            ..Default::default()
+        };
         params.fingerprint_match.min_support = 12;
         params.fingerprint_match.min_temporal_coverage = 0.1;
         params.min_overlap_s = 1.0;
@@ -1005,7 +1083,10 @@ mod tests {
             |_, _| None,
             |_, _, lag_ms, drift_ppm, t_min, t_max| {
                 refine_calls += 1;
-                assert!(t_max > t_min && t_min.is_finite() && t_max.is_finite(), "fittable span threaded");
+                assert!(
+                    t_max > t_min && t_min.is_finite() && t_max.is_finite(),
+                    "fittable span threaded"
+                );
                 assert!(lag_ms.is_finite() && drift_ppm.is_finite());
                 RefineOutcome {
                     refined_lag_ms: Some(lag_ms + 1.0),
@@ -1015,13 +1096,24 @@ mod tests {
                 }
             },
             |_, _| None,
+            |_| {},
         );
         let cell = &matrix[0][0];
-        assert_eq!(cell.classification, MatchClassification::Match, "a refined Match stays a Match");
+        assert_eq!(
+            cell.classification,
+            MatchClassification::Match,
+            "a refined Match stays a Match"
+        );
         assert_eq!(cell.refine_reason, RefineReason::Refined);
-        assert!(cell.refined_lag_ms.is_some(), "refined_lag_ms populated on success");
+        assert!(
+            cell.refined_lag_ms.is_some(),
+            "refined_lag_ms populated on success"
+        );
         assert_eq!(cell.refined_rms_ms, Some(0.3));
-        assert_eq!(refine_calls, 1, "refinement runs exactly once for the one Match cell");
+        assert_eq!(
+            refine_calls, 1,
+            "refinement runs exactly once for the one Match cell"
+        );
     }
 
     // §11.2 FAILURE policy: a Match cell whose refinement FAILS (an attempted failure reason) is
@@ -1029,8 +1121,10 @@ mod tests {
     // reason. It must NOT remain a confident Match.
     #[test]
     fn refinement_failure_downgrades_match_to_ambiguous() {
-        let mut params =
-            PairingParams { matcher_mode: MatcherMode::FingerprintShadow, ..Default::default() };
+        let mut params = PairingParams {
+            matcher_mode: MatcherMode::FingerprintShadow,
+            ..Default::default()
+        };
         params.fingerprint_match.min_support = 12;
         params.fingerprint_match.min_temporal_coverage = 0.1;
         params.min_overlap_s = 1.0;
@@ -1043,17 +1137,33 @@ mod tests {
 
         // Sanity: with NO refinement the cell is a confident Match (the thing we will downgrade).
         let (base, _) = match_candidates_fingerprint(
-            &videos, &audios, &fmt, &params, true, |_, _| None,
+            &videos,
+            &audios,
+            &fmt,
+            &params,
+            true,
+            |_, _| None,
             |_, _, _, _, _, _| RefineOutcome::not_attempted(),
             |_, _| None,
+            |_| {},
         );
-        assert_eq!(base[0][0].classification, MatchClassification::Match, "baseline is a Match");
+        assert_eq!(
+            base[0][0].classification,
+            MatchClassification::Match,
+            "baseline is a Match"
+        );
 
         // Now the refinement FAILS (the local measurements did not fit a line).
         let (matrix, _) = match_candidates_fingerprint(
-            &videos, &audios, &fmt, &params, true, |_, _| None,
+            &videos,
+            &audios,
+            &fmt,
+            &params,
+            true,
+            |_, _| None,
             |_, _, _, _, _, _| RefineOutcome::failed(RefineReason::LineFitFailed),
             |_, _| None,
+            |_| {},
         );
         let cell = &matrix[0][0];
         assert_eq!(
@@ -1061,9 +1171,20 @@ mod tests {
             MatchClassification::Ambiguous,
             "a refinement failure on a Match ⇒ Ambiguous, never NoMatch (§11.2)"
         );
-        assert_ne!(cell.classification, MatchClassification::NoMatch, "must NOT be NoMatch");
-        assert_eq!(cell.refined_lag_ms, None, "failed refinement leaves refined_* None");
-        assert_eq!(cell.refine_reason, RefineReason::LineFitFailed, "telemetry reason recorded");
+        assert_ne!(
+            cell.classification,
+            MatchClassification::NoMatch,
+            "must NOT be NoMatch"
+        );
+        assert_eq!(
+            cell.refined_lag_ms, None,
+            "failed refinement leaves refined_* None"
+        );
+        assert_eq!(
+            cell.refine_reason,
+            RefineReason::LineFitFailed,
+            "telemetry reason recorded"
+        );
         // The landmark identity evidence is RETAINED (lag/support unchanged from the consensus).
         assert_eq!(cell.lag_ms, base[0][0].lag_ms, "identity evidence retained");
         assert_eq!(cell.support, base[0][0].support);
@@ -1073,8 +1194,11 @@ mod tests {
     // class/refined_* are untouched (refine_reason stays NotAttempted).
     #[test]
     fn refinement_not_attempted_for_no_match_cell() {
-        let params =
-            PairingParams { matcher_mode: MatcherMode::FingerprintShadow, min_overlap_s: 1.0, ..Default::default() };
+        let params = PairingParams {
+            matcher_mode: MatcherMode::FingerprintShadow,
+            min_overlap_s: 1.0,
+            ..Default::default()
+        };
         let fmt = FingerprintFormatV1::fixed();
         // Disjoint hash spaces ⇒ NoMatch.
         let v0 = reader((0..200u32).map(|k| lm(1_000 + k, k)).collect(), 220);
@@ -1084,9 +1208,15 @@ mod tests {
         let videos = [(Some(&v0), v0_dur)];
         let audios = [(Some(&a0), a0_dur)];
         let (matrix, _) = match_candidates_fingerprint(
-            &videos, &audios, &fmt, &params, true, |_, _| None,
+            &videos,
+            &audios,
+            &fmt,
+            &params,
+            true,
+            |_, _| None,
             |_, _, _, _, _, _| panic!("refinement must NOT run for a NoMatch cell"),
             |_, _| None,
+            |_| {},
         );
         assert_eq!(matrix[0][0].classification, MatchClassification::NoMatch);
         assert_eq!(matrix[0][0].refine_reason, RefineReason::NotAttempted);
@@ -1105,7 +1235,10 @@ mod tests {
             Some(legacy.clone()),
         );
         assert_eq!(ev.method, MatchMethod::SpectralLandmarkV1);
-        assert!(ev.legacy.is_some(), "shadow mode attaches the legacy correlation for comparison");
+        assert!(
+            ev.legacy.is_some(),
+            "shadow mode attaches the legacy correlation for comparison"
+        );
         let json = serde_json::to_string(&ev).unwrap();
         assert_no_nan_inf(&json);
         // Round-trips with the embedded legacy correlation.
@@ -1119,8 +1252,10 @@ mod tests {
     // and recovers each true pair as a SpectralLandmarkV1 Match with the correct lag sign.
     #[test]
     fn batch_builds_one_index_and_matches_true_pairs() {
-        let mut params =
-            PairingParams { matcher_mode: MatcherMode::FingerprintShadow, ..Default::default() };
+        let mut params = PairingParams {
+            matcher_mode: MatcherMode::FingerprintShadow,
+            ..Default::default()
+        };
         // Lower the support floor so the modest synthetic landmark sets clear Match (the gate
         // values are calibrated for real audio; these are clean hand-built lines).
         params.fingerprint_match.min_support = 12;
@@ -1144,32 +1279,71 @@ mod tests {
         params.min_overlap_s = 1.0;
 
         let videos = [(Some(&v0), v0_dur), (Some(&v1), v1_dur)];
-        let audios = [(Some(&a0), a0_dur), (Some(&a1), a1_dur), (Some(&a2), a2_dur)];
+        let audios = [
+            (Some(&a0), a0_dur),
+            (Some(&a1), a1_dur),
+            (Some(&a2), a2_dur),
+        ];
 
-        let (matrix, stats) =
-            match_candidates_fingerprint(&videos, &audios, &fmt, &params, true, |_, _| None, |_, _, _, _, _, _| {
-                crate::match_refine::RefineOutcome::not_attempted()
-            }, |_, _| None);
+        let (matrix, stats) = match_candidates_fingerprint(
+            &videos,
+            &audios,
+            &fmt,
+            &params,
+            true,
+            |_, _| None,
+            |_, _, _, _, _, _| crate::match_refine::RefineOutcome::not_attempted(),
+            |_, _| None,
+            |_| {},
+        );
 
         // THE one-index proof: a 2×3 batch builds the audio index exactly once.
-        assert_eq!(stats.index_builds, 1, "batch must build ONE audio index, not per-cell");
+        assert_eq!(
+            stats.index_builds, 1,
+            "batch must build ONE audio index, not per-cell"
+        );
         assert_eq!(matrix.len(), 2, "two video rows");
-        assert!(matrix.iter().all(|r| r.len() == 3), "three audio columns each");
+        assert!(
+            matrix.iter().all(|r| r.len() == 3),
+            "three audio columns each"
+        );
 
         // The true pairs are Matches with the correct lag sign (B earlier ⇒ negative lag).
-        assert_eq!(matrix[0][1].classification, MatchClassification::Match, "v0↔a1 true pair");
-        assert!(matrix[0][1].lag_ms < 0.0, "B started later in content ⇒ negative lag");
+        assert_eq!(
+            matrix[0][1].classification,
+            MatchClassification::Match,
+            "v0↔a1 true pair"
+        );
+        assert!(
+            matrix[0][1].lag_ms < 0.0,
+            "B started later in content ⇒ negative lag"
+        );
         assert_eq!(matrix[0][1].method, MatchMethod::SpectralLandmarkV1);
-        assert_eq!(matrix[1][2].classification, MatchClassification::Match, "v1↔a2 true pair");
+        assert_eq!(
+            matrix[1][2].classification,
+            MatchClassification::Match,
+            "v1↔a2 true pair"
+        );
 
         // An unrelated cell (v0 vs a0, disjoint hashes) is NoMatch.
-        assert_eq!(matrix[0][0].classification, MatchClassification::NoMatch, "v0↔a0 unrelated");
+        assert_eq!(
+            matrix[0][0].classification,
+            MatchClassification::NoMatch,
+            "v0↔a0 unrelated"
+        );
 
         // Determinism: a second run is byte-identical per cell.
-        let (matrix2, _) =
-            match_candidates_fingerprint(&videos, &audios, &fmt, &params, true, |_, _| None, |_, _, _, _, _, _| {
-                crate::match_refine::RefineOutcome::not_attempted()
-            }, |_, _| None);
+        let (matrix2, _) = match_candidates_fingerprint(
+            &videos,
+            &audios,
+            &fmt,
+            &params,
+            true,
+            |_, _| None,
+            |_, _, _, _, _, _| crate::match_refine::RefineOutcome::not_attempted(),
+            |_, _| None,
+            |_| {},
+        );
         for (r1, r2) in matrix.iter().zip(&matrix2) {
             for (e1, e2) in r1.iter().zip(r2) {
                 assert_eq!(
@@ -1212,29 +1386,56 @@ mod tests {
             |_, _| Some(legacy_corr.clone()),
             |_, _, _, _, _, _| crate::match_refine::RefineOutcome::not_attempted(),
             |_, _| None,
+            |_| {},
         );
         // One audio has a fingerprint, so the index is still built once (even though the only video
         // lacks one and every cell falls back).
         assert_eq!(stats.index_builds, 1);
-        assert_eq!(matrix[0][0].method, MatchMethod::EnvelopeV1, "fallback to legacy method");
-        assert_eq!(matrix[0][0].classification, MatchClassification::Match, "legacy_candidate ⇒ Match");
-        assert!(matrix[0][0].legacy.is_some(), "fallback records the legacy correlation it used");
+        assert_eq!(
+            matrix[0][0].method,
+            MatchMethod::EnvelopeV1,
+            "fallback to legacy method"
+        );
+        assert_eq!(
+            matrix[0][0].classification,
+            MatchClassification::Match,
+            "legacy_candidate ⇒ Match"
+        );
+        assert!(
+            matrix[0][0].legacy.is_some(),
+            "fallback records the legacy correlation it used"
+        );
 
         // With NO legacy correlation available ⇒ Unavailable (absence of evidence, not NoMatch).
-        let (matrix2, _) =
-            match_candidates_fingerprint(&videos, &audios, &fmt, &params, true, |_, _| None, |_, _, _, _, _, _| {
-                crate::match_refine::RefineOutcome::not_attempted()
-            }, |_, _| None);
-        assert_eq!(matrix2[0][0].classification, MatchClassification::Unavailable);
+        let (matrix2, _) = match_candidates_fingerprint(
+            &videos,
+            &audios,
+            &fmt,
+            &params,
+            true,
+            |_, _| None,
+            |_, _, _, _, _, _| crate::match_refine::RefineOutcome::not_attempted(),
+            |_, _| None,
+            |_| {},
+        );
+        assert_eq!(
+            matrix2[0][0].classification,
+            MatchClassification::Unavailable
+        );
     }
 
     // A sub-`min_overlap_s` cell is InsufficientOverlap and never runs a matcher.
     #[test]
     fn batch_insufficient_overlap_cell() {
         // The default min_overlap_s (8 s) is the floor we exercise here.
-        let params =
-            PairingParams { matcher_mode: MatcherMode::FingerprintShadow, ..Default::default() };
-        assert_eq!(params.min_overlap_s, 8.0, "test relies on the 8 s default floor");
+        let params = PairingParams {
+            matcher_mode: MatcherMode::FingerprintShadow,
+            ..Default::default()
+        };
+        assert_eq!(
+            params.min_overlap_s, 8.0,
+            "test relies on the 8 s default floor"
+        );
         let fmt = FingerprintFormatV1::fixed();
 
         let (v0, a0) = same_master_pair(50, 200); // ~4.7 s durations, under the 8 s floor
@@ -1255,8 +1456,12 @@ mod tests {
             |_, _| panic!("legacy matcher must not run for a sub-floor overlap cell"),
             |_, _, _, _, _, _| panic!("refinement must not run for a sub-floor overlap cell"),
             |_, _| panic!("metadata hint must not be consulted for a sub-floor overlap cell"),
+            |_| {},
         );
-        assert_eq!(matrix[0][0].classification, MatchClassification::InsufficientOverlap);
+        assert_eq!(
+            matrix[0][0].classification,
+            MatchClassification::InsufficientOverlap
+        );
         assert_eq!(matrix[0][0].overlap_s, candidate_overlap_s(v0_dur, a0_dur));
     }
 
@@ -1280,6 +1485,7 @@ mod tests {
             |_, _| Some(legacy_corr(9.0, 100.0, true)),
             |_, _, _, _, _, _| crate::match_refine::RefineOutcome::not_attempted(),
             |_, _| None,
+            |_| {},
         );
         assert_eq!(stats.index_builds, 0, "no fingerprints ⇒ no index built");
         assert_eq!(matrix[0][0].method, MatchMethod::EnvelopeV1);

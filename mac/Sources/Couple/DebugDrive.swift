@@ -1626,35 +1626,67 @@ final class DebugDrive {
 
         // --- (A) DEBOUNCE: an active job does NOT flash; it appears only after ~250 ms. ---
         strip.debugSignalsOverride = ActivitySignals(
-            importing: .init(phase: .decoding, fraction: 0.10))
+            importing: .init(phase: .decoding, fraction: 0.10, index: 1, total: 2, filename: "a.wav"))
         strip.refresh()
         await ms(80)
         check("(A) nothing shown before the debounce (~250 ms)", strip.debugCurrentSummary == nil)
         await ms(260)   // now well past 250 ms total
         check("(A) determinate import line appears after the debounce",
               strip.debugCurrentSummary?.fraction != nil)
-        check("(A) the line is the honest phase text",
-              strip.debugCurrentSummary?.text.hasPrefix("Decoding audio") == true)
+        check("(A) the line is the unified import text",
+              strip.debugCurrentSummary?.text.hasPrefix("Importing") == true)
 
-        // --- (B) MONOTONIC FLOOR within a phase: a regressing fraction never goes back. ---
-        strip.debugSignalsOverride = ActivitySignals(
-            importing: .init(phase: .decoding, fraction: 0.70))
+        // --- (B) UNIFIED 0→100% bar across import → match → sync: ONE determinate bar that
+        //         advances through every stage and NEVER regresses at a hand-off (the whole
+        //         ingest shares one "ingest" phaseKey, so the monotonic floor spans all stages). ---
+        let stages: Stages = [.importStage, .matchStage, .syncStage]
+        // Import near its ceiling: the import sub-range tops out at 50% of the unified bar.
+        strip.debugSignalsOverride = ActivitySignals(ingest: .init(
+            importing: .init(phase: .finishing, fraction: 0.9, index: 2, total: 2, filename: "b.wav"),
+            stagesPlanned: stages))
         strip.refresh(); await ms(20)
-        let high = strip.debugCurrentSummary?.fraction ?? 0
-        check("(B) fraction advanced to 0.70", abs(high - 0.70) < 1e-6)
-        strip.debugSignalsOverride = ActivitySignals(
-            importing: .init(phase: .decoding, fraction: 0.40)) // regress within the SAME phase
+        let afterImport = strip.debugCurrentSummary?.fraction ?? 0
+        check("(B) the unified bar reached the import sub-range top (≥0.45)", afterImport >= 0.45)
+        check("(B) the unified bar carries the ingest phaseKey",
+              strip.debugCurrentSummary?.phaseKey == "ingest")
+        // A HAND-OFF GAP (ingest in flight, NO sub-stage momentarily live — import done, the first
+        // match frame not yet emitted): the bar must HOLD (stay visible, never blink to nil) at the
+        // import top — this is the exact between-stages flicker we fixed.
+        strip.debugSignalsOverride = ActivitySignals(ingest: .init(
+            importing: nil, matching: nil, syncing: nil, stagesPlanned: stages))
         strip.refresh(); await ms(20)
-        check("(B) a regression within a phase is clamped UP to the floor (≥0.70)",
-              (strip.debugCurrentSummary?.fraction ?? 0) >= 0.70 - 1e-6)
-        // A PHASE CHANGE is free to drop (new phase → fresh floor).
-        strip.debugSignalsOverride = ActivitySignals(
-            importing: .init(phase: .waveform, fraction: 0.05))
+        check("(B) a stage HAND-OFF GAP keeps the bar visible (does not blink out)",
+              strip.debugCurrentSummary != nil)
+        check("(B) the gap holds the bar at the import top (no regress)",
+              (strip.debugCurrentSummary?.fraction ?? 0) >= afterImport - 1e-6)
+        // MATCHING advances into the match sub-range (50%→70%) and must NOT regress the bar.
+        strip.debugSignalsOverride = ActivitySignals(ingest: .init(
+            importing: nil, matching: .init(phase: .comparing, fraction: 0.5),
+            stagesPlanned: stages))
         strip.refresh(); await ms(20)
-        check("(B) a new phase resets the floor (may show a small fraction)",
-              abs((strip.debugCurrentSummary?.fraction ?? 1) - 0.05) < 1e-6)
-        check("(B) the new phase shows its honest verb",
-              strip.debugCurrentSummary?.text.hasPrefix("Building waveform") == true)
+        let afterMatch = strip.debugCurrentSummary?.fraction ?? 0
+        check("(B) matching advances the bar without regressing", afterMatch >= afterImport - 1e-6)
+        check("(B) the matching stage reads 'Matching couples…'",
+              strip.debugCurrentSummary?.text == "Matching couples…")
+        check("(B) matching is now DETERMINATE (a real slice, not a moving bar)",
+              strip.debugCurrentSummary?.fraction != nil)
+        // SYNC position advances further (70%→100%), still monotone.
+        strip.debugSignalsOverride = ActivitySignals(ingest: .init(
+            importing: nil, matching: nil,
+            syncing: .init(index: 3, total: 6, videoName: "b.mov"), stagesPlanned: stages))
+        strip.refresh(); await ms(20)
+        let afterSync = strip.debugCurrentSummary?.fraction ?? 0
+        check("(B) sync advances the bar without regressing", afterSync >= afterMatch - 1e-6)
+        check("(B) the sync stage reads its couple position",
+              strip.debugCurrentSummary?.text == "Syncing couple 3 of 6: b.mov")
+        // The FINAL couple lands the bar at ~1.0 (it CLEARS on idle — covered by (E)/(F) — so we
+        // leave the strip active here to keep the debounce satisfied for (C), as before).
+        strip.debugSignalsOverride = ActivitySignals(ingest: .init(
+            importing: nil, matching: nil,
+            syncing: .init(index: 6, total: 6, videoName: "b.mov"), stagesPlanned: stages))
+        strip.refresh(); await ms(20)
+        check("(B) the final couple lands the unified bar at ~1.0",
+              (strip.debugCurrentSummary?.fraction ?? 0) >= 0.999)
 
         // --- (C) PAIRING stays indeterminate (no fabricated %). ---
         strip.debugSignalsOverride = ActivitySignals(
@@ -1684,6 +1716,17 @@ final class DebugDrive {
         let pendingFailure = strip.debugCurrentSummary?.isError == true
         check("(E) idle keeps showing the pending failure until it clears (then nil)",
               pendingFailure || strip.debugCurrentSummary == nil)
+
+        // --- (F) RESET clears a shown bar immediately (Clear Session, TODO-001). ---
+        strip.reset()                       // clean slate (drops any pending failure too)
+        strip.debugSignalsOverride = ActivitySignals(
+            importing: .init(phase: .decoding, fraction: 0.5, index: 1, total: 1, filename: "x.wav"))
+        strip.refresh(); await ms(300)      // past the debounce ⇒ a determinate line shows
+        check("(F) a determinate line is shown before reset",
+              strip.debugCurrentSummary?.fraction != nil)
+        strip.reset()
+        check("(F) reset() clears the strip to idle immediately",
+              strip.debugCurrentSummary == nil)
 
         strip.debugSignalsOverride = nil
         print("ACTIVITY-TEST summary: \(pass) passed, \(fail) failed")

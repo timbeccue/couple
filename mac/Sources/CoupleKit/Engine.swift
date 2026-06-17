@@ -250,6 +250,37 @@ public final class Engine: @unchecked Sendable {
         }
     }
 
+    /// JOB form of `matchCandidatesGraph` (`cpl_match_candidates_graph_start`, incremental-matching
+    /// boundary): the asynchronous twin that reports a determinate fraction while the graph-adjusted
+    /// matrix is built. The job's value is the SAME `[[PairEvidence]]` matrix the synchronous call
+    /// returns (resolution byte-identical; progress observational). `progress` yields phase names
+    /// "MatchFingerprint" / "MatchCorrelate" / "MatchGraph" with a 0…1 fraction; cancellation throws
+    /// `JobError.cancelled` and never yields a partial matrix. Mirrors `importStart`: core copies the
+    /// id slices synchronously inside the `withUnsafeBufferPointer` closures, so the buffers need not
+    /// outlive this call. The empty-input shapes (`videos.isEmpty ⇒ []`; `audios.isEmpty ⇒ one empty
+    /// row per video`) of the synchronous form are NOT reproduced here — the caller short-circuits
+    /// those before starting a job (there is no work, hence no job).
+    public func matchCandidatesGraphStart(
+        videos: [TrackHandle], audios: [TrackHandle], paramsJSON: String? = nil
+    ) throws -> Job<[[PairEvidence]]> {
+        let box = JobBox()
+        let user = Unmanaged.passRetained(box).toOpaque()
+        let vs = videos.map(\.id)
+        let aus = audios.map(\.id)
+        let id = vs.withUnsafeBufferPointer { vp in
+            aus.withUnsafeBufferPointer { ap in
+                cpl_match_candidates_graph_start(
+                    ctx, vp.baseAddress, UInt(vp.count), ap.baseAddress, UInt(ap.count),
+                    paramsJSON, jobTrampoline, user)
+            }
+        }
+        guard id != 0 else {
+            Unmanaged<JobBox>.fromOpaque(user).release()
+            throw takeError()
+        }
+        return Job(engine: self, box: box, id: id)
+    }
+
     /// §13.4 audio-audio SIMULTANEITY check over affine evidence (`cpl_triangle_closes`) — the SAME
     /// core predicate the CLI resolver uses, so neither shell reimplements the affine composition or
     /// the closure tolerances (invariant 8). Given the three legs' effective maps (V→A, A→B, V→B as

@@ -39,10 +39,14 @@ struct LoadSurface: View {
             Button("Choose files…") { importerShown = true }
                 .buttonStyle(.bordered)
 
+            // A plain spinner (NO percentage bar) only while a drop is actively importing.
+            // The full import→match→sync progress bar lives in the main layout, not here;
+            // gating on `pool.importing` also keeps the empty import screen from ever
+            // showing a stale bar carried over from a discarded session.
             if model.pool.importing {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text(model.pool.importProgress)
+                    Text("Importing…")
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
             }

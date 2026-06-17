@@ -17,6 +17,9 @@ pub enum Phase {
     SyncRefine,
     SyncWindows,
     SyncFit,
+    MatchFingerprint,
+    MatchCorrelate,
+    MatchGraph,
     ExportRender,
     ExportMux,
 }
@@ -33,9 +36,43 @@ impl Phase {
             Phase::SyncRefine => "Refining…",
             Phase::SyncWindows => "Measuring drift…",
             Phase::SyncFit => "Fitting…",
+            Phase::MatchFingerprint => "Fingerprinting…",
+            Phase::MatchCorrelate => "Comparing…",
+            Phase::MatchGraph => "Cross-checking…",
             Phase::ExportRender => "Rendering audio…",
             Phase::ExportMux => "Writing file…",
         }
+    }
+
+    /// Cumulative 0–1 band this phase occupies within its job's single progress bar
+    /// (spec §4.6). Defined here beside `label()` so a phase's display/cost metadata
+    /// lives in ONE place: adding or reordering a phase is a single edit and the
+    /// compiler enforces completeness. Shells render `overall(fraction)` — they never
+    /// re-derive the per-phase weighting (e.g. fingerprinting dominates first-match cost).
+    fn bar_range(self) -> (f64, f64) {
+        match self {
+            Phase::Probe => (0.0, 0.02),
+            Phase::Decode => (0.02, 0.80),
+            Phase::Pyramid => (0.80, 0.95),
+            Phase::Finalize => (0.95, 1.0),
+            Phase::SyncCoarse => (0.0, 0.70),
+            Phase::SyncRefine => (0.70, 0.75),
+            Phase::SyncWindows => (0.75, 0.98),
+            Phase::SyncFit => (0.98, 1.0),
+            // Match job: fingerprinting is the dominant first-match cost, then per-row
+            // correlation, then the §13 graph-consistency pass ends at 1.0.
+            Phase::MatchFingerprint => (0.0, 0.70),
+            Phase::MatchCorrelate => (0.70, 0.95),
+            Phase::MatchGraph => (0.95, 1.0),
+            Phase::ExportRender => (0.0, 0.70),
+            Phase::ExportMux => (0.70, 1.0),
+        }
+    }
+
+    /// This phase's within-phase `fraction` projected onto the job's overall 0–1 bar (§4.6).
+    pub fn overall(self, fraction: f64) -> f64 {
+        let (lo, hi) = self.bar_range();
+        lo + (hi - lo) * fraction.clamp(0.0, 1.0)
     }
 }
 

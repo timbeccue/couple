@@ -1529,29 +1529,182 @@ struct CoupleKitTests {
         #expect(u?.fraction == nil)
     }
 
-    // (import ⇒ determinate fraction + phase text) honest phase verbs + the %.
-    @Test func importIsDeterminateWithPhaseText() {
+    // (import ⇒ ONE determinate bar for the whole batch, not a per-file reset) The
+    // fraction is the OVERALL batch position (0…1 across all files), under a single stable
+    // `phaseKey` so the controller keeps it monotonic across every file and phase.
+    @Test func importIsOneDeterminateBatchBar() {
+        // Mid-batch: file 3 of 12, 42% through DECODE ⇒ overall ≈ (2 + 0.80·0.42)/12 —
+        // NOT the per-file 0.42 the old per-file bar would have shown.
         let decoding = ActivitySignals(importing:
             .init(phase: .decoding, fraction: 0.42, index: 3, total: 12, filename: "clip.mov"))
         let d = ActivitySummaryPolicy.summarize(decoding, elapsedMs: shown)
-        #expect(d?.fraction == 0.42)                                 // trustworthy fraction passes through
-        #expect(d?.text == "Decoding audio 3 of 12: clip.mov — 42%")
-        #expect(d?.phaseKey == "import.decoding")
+        #expect(abs((d?.fraction ?? -1) - (2 + 0.80 * 0.42) / 12) < 1e-9)
+        #expect(d?.text == "Importing 3 of 12: clip.mov — 19%")
+        #expect(d?.phaseKey == "ingest")                            // one phase for the whole import
 
-        // Waveform phase verb.
-        let wave = ActivitySignals(importing: .init(phase: .waveform, fraction: 0.68))
-        #expect(ActivitySummaryPolicy.summarize(wave, elapsedMs: shown)?.text == "Building waveform — 68%")
+        // The very first file just starting ⇒ 0% (the bar starts at zero, even mid-probe).
+        let first = ActivitySignals(importing:
+            .init(phase: .probing, fraction: 0, index: 1, total: 4, filename: "a.wav"))
+        let p = ActivitySummaryPolicy.summarize(first, elapsedMs: shown)
+        #expect(p?.fraction == 0.0)
+        #expect(p?.text == "Importing 1 of 4: a.wav — 0%")
 
-        // Finishing phase verb.
-        let fin = ActivitySignals(importing: .init(phase: .finishing, fraction: 0.95))
-        #expect(ActivitySummaryPolicy.summarize(fin, elapsedMs: shown)?.text == "Finishing import — 95%")
+        // A single file at the END OF DECODE is only 80% (decode is the core's first 80%),
+        // not "done" — the per-phase re-join is what stops the bar jumping to full early.
+        let midSolo = ActivitySignals(importing:
+            .init(phase: .decoding, fraction: 1.0, index: 1, total: 1, filename: "solo.wav"))
+        #expect(ActivitySummaryPolicy.summarize(midSolo, elapsedMs: shown)?.text == "Importing solo.wav — 80%")
 
-        // Probe sub-phase has no trustworthy fraction ⇒ shown INDETERMINATE (no %).
-        let probe = ActivitySignals(importing:
-            .init(phase: .probing, fraction: 0, index: 1, total: 1, filename: "a.wav"))
-        let p = ActivitySummaryPolicy.summarize(probe, elapsedMs: shown)
-        #expect(p?.fraction == nil)
-        #expect(p?.text == "Inspecting a.wav…")
+        // …and reaches 100% only when that last file TRULY finishes (its finishing phase).
+        let doneSolo = ActivitySignals(importing:
+            .init(phase: .finishing, fraction: 1.0, index: 1, total: 1, filename: "solo.wav"))
+        let s = ActivitySummaryPolicy.summarize(doneSolo, elapsedMs: shown)
+        #expect(s?.fraction == 1.0)
+        #expect(s?.text == "Importing solo.wav — 100%")
+    }
+
+    // (import's matching TAIL ⇒ a DETERMINATE slice of the unified bar) Under the unified
+    // ingest bar the import-tail matching is no longer a bare indeterminate pairing line: it is
+    // the MATCH stage of one 0→100% operation, so it carries a real fraction in the match
+    // sub-range while still reading "Matching couples…".
+    @Test func matchingTailIsDeterminateInUnifiedBar() {
+        // Import done (no importing signal), matching mid-way (comparing 50%), sync not yet.
+        let ingest = ActivitySignals(ingest: .init(
+            importing: nil,
+            matching: .init(phase: .comparing, fraction: 0.5),
+            syncing: nil,
+            stagesPlanned: [.importStage, .matchStage, .syncStage]))
+        let t = ActivitySummaryPolicy.unifiedSummarize(ingest, elapsedMs: shown)
+        #expect(t?.text == "Matching couples…")
+        #expect(t?.fraction != nil)                                 // determinate slice of the bar
+        #expect(t?.phaseKey == "ingest")
+        #expect(t?.isError == false)
+        // The fraction sits in the match sub-range: import (50%) done = 0.50, plus the match
+        // weight (20%) × perMatch(comparing,0.5)=0.60+0.35·0.5=0.775 ⇒ 0.50 + 0.20·0.775 = 0.655.
+        let expected = 0.50 + 0.20 * (0.60 + 0.35 * 0.5)
+        let tActual = t?.fraction ?? -1
+        #expect(abs(tActual - expected) < 1e-9)
+        // `summarize` routes to the same unified line when `ingest` is set.
+        #expect(ActivitySummaryPolicy.summarize(ingest, elapsedMs: shown)?.phaseKey == "ingest")
+    }
+
+    // (unified bar: per-match split) the three match phases re-join into one 0→1 over the match
+    // stage (fingerprint 60% / compare 35% / cross-check 5%), mirroring the import per-file split.
+    @Test func perMatchFractionSplitsThePhases() {
+        // Fingerprinting is the first 60%: 0.5 through it ⇒ 0.30 overall of the match stage.
+        #expect(ActivitySummaryPolicy.perMatchFraction(phase: .fingerprinting, fraction: 0.5) == 0.60 * 0.5)
+        // End of fingerprinting is only 60% (not "done") — the re-join stops the early jump.
+        #expect(ActivitySummaryPolicy.perMatchFraction(phase: .fingerprinting, fraction: 1.0) == 0.60)
+        // Comparing spans 0.60 → 0.95.
+        #expect(ActivitySummaryPolicy.perMatchFraction(phase: .comparing, fraction: 0.0) == 0.60)
+        #expect(ActivitySummaryPolicy.perMatchFraction(phase: .comparing, fraction: 1.0) == 0.95)
+        // Cross-checking lands the stage at 1.0 only when its own phase completes.
+        #expect(ActivitySummaryPolicy.perMatchFraction(phase: .crosschecking, fraction: 1.0) == 1.0)
+        // Out-of-range clamps.
+        #expect(ActivitySummaryPolicy.perMatchFraction(phase: .fingerprinting, fraction: -1) == 0.0)
+    }
+
+    // (unified bar: stage-weight math at known inputs) overall = Σ weight·stageFraction over the
+    // present stages (import 50 / match 20 / sync 30), with earlier present stages reading complete.
+    @Test func unifiedStageWeightMath() {
+        let stages: Stages = [.importStage, .matchStage, .syncStage]
+        // Mid-IMPORT: file 1 of 2 at decode 0.5 ⇒ batch import (0 + 0.80·0.5)/2 = 0.20; match/sync 0.
+        let importing = ActivitySignals(ingest: .init(
+            importing: .init(phase: .decoding, fraction: 0.5, index: 1, total: 2, filename: "a.wav"),
+            stagesPlanned: stages))
+        let i = ActivitySummaryPolicy.unifiedSummarize(importing, elapsedMs: shown)
+        let iExpected = 0.50 * 0.20
+        let iActual = i?.fraction ?? -1
+        #expect(abs(iActual - iExpected) < 1e-9)                    // only the import sub-range
+        #expect(i?.text == "Importing 1 of 2: a.wav — 20%")         // text follows the import stage
+
+        // Mid-SYNC: import+match done (nil signals), syncing couple 3 of 6 ⇒ position 0.5.
+        // overall = 0.50·1 + 0.20·1 + 0.30·0.5 = 0.85.
+        let syncing = ActivitySignals(ingest: .init(
+            importing: nil, matching: nil,
+            syncing: .init(index: 3, total: 6, videoName: "clip.mov"),
+            stagesPlanned: stages))
+        let y = ActivitySummaryPolicy.unifiedSummarize(syncing, elapsedMs: shown)
+        let yExpected = 0.50 + 0.20 + 0.30 * 0.5
+        let yActual = y?.fraction ?? -1
+        #expect(abs(yActual - yExpected) < 1e-9)
+        #expect(y?.text == "Syncing couple 3 of 6: clip.mov")       // text follows the sync stage
+    }
+
+    // (unified bar: monotonic across stages) import 90% → matching just started must NOT regress
+    // the overall bar (the stage hand-off reads the earlier stage complete).
+    @Test func unifiedBarIsMonotonicAcrossStages() {
+        let stages: Stages = [.importStage, .matchStage, .syncStage]
+        // Near the end of import: finishing 0.8, single file ⇒ batch import 0.95 + 0.05·0.8 = 0.99.
+        let lateImport = ActivitySignals(ingest: .init(
+            importing: .init(phase: .finishing, fraction: 0.8, index: 1, total: 1, filename: "a.wav"),
+            stagesPlanned: stages))
+        let li = ActivitySummaryPolicy.unifiedSummarize(lateImport, elapsedMs: shown)?.fraction ?? 0
+        let liExpected = 0.50 * (0.95 + 0.05 * 0.8)
+        #expect(abs(li - liExpected) < 1e-9)
+        // Matching just begins (fingerprinting 0.1): import sub-range now reads COMPLETE (0.50),
+        // plus a sliver of match ⇒ strictly ≥ the late-import value (no regression at the hand-off).
+        let matchStart = ActivitySignals(ingest: .init(
+            importing: nil, matching: .init(phase: .fingerprinting, fraction: 0.1),
+            stagesPlanned: stages))
+        let ms = ActivitySummaryPolicy.unifiedSummarize(matchStart, elapsedMs: shown)?.fraction ?? 0
+        #expect(ms >= li - 1e-9, "matching start must not regress below late import")
+        #expect(ms >= 0.50)                                          // import sub-range fully credited
+    }
+
+    // (unified bar: missing-stage renormalization) the weights renormalize over the PRESENT stages,
+    // so an all-duplicates import-only op reaches 1.0 at import done, and a re-resolve [match,sync]
+    // spans the full range.
+    @Test func unifiedMissingStageRenormalizes() {
+        // Import-only (all-duplicates): import done ⇒ 1.0 (the import weight is the whole bar).
+        let importOnly = ActivitySignals(ingest: .init(
+            importing: .init(phase: .finishing, fraction: 1.0, index: 2, total: 2, filename: "b.wav"),
+            stagesPlanned: [.importStage]))
+        #expect(ActivitySummaryPolicy.unifiedSummarize(importOnly, elapsedMs: shown)?.fraction == 1.0)
+
+        // Re-resolve [match, sync] (no import): weights 20/30 renormalize to 40/60. Matching done +
+        // sync at couple 1 of 2 ⇒ 0.40·1 + 0.60·0.5 = 0.70.
+        let reresolve = ActivitySignals(ingest: .init(
+            importing: nil, matching: nil,
+            syncing: .init(index: 1, total: 2),
+            stagesPlanned: [.matchStage, .syncStage]))
+        let rr = ActivitySummaryPolicy.unifiedSummarize(reresolve, elapsedMs: shown)
+        let rrExpected = 0.40 * 1.0 + 0.60 * 0.5
+        let rrActual = rr?.fraction ?? -1
+        #expect(abs(rrActual - rrExpected) < 1e-9)
+        // Matching mid (comparing 0.5) BEFORE sync ⇒ only the renormalized match sub-range fills.
+        let matchingOnly = ActivitySignals(ingest: .init(
+            importing: nil, matching: .init(phase: .comparing, fraction: 0.5),
+            syncing: nil, stagesPlanned: [.matchStage, .syncStage]))
+        let mo = ActivitySummaryPolicy.unifiedSummarize(matchingOnly, elapsedMs: shown)
+        let moExpected = 0.40 * (0.60 + 0.35 * 0.5)
+        let moActual = mo?.fraction ?? -1
+        #expect(abs(moActual - moExpected) < 1e-9)
+    }
+
+    // (unified bar: reaches 1.0 only when sync index == total; clears when idle).
+    @Test func unifiedReaches100OnlyAtSyncEndAndClearsIdle() {
+        let stages: Stages = [.importStage, .matchStage, .syncStage]
+        // Last couple but not finished (index 6 of 7) ⇒ < 1.0.
+        let nearEnd = ActivitySignals(ingest: .init(
+            importing: nil, matching: nil,
+            syncing: .init(index: 6, total: 7), stagesPlanned: stages))
+        #expect((ActivitySummaryPolicy.unifiedSummarize(nearEnd, elapsedMs: shown)?.fraction ?? 1) < 1.0)
+        // index == total ⇒ exactly 1.0.
+        let done = ActivitySignals(ingest: .init(
+            importing: nil, matching: nil,
+            syncing: .init(index: 7, total: 7), stagesPlanned: stages))
+        #expect(ActivitySummaryPolicy.unifiedSummarize(done, elapsedMs: shown)?.fraction == 1.0)
+        // A hand-off GAP (ingest in flight, no sub-stage momentarily live) HOLDS the bar — it does
+        // NOT clear — so the unified bar stays visible for the WHOLE 0→100% span (the controller's
+        // floor holds the fraction across the gap).
+        let gap = ActivitySignals(ingest: .init(
+            importing: nil, matching: nil, syncing: nil, stagesPlanned: stages))
+        #expect(ActivitySummaryPolicy.unifiedSummarize(gap, elapsedMs: shown) != nil)
+        #expect(gap.hasActiveWork == true)
+        // TRUE idle = the ingest itself ended (no descriptor at all) ⇒ the bar clears.
+        #expect(ActivitySummaryPolicy.unifiedSummarize(ActivitySignals(), elapsedMs: shown) == nil)
+        #expect(ActivitySignals().hasActiveWork == false)
     }
 
     // (queued sync ⇒ "couple X of N" position text) indeterminate at the summary level.
@@ -1605,17 +1758,18 @@ struct CoupleKitTests {
         #expect(ActivitySummaryPolicy.summarize(concurrent, elapsedMs: shown)?.isError == true)
     }
 
-    // (monotonic within a phase) a regressing fraction is clamped UP to the floor the
-    // app already showed for the SAME phase; a phase change is free to drop.
+    // (monotonic) a regressing fraction is clamped UP to the floor the app already showed;
+    // a higher reported fraction wins. A bare single-file import signal maps through the
+    // per-phase re-join (decode ⇒ 0.80·f, waveform ⇒ 0.80 + 0.15·f).
     @Test func determinateFractionIsMonotonicWithinPhase() {
         let s = ActivitySignals(importing: .init(phase: .decoding, fraction: 0.30))
-        // Floor 0.55 from earlier in the same phase ⇒ never regress below it.
+        // 0.30 through decode ⇒ 0.24; a floor of 0.55 already shown ⇒ never regress.
         #expect(ActivitySummaryPolicy.summarize(s, elapsedMs: shown, phaseFloor: 0.55)?.fraction == 0.55)
-        // A higher reported fraction wins over the floor.
-        let ahead = ActivitySignals(importing: .init(phase: .decoding, fraction: 0.80))
-        #expect(ActivitySummaryPolicy.summarize(ahead, elapsedMs: shown, phaseFloor: 0.55)?.fraction == 0.80)
-        // No floor (phase just changed) ⇒ the raw fraction, free to be small.
-        #expect(ActivitySummaryPolicy.summarize(s, elapsedMs: shown, phaseFloor: nil)?.fraction == 0.30)
+        // A higher reported fraction wins over the floor (waveform 0.5 ⇒ 0.875 > 0.55).
+        let ahead = ActivitySignals(importing: .init(phase: .waveform, fraction: 0.5))
+        #expect(ActivitySummaryPolicy.summarize(ahead, elapsedMs: shown, phaseFloor: 0.55)?.fraction == 0.80 + 0.15 * 0.5)
+        // No floor ⇒ the raw overall fraction, free to be small.
+        #expect(ActivitySummaryPolicy.summarize(s, elapsedMs: shown, phaseFloor: nil)?.fraction == 0.80 * 0.30)
     }
 
     // (out-of-range fractions clamp to 0…1 so the bar can never exceed 100% / go negative.
@@ -1641,7 +1795,8 @@ struct CoupleKitTests {
             importing: .init(phase: .decoding, fraction: 0.5),
             pairing: .init(videoCount: 2, audioCount: 2),
             syncing: .init(index: 1, total: 2))
-        #expect(ActivitySummaryPolicy.summarize(noExport, elapsedMs: shown)?.text == "Decoding audio — 50%")
+        // Import wins over pairing/sync; a bare single-file decode at 0.5 ⇒ 0.80·0.5 = 40%.
+        #expect(ActivitySummaryPolicy.summarize(noExport, elapsedMs: shown)?.text == "Importing — 40%")
 
         let pairThenSync = ActivitySignals(
             pairing: .init(videoCount: 2, audioCount: 2),
@@ -1656,5 +1811,8 @@ struct CoupleKitTests {
         #expect(ActivitySignals().hasActiveWork == false)
         #expect(ActivitySignals(pairing: .init(videoCount: 1, audioCount: 1)).hasActiveWork == true)
         #expect(ActivitySignals(failure: "x").hasActiveWork == true)
+        // An ingest in flight is active even with NO sub-stage momentarily live (a hand-off gap),
+        // so the unified bar never blinks out between stages.
+        #expect(ActivitySignals(ingest: .init(stagesPlanned: [.importStage])).hasActiveWork == true)
     }
 }

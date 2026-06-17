@@ -64,66 +64,10 @@ struct QueueRail: View {
             Text("Approve to queue · \(model.approvedCount)/\(model.couples.count) approved")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(Theme.textTertiary)
-            // Unified long-running activity strip (TODO-005): a compact GLOBAL summary
-            // of import / candidate pairing / queued auto-sync / batch export, directly
-            // BENEATH the counts/approval text, REPLACING the old resolver-only spinner.
-            // It stays visible while either the queue list or the media pool scrolls
-            // (both are below this fixed header). Honest by construction — the pure
-            // policy gives a determinate bar only for trustworthy fractions (import /
-            // export %) and an indeterminate bar with text otherwise (pairing, sync).
-            ActivityStripView()
         }
         .padding(.horizontal, 12)
         .padding(.top, 26) // traffic-light clearance
         .padding(.bottom, 12)
-    }
-}
-
-// MARK: - Unified activity strip (TODO-005)
-
-/// The compact global activity strip beneath the session header (TODO-005). Renders
-/// `model.activity.summary`: nothing when nil (idle, or work younger than the ~250 ms
-/// debounce), an ERROR line (no bar) for a failed operation, a DETERMINATE bar when
-/// the summary carries a trustworthy fraction, and an INDETERMINATE bar otherwise.
-/// Never shows a fabricated percentage — that honesty is enforced upstream in the
-/// pure `ActivitySummaryPolicy`; this view only draws what it is handed.
-private struct ActivityStripView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        if let summary = model.activity.summary {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
-                    if summary.isError {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 8))
-                            .foregroundStyle(Theme.bad)
-                    }
-                    Text(summary.text)
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(summary.isError ? Theme.bad : Theme.textSecondary)
-                        .lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 0)
-                }
-                // A bar only when there is progress to show; an error line carries no
-                // bar (TODO-005: failure is an actionable line, not a stuck bar).
-                if !summary.isError {
-                    if let fraction = summary.fraction {
-                        ProgressView(value: fraction)   // determinate (trustworthy %)
-                            .progressViewStyle(.linear)
-                            .controlSize(.mini)
-                            .tint(Theme.accent)
-                    } else {
-                        ProgressView()                  // indeterminate (text-only honesty)
-                            .progressViewStyle(.linear)
-                            .controlSize(.mini)
-                            .tint(Theme.accent)
-                    }
-                }
-            }
-            .padding(.top, 2)
-            .transition(.opacity)
-        }
     }
 }
 
@@ -186,7 +130,6 @@ struct CoupleRowView: View {
             }
             Spacer(minLength: 4)
             VStack(alignment: .trailing, spacing: 6) {
-                VerdictDot(verdict: couple.verdict)
                 if couple.pair.session != nil {
                     approveBox
                 } else if couple.pinned {
@@ -195,9 +138,25 @@ struct CoupleRowView: View {
                 }
             }
         }
-        .padding(8)
+        .padding(.vertical, 8)
+        .padding(.trailing, 8)
+        .padding(.leading, 14) // room for the status spine in the left gutter
+        .background { // faint verdict wash, layered above the base fill
+            if let tint = verdictTint {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(LinearGradient(
+                        stops: [.init(color: tint, location: 0),
+                                .init(color: .clear, location: 0.45)],
+                        startPoint: .leading, endPoint: .trailing))
+            }
+        }
         .background(selected ? Theme.accent.opacity(0.14) : Theme.chipBg.opacity(0.5),
                     in: RoundedRectangle(cornerRadius: 7))
+        .overlay(alignment: .leading) { // status spine (replaces the corner dot)
+            VerdictSpine(verdict: couple.verdict)
+                .padding(.vertical, 9)
+                .padding(.leading, 5)
+        }
         .overlay(RoundedRectangle(cornerRadius: 7)
             .strokeBorder(selected ? Theme.accent.opacity(0.6) : .clear))
         .contentShape(Rectangle())
@@ -220,6 +179,16 @@ struct CoupleRowView: View {
 
     private var audioLineColor: Color {
         couple.actionWord != nil ? Theme.verdictColor(couple.verdict) : Theme.textSecondary
+    }
+
+    /// Faint left-anchored wash behind matched / needs-attention rows so the
+    /// spine reads as part of the row, not a stuck-on bar. `none` stays clean.
+    private var verdictTint: Color? {
+        switch couple.verdict {
+        case .good: return Theme.verdictGood.opacity(0.05)
+        case .questionable: return Theme.verdictQuestionable.opacity(0.06)
+        case .none: return nil
+        }
     }
 
     /// Thin amber bar under the thumbnail (§V2.2): the span the audio covers.
@@ -268,6 +237,34 @@ struct VerdictDot: View {
     }
 }
 
+/// Left-edge status spine (rail rows, 2026-06-17): replaces the corner dot so the
+/// row itself carries the verdict and the trailing corner is just the approve
+/// control. Solid bar = good / questionable; dashed = no audio paired (none).
+struct VerdictSpine: View {
+    let verdict: Verdict
+    var body: some View {
+        Group {
+            if verdict == .none {
+                VLine().stroke(Theme.verdictColor(.none),
+                               style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [2, 3]))
+            } else {
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(Theme.verdictColor(verdict))
+            }
+        }
+        .frame(width: 3)
+    }
+}
+
+private struct VLine: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { p in
+            p.move(to: CGPoint(x: rect.midX, y: rect.minY))
+            p.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        }
+    }
+}
+
 // MARK: - Media pool (§V2.7)
 
 /// The media pool, anchored to the bottom of the rail (redesign 2026-06-15): a
@@ -309,26 +306,23 @@ private struct MediaPoolSection: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Button {
-                collapsed.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: collapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 8))
-                    sectionLabel("MEDIA POOL · \(model.pool.entries.count)")
-                }
-            }
-            .buttonStyle(.plain)
+            // The chevron + label are plain (not a button): the WHOLE header toggles the
+            // pool (see the gesture below), so the disclosure affordance is the bar, not
+            // just this text.
+            Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                .font(.system(size: 8))
+            sectionLabel("MEDIA POOL · \(model.pool.entries.count)")
             Spacer()
-            // Trash affordance (TODO-001): visible only when ≥1 pool entry is selected.
-            // Removes the WHOLE selection in one action (unused ⇒ immediate; referenced
-            // ⇒ one confirmation). Mirrors the Delete key — both call `removeSelectedMedia`.
+            // Trash affordance (TODO-001): icon only, visible only when ≥1 pool entry is
+            // selected. Removes the WHOLE selection in one action (unused ⇒ immediate;
+            // referenced ⇒ one confirmation). Mirrors the Delete key — both call
+            // `removeSelectedMedia`.
             if !model.poolSelection.isEmpty {
                 Button {
                     model.removeSelectedMedia()
                 } label: {
-                    Label("remove \(model.poolSelection.count)", systemImage: "trash")
-                        .font(.system(size: 9))
+                    Image(systemName: "trash")
+                        .font(.system(size: 11))
                         .foregroundStyle(Theme.bad)
                 }
                 .buttonStyle(.plain)
@@ -348,6 +342,12 @@ private struct MediaPoolSection: View {
                 if case .success(let urls) = result { model.importDropped(urls) }
             }
         }
+        // Collapse / expand on a click ANYWHERE in the header except the two buttons:
+        // the import and trash buttons sit above this gesture and consume their own taps,
+        // so the chevron, the label, and the empty bar between them all toggle the pool
+        // (previously only the label text did).
+        .contentShape(Rectangle())
+        .onTapGesture { collapsed.toggle() }
     }
 }
 
