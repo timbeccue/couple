@@ -774,149 +774,27 @@ final class DebugDrive {
         print("EVENT-TEST summary: \(pass) passed, \(fail) failed")
     }
 
-    /// Pure unit tests for the Phase-2 RMS escalation predicate
-    /// (PLAN-RMS-TIEBREAKER §6.3 R3). No engine, no media: `rmsEscalate` takes a
-    /// fit-lookup closure, so injected `PairFit`s drive every case. Run headless via
-    /// COUPLE_RMS_TEST=1 (needs no files).
+    /// The RMS tie-breaker decision moved INTO couple-core (PLAN-CORE-SHELL-BOUNDARY Phase C):
+    /// `cpl_resolve` owns the §3.5/§5.2 escalation, so the old Swift `Resolver.rmsEscalate` mirror is
+    /// gone. The shell now keeps only the `rmsStrongForm` switch (which maps to the core
+    /// `ResolveParams.rmsStrongForm` param). The escalation's behavior is exercised by core's own Rust
+    /// tests + the CLI↔Swift decision parity (both call the same core resolve via FFI). Kept as a
+    /// stub so COUPLE_RMS_TEST still resolves; it asserts the surviving shell invariant only.
     private func rmsTest() async {
-        var pass = 0, fail = 0
-        func check(_ name: String, _ ok: Bool) {
-            if ok { pass += 1 } else { fail += 1 }
-            print("RMS-TEST \(ok ? "ok " : "FAIL") \(name)")
-        }
-        let params = PairParams() // floor 9 ms, ratio 3, minWindows 6
-
-        // Synthetic candidate + coverage builders. z only sets the cluster order
-        // (cluster[0] = best z); coverage seconds drive the comparability guard.
-        func corr(_ z: Double, lag: Double = 0) -> PairCorrelation {
-            PairCorrelation(z: z, lagMs: lag, ncc: 0, fineNcc: 0, overlapBins: 0,
-                            runnerUpZ: 0, refined: true, insufficientOverlap: false)
-        }
-        func cov(_ seconds: Double) -> Coverage {
-            // durVideo == durAudio, lag 0 ⇒ coverage seconds == min(dur, dur).
-            Coverage(durVideo: seconds, durAudio: seconds, lagMs: 0)
-        }
-        func fitOf(_ rms: Double, windows: UInt32) -> PairFit {
-            PairFit(offMs: 0, ppm: 0, rmsMs: rms, windows: windows)
-        }
-        // A two-candidate contested cluster (indices 0,1 = best z, runner-up).
-        let c = [(0, corr(20.0)), (1, corr(18.0))]
-        let covs = [cov(100), cov(100)] // comparable spans
-        let cluster = [0, 1]
-        // Lookup factory: fits keyed by candidate index; missing ⇒ nil (didn't lock).
-        func lookup(_ m: [Int: PairFit]) -> (Int) -> PairFit? { { m[$0] } }
-
-        // (a) rescue: leader rms 4 / runner-up 22, both ≥6 win, margin<zMargin.
-        check("(a) rescue: leader 4 vs runner-up 22 → selects leader",
-              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
-                  fit: lookup([0: fitOf(4, windows: 12), 1: fitOf(22, windows: 12)]),
-                  params: params) == 0)
-
-        // (b) rescue (THE corrected case): runner-up didn't lock (fit nil) → leader.
-        check("(b) rescue: runner-up didn't lock (nil fit) → selects leader",
-              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
-                  fit: lookup([0: fitOf(4, windows: 12)]),
-                  params: params) == 0)
-
-        // (b') same, but runner-up locked too few windows ⇒ also supports the pick.
-        check("(b') rescue: runner-up windows<min → selects leader",
-              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
-                  fit: lookup([0: fitOf(4, windows: 12), 1: fitOf(2, windows: 3)]),
-                  params: params) == 0)
-
-        // (c) hold: leader 6 / runner-up 9 (ratio 1.5 < 3) → nil (comparably clean).
-        check("(c) hold: ratio 1.5 < 3 → nil",
-              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
-                  fit: lookup([0: fitOf(6, windows: 12), 1: fitOf(9, windows: 12)]),
-                  params: params) == nil)
-
-        // (d) hold: leader 12 ms (> floor 9) even if runner-up 40 → nil.
-        check("(d) hold: leader 12 ms > floor → nil",
-              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
-                  fit: lookup([0: fitOf(12, windows: 12), 1: fitOf(40, windows: 12)]),
-                  params: params) == nil)
-
-        // (e) guard: leader windows < min → nil (can't trust the leader).
-        check("(e) guard: leader windows<min → nil",
-              Resolver.rmsEscalate(cluster: cluster, c: c, covs: covs,
-                  fit: lookup([0: fitOf(4, windows: 4), 1: fitOf(40, windows: 12)]),
-                  params: params) == nil)
-
-        // (e') coverage guard: a non-comparable rival is skipped, so a clean
-        // leader with an otherwise-comparable-clean rival on a tiny span still wins.
-        check("(e') coverage guard: non-comparable rival skipped → selects leader",
-              Resolver.rmsEscalate(cluster: cluster, c: c, covs: [cov(100), cov(50)],
-                  fit: lookup([0: fitOf(4, windows: 12), 1: fitOf(5, windows: 12)]),
-                  params: params) == 0)
-
-        // (f) never on simultaneous path: a 1-element "cluster" never escalates;
-        // and the resolver only calls rmsEscalate from the non-simultaneous branch.
-        check("(f) single-element cluster → nil (never fires on simultaneous path)",
-              Resolver.rmsEscalate(cluster: [0], c: c, covs: covs,
-                  fit: lookup([0: fitOf(4, windows: 12)]),
-                  params: params) == nil)
-
-        check("conservative form is the shipped default",
-              Resolver.rmsStrongForm == false)
-
-        print("RMS-TEST summary: \(pass) passed, \(fail) failed")
+        let ok = Resolver.rmsStrongForm == false
+        print("RMS-TEST \(ok ? "ok " : "FAIL") conservative form is the shipped default (param maps to core)")
+        print("RMS-TEST: the escalation DECISION now lives in core (cpl_resolve); covered by core/CLI parity")
+        print("RMS-TEST summary: \(ok ? 1 : 0) passed, \(ok ? 0 : 1) failed")
     }
 
-    /// Pure unit test for the Phase-4 (§9.2/§9.3) candidate-overflow decision
-    /// (`Resolver.candidateOverflows`) — the Swift PARITY mirror of the CLI gate
-    /// `candidate_overflow_no_silent_eviction`. No engine, no media: it drives the pure
-    /// decision over per-video eligible counts, asserting the three §9.3 properties — normal
-    /// limits verify everything (no overflow), a low limit degrades to EXPLICIT overflow
-    /// (→ ambiguous, eligible/limit/scope surfaced), and the decision is INDEPENDENT of any
-    /// per-candidate identity or filename (it is a function of COUNTS only, so nothing is
-    /// silently retained by name). Run headless via COUPLE_OVERFLOW_TEST=1 (needs no files).
+    /// The candidate-overflow decision moved INTO couple-core (PLAN-CORE-SHELL-BOUNDARY Phase C):
+    /// `cpl_resolve` owns the §9.2/§9.3 no-silent-eviction logic, so the old Swift
+    /// `Resolver.candidateOverflows` mirror is gone. The property (a low ceiling degrades to honest
+    /// `ambiguous` with eligible/limit/scope surfaced, by COUNTS only) is now proven by core's Rust
+    /// tests + the CLI↔Swift parity. Kept as a stub so COUPLE_OVERFLOW_TEST still resolves.
     private func overflowTest() async {
-        var pass = 0, fail = 0
-        func check(_ name: String, _ ok: Bool) {
-            if ok { pass += 1 } else { fail += 1 }
-            print("OVERFLOW-TEST \(ok ? "ok " : "FAIL") \(name)")
-        }
-
-        // One row with EIGHT eligible candidates (the §9.3 shape: the true pair sits past
-        // position six — but the decision never ranks, so position is irrelevant by design).
-        // (a) Normal core limit (default maxVerifyPairsPerVideo = 32 ≫ 8): no overflow ⇒ every
-        // candidate is verified; the true pair cannot be evicted.
-        let normal = Resolver.candidateOverflows(eligibleCounts: [8], perVideoLimit: 32, totalLimit: 4096)
-        check("(a) normal limit (8 ≤ 32) ⇒ no overflow, all candidates verified", normal[0] == nil)
-
-        // (b) Low per-video limit (4 < 8) ⇒ explicit overflow with eligible/limit/scope; the
-        // resolver turns this into an `ambiguous` row (never noMatch/confident).
-        let low = Resolver.candidateOverflows(eligibleCounts: [8], perVideoLimit: 4, totalLimit: 4096)
-        if let ov = low[0] {
-            check("(b) low limit (8 > 4) ⇒ overflow eligible=8", ov.eligible == 8)
-            check("(b) overflow surfaces the configured limit=4", ov.limit == 4)
-            check("(b) overflow scope = perVideo", ov.scope == "perVideo")
-        } else {
-            check("(b) low limit (8 > 4) ⇒ overflow", false)
-        }
-
-        // (c) The decision is a function of COUNTS only — there is no candidate identity or
-        // filename in the signature, so it cannot silently retain a subset by name. Same count,
-        // same verdict, every time (the CLI proves this by reversing the filenames).
-        let again = Resolver.candidateOverflows(eligibleCounts: [8], perVideoLimit: 4, totalLimit: 4096)
-        check("(c) identical counts ⇒ identical overflow (no name-dependent retention)",
-              again[0]?.eligible == 8 && again[0]?.limit == 4 && again[0]?.scope == "perVideo")
-
-        // Per-resolve total ceiling: only NON-overflowed rows count toward the total, and a
-        // per-video overflow takes precedence. Three rows of 4 with totalLimit 9: row0 (0→4)
-        // ok, row1 (4→8) ok, row2 (8+4>9) overflows on `total`.
-        let totalCase = Resolver.candidateOverflows(eligibleCounts: [4, 4, 4], perVideoLimit: 32, totalLimit: 9)
-        check("(total) per-resolve ceiling: rows 0,1 fit, row 2 overflows on total",
-              totalCase[0] == nil && totalCase[1] == nil
-              && totalCase[2]?.scope == "total" && totalCase[2]?.limit == 9 && totalCase[2]?.eligible == 4)
-
-        // A row at exactly the per-video limit is NOT an overflow (strict `>`), and a
-        // zero-candidate (e.g. stripped-audio) row never overflows.
-        let edge = Resolver.candidateOverflows(eligibleCounts: [0, 4], perVideoLimit: 4, totalLimit: 4096)
-        check("(edge) count == limit is not overflow; zero-candidate never overflows",
-              edge[0] == nil && edge[1] == nil)
-
-        print("OVERFLOW-TEST summary: \(pass) passed, \(fail) failed")
+        print("OVERFLOW-TEST: the overflow DECISION now lives in core (cpl_resolve); covered by core/CLI parity")
+        print("OVERFLOW-TEST summary: 0 passed, 0 failed")
     }
 
     /// Pure unit test for TODO-006's responsive candidate-scroll cap
@@ -1824,8 +1702,24 @@ final class DebugDrive {
         var params = model.params
         params.matcherFingerprintPrimary = false
         params.shadowMatcherActive = true
-        let rows = await Task.detached(priority: .userInitiated) {
-            Resolver.resolve(videos: videos, audios: audios, engine: engine, params: params)
+        // Core-shell boundary (Phase C): the legacy DECISION comes from core (`cpl_resolve`); the
+        // spectral shadow is attached shell-side by `Resolver.decorate` (display-only). Resolve the
+        // importable videos in core, wrap audio-less ones as inert no-match rows, then decorate.
+        let paramsJSON = params.resolveParamsJSON()
+        let importableHandles = videos.compactMap(\.handle)
+        let audioHandles = audios.map(\.handle)
+        let rows = await Task.detached(priority: .userInitiated) { () -> [ResolvedRow] in
+            let coreRows = importableHandles.isEmpty
+                ? []
+                : (engine.resolve(videos: importableHandles, audios: audioHandles, paramsJSON: paramsJSON) ?? [])
+            var byVideo = Dictionary(coreRows.map { ($0.videoKey, $0) }, uniquingKeysWith: { a, _ in a })
+            let assembled: [ResolvedRow] = videos.map { v in
+                if v.handle != nil, let r = byVideo.removeValue(forKey: v.key) { return r }
+                return ResolvedRow(videoKey: v.key, videoName: v.name, state: .noMatch,
+                                   chip: RowState.noMatch.chip, selected: nil, alternates: [],
+                                   detail: ResolutionDetail(margin: nil, clusters: 0, note: "no audio stream"))
+            }
+            return Resolver.decorate(assembled, videos: videos, audios: audios, engine: engine, params: params)
         }.value
         print("SHADOW-DUMP: \(rows.count) row(s) — spectral shadow is OBSERVATIONAL; resolved rows stay legacy")
         for row in rows {

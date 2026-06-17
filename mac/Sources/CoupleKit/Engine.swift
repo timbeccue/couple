@@ -227,11 +227,12 @@ public final class Engine: @unchecked Sendable {
     /// GRAPH-ADJUSTED batch evidence (`cpl_match_candidates_graph`, §13.4): same shape and wire form
     /// as `matchCandidates`, but core applies the §13 cross-device graph-consistency pass (an
     /// `Ambiguous` edge may be promoted to `Match`, or a `Match` demoted to `Ambiguous`, when
-    /// independent composed affine paths close per §13.3). Boundary 13: this is the DEFAULT
-    /// resolver's input — `Resolver.resolveFingerprint` keys on each cell's `classification` (the
-    /// identity authority) and orders by `score`; acceptance logic stays in core. In `legacyEnvelope`
-    /// mode the graph pass is a no-op and this equals `matchCandidates`. nil only on a core fault or
-    /// invalid params.
+    /// independent composed affine paths close per §13.3). Boundary 13: this graph-adjusted matrix is
+    /// the DEFAULT resolver's input — core's `resolve` keys on each cell's `classification` (the
+    /// identity authority) and orders by `score`; acceptance logic stays in core (the Swift shell now
+    /// consumes that decision via `resolve`/`resolveStart` rather than re-deriving it). In
+    /// `legacyEnvelope` mode the graph pass is a no-op and this equals `matchCandidates`. nil only on a
+    /// core fault or invalid params.
     public func matchCandidatesGraph(
         videos: [TrackHandle], audios: [TrackHandle], paramsJSON: String? = nil
     ) -> [[PairEvidence]]? {
@@ -270,6 +271,67 @@ public final class Engine: @unchecked Sendable {
         let id = vs.withUnsafeBufferPointer { vp in
             aus.withUnsafeBufferPointer { ap in
                 cpl_match_candidates_graph_start(
+                    ctx, vp.baseAddress, UInt(vp.count), ap.baseAddress, UInt(ap.count),
+                    paramsJSON, jobTrampoline, user)
+            }
+        }
+        guard id != 0 else {
+            Unmanaged<JobBox>.fromOpaque(user).release()
+            throw takeError()
+        }
+        return Job(engine: self, box: box, id: id)
+    }
+
+    // ---------- row resolution (PLAN-CORE-SHELL-BOUNDARY §3.1) ----------
+
+    /// Core's default `ResolveParams` as JSON (`cpl_resolve_params_default_json`) — the single source
+    /// of the row-resolver defaults (matcher choice, z gate/margin, triangle tol, coverage-full,
+    /// cluster tol, the verify/RMS-escalation knobs), exactly as `pairingParamsDefault()` is for the
+    /// pairing layer. Returns nil only on a core fault (never in normal operation).
+    public func resolveParamsDefaultJSON() -> String? {
+        Engine.takeString(cpl_resolve_params_default_json())
+    }
+
+    /// Full §3.3 ROW RESOLUTION over imported tracks (`cpl_resolve`, PLAN-CORE-SHELL-BOUNDARY §3.1) —
+    /// the single cross-platform home for coverage clustering, the §3.4 audio↔audio simultaneity
+    /// (triangle) check, the §3.5 margin rule, the §3.3 row states, candidate-overflow handling, and
+    /// the legacy RMS tie-breaker. Rows are `videos` (IMPORTED-TRACK ONLY: the caller excludes
+    /// audio-less videos and wraps those as inert no-match rows shell-side); the resolver picks each
+    /// row's audio from `audios`. `paramsJSON` is an optional `ResolveParams` override (camelCase;
+    /// nil ⇒ core defaults; partial ⇒ serde fills the rest). Decodes the `[ResolvedRow]` array; the
+    /// empty-input shapes mirror the other batch wrappers (no videos ⇒ `[]`); nil only on a core
+    /// fault or invalid params.
+    public func resolve(videos: [TrackHandle], audios: [TrackHandle], paramsJSON: String?) -> [ResolvedRow]? {
+        guard !videos.isEmpty else { return [] }
+        let vs = videos.map(\.id)
+        let aus = audios.map(\.id)
+        return vs.withUnsafeBufferPointer { vp in
+            aus.withUnsafeBufferPointer { ap in
+                try? decodeJSON(
+                    cpl_resolve(ctx, vp.baseAddress, UInt(vp.count), ap.baseAddress, UInt(ap.count),
+                                paramsJSON),
+                    as: [ResolvedRow].self)
+            }
+        }
+    }
+
+    /// JOB form of `resolve` (`cpl_resolve_start`, PLAN-CORE-SHELL-BOUNDARY §3.1): the asynchronous
+    /// twin that reports a determinate fraction while the matrix build + row pass run. The job's value
+    /// is the SAME `[ResolvedRow]` array `resolve` returns (resolution byte-identical; progress
+    /// observational). `progress` yields phase names "MatchFingerprint"/"MatchCorrelate"/"MatchGraph"
+    /// (the matrix build) then "Verify"/"Resolve" (the row pass / any flag-ON classifier + RMS
+    /// escalation), each with a 0…1 fraction; cancellation throws `JobError.cancelled` and never
+    /// yields a partial result. Mirrors `matchCandidatesGraphStart`: core copies the id slices
+    /// synchronously inside the `withUnsafeBufferPointer` closures, so the buffers need not outlive
+    /// this call.
+    public func resolveStart(videos: [TrackHandle], audios: [TrackHandle], paramsJSON: String?) throws -> Job<[ResolvedRow]> {
+        let box = JobBox()
+        let user = Unmanaged.passRetained(box).toOpaque()
+        let vs = videos.map(\.id)
+        let aus = audios.map(\.id)
+        let id = vs.withUnsafeBufferPointer { vp in
+            aus.withUnsafeBufferPointer { ap in
+                cpl_resolve_start(
                     ctx, vp.baseAddress, UInt(vp.count), ap.baseAddress, UInt(ap.count),
                     paramsJSON, jobTrampoline, user)
             }

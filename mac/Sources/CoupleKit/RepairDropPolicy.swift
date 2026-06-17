@@ -35,7 +35,14 @@
 //   5. APPROVED + DIFFERENT NEEDS CONFIRMATION — a different source on an APPROVED
 //      couple ⇒ `.needsConfirmation`; the caller confirms (→ accept) or cancels
 //      (→ no change). This is the ONLY outcome that asks first.
+//
+// RELOCATION (PLAN-CORE-SHELL-BOUNDARY Phase E): the DECISION now lives in
+// `couple_core::policy::repair_drop` and is reached over the FFI
+// (`cpl_policy_repair_drop`). This type is a thin WRAPPER. On a core error (a
+// malformed/stale request — unreachable with this in-process call) it maps to the
+// CONSERVATIVE fallback `.reject`, which mutates NO state (CONTRACT invariant 1).
 
+import CCouple
 import Foundation
 
 /// What a manual audio drop onto a couple should do (TODO-013). The app maps each
@@ -82,21 +89,52 @@ public enum RepairDropPolicy {
                               currentSelectedKey: String?,
                               droppedKey: String,
                               approved: Bool) -> RepairDropOutcome {
-        // (1) Nothing to pair: no couple, a non-audio payload, or no usable video.
-        //     Checked first so a malformed/non-audio drop can never reach the
-        //     replacement reasoning and never mutates state.
-        guard hasSelectedCouple, payloadIsAudio, videoAvailable else { return .reject }
+        // Build the camelCase request and round-trip through `cpl_policy_repair_drop`
+        // (the decision now lives in `couple_core::policy::repair_drop`).
+        var req: [String: Any] = [
+            "hasSelectedCouple": hasSelectedCouple,
+            "payloadIsAudio": payloadIsAudio,
+            "videoAvailable": videoAvailable,
+            "currentSelectedKey": currentSelectedKey as Any,
+            "droppedKey": droppedKey,
+            "approved": approved,
+        ]
+        if currentSelectedKey == nil { req["currentSelectedKey"] = NSNull() }
+        let value: [String: Any]?
+        if let data = try? JSONSerialization.data(withJSONObject: req),
+           let json = String(data: data, encoding: .utf8) {
+            value = PolicyEnvelope.decodeValue(cpl_policy_repair_drop(json))
+        } else {
+            value = nil
+        }
+        return outcome(fromEnvelopeValue: value)
+    }
 
-        // (2) Re-dropping the already-selected source changes nothing (independent of
-        //     approval — a no-op must never clear approval or rebuild the session).
-        if droppedKey == currentSelectedKey { return .noOp }
+    /// Map a decoded envelope `value` object to the outcome, applying the CONSERVATIVE fallback.
+    /// A nil value (core returned an error envelope, or the call/parse failed) or an unknown
+    /// `outcome` string ⇒ `.reject` — which mutates NO state, never a silent accept/confirm.
+    /// Internal so a test can drive the error path without reaching the C ABI (PLAN §3.2).
+    /// `@inline(never)` keeps a standalone symbol so the test can link it (the optimizer would
+    /// otherwise inline this sole-caller helper into `decide` and emit no symbol).
+    @inline(never)
+    static func outcome(fromEnvelopeValue value: [String: Any]?) -> RepairDropOutcome {
+        guard let outcome = (value?["outcome"] as? String).flatMap(RepairDropOutcome.init(wire:)) else {
+            return .reject
+        }
+        return outcome
+    }
+}
 
-        // (3)/(4) A new source on an unresolved or unapproved couple replaces
-        //         immediately — there is no approved export to protect.
-        guard approved else { return .accept }
-
-        // (5) A new source on an APPROVED couple removes it from the export queue, so
-        //     confirm first; the caller replaces only on confirm.
-        return .needsConfirmation
+extension RepairDropOutcome {
+    /// Decode a core wire string (`couple_core::policy::repair_drop::RepairDropOutcome`) into the
+    /// UI enum; nil on an unknown value.
+    init?(wire: String) {
+        switch wire {
+        case "noOp": self = .noOp
+        case "accept": self = .accept
+        case "needsConfirmation": self = .needsConfirmation
+        case "reject": self = .reject
+        default: return nil
+        }
     }
 }

@@ -1,0 +1,16 @@
+{
+  "seed": 4040,
+  "cameras": [
+    { "name": "video", "masterT0": 30.0, "durS": 60.0 }
+  ],
+  "externals": [
+    { "name": "aaa_rec", "masterT0": 0.0, "durS": 120.0, "snrDb": 20.0 },
+    { "name": "bbb_rec", "masterT0": 0.0, "durS": 120.0, "snrDb": 21.0 },
+    { "name": "ccc_rec", "masterT0": 0.0, "durS": 120.0, "snrDb": 22.0 },
+    { "name": "ddd_rec", "masterT0": 0.0, "durS": 120.0, "snrDb": 23.0 },
+    { "name": "eee_rec", "masterT0": 0.0, "durS": 120.0, "snrDb": 24.0 },
+    { "name": "fff_rec", "masterT0": 0.0, "durS": 120.0, "snrDb": 25.0 },
+    { "name": "ggg_rec", "masterT0": 0.0, "durS": 120.0, "snrDb": 26.0 },
+    { "name": "zzz_true", "masterT0": 0.0, "durS": 120.0, "snrDb": 27.0 }
+  ]
+}

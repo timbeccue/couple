@@ -1,0 +1,10 @@
+{
+  "seed": 99,
+  "cameras": [
+    { "name": "video", "masterT0": 30.0, "durS": 60.0 }
+  ],
+  "externals": [
+    { "name": "extA", "masterT0": 0.0, "durS": 120.0 },
+    { "name": "extB", "masterT0": 0.0, "durS": 120.0, "snrDb": 15.0 }
+  ]
+}

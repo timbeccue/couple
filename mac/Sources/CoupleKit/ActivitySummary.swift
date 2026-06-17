@@ -1,60 +1,45 @@
-// Unified activity summary (TODO-005) — the PURE, testable core behind the
-// single global activity strip that lives beneath the queue/session header. Several
-// operations do meaningful background work (import, candidate PAIRING, queued
-// auto-sync, batch export), and today their feedback is scattered across a header
-// spinner, per-couple text, and the export rail. This type answers ONE question, as
-// a pure function so `swift test` can lock its honesty down: "given the current job
-// signals (and how long the current operation has been running), what is the SINGLE
-// summary line the strip should show, and does it have a TRUSTWORTHY fraction?"
+// Unified activity summary (TODO-005) — the single global activity strip beneath the
+// queue/session header. Several operations do meaningful background work (import,
+// candidate PAIRING, queued auto-sync, batch export), and today their feedback is
+// scattered across a header spinner, per-couple text, and the export rail. This file
+// answers ONE question: "given the current job signals (and how long the current
+// operation has been running), what is the SINGLE summary line the strip should show, and
+// does it have a TRUSTWORTHY fraction?"
 //
-// It is lifted here (out of the app target / SwiftUI) mirroring the codebase's other
-// pure-decision idioms (RowMergePolicy.plan, PoolSelection.select,
-// MatchQualityPolicy.decide, RepairDropPolicy.decide, MediaRemovalPolicy.plan,
-// AnchorProposal.propose). The app feeds it a snapshot built from the EXISTING
-// signals — it invents no new jobs — and renders what it returns. The app owns the
-// side effects (debounce timer, rendering the bar); this owns the decision.
+// RELOCATION (PLAN-CORE-SHELL-BOUNDARY Phase F): the pure DECISION MATH — priority,
+// weighting, the determinate fraction, the debounce decision, and the monotonic clamp —
+// now lives in `couple_core::policy::activity` and is reached over the FFI
+// (`cpl_policy_activity`). This file is the WRAPPER + the PRESENTATION layer:
+//   - it gathers the snapshot, calls core, and decodes the uniform `{ok,value|error}`
+//     envelope;
+//   - from the structured `Decision` (a tagged line KIND + the counts/percentage/names it
+//     needs) it ASSEMBLES the localized strings the UI shows — all user-facing copy +
+//     localization STAY here, never crossing the FFI line.
 //
-// HONESTY is the central constraint (TODO-005 acceptance criteria):
-//   - A determinate `fraction` is returned ONLY for work backed by trustworthy job
-//     progress: IMPORT (the OVERALL batch position, summed from each file's reported
-//     0…1) and batch EXPORT (per-row %). Everything else returns a nil fraction ⇒ the
-//     app draws an INDETERMINATE (moving) bar, never a fabricated number.
-//   - IMPORT is ONE determinate bar for the whole dropped batch, not a per-file reset:
-//     the files climb it 0→1 (a new import starts a fresh bar). The MATCHING that follows
-//     is a SEPARATE phase.
-//   - PAIRING has NO real fraction with the current API (one synchronous FFI call), so it
-//     is ALWAYS indeterminate. The matching that FOLLOWS an import reads `Matching
-//     couples…` with a MOVING bar (never a frozen number) and clears when it finishes; a
-//     standalone re-resolve is a count summary (`Comparing V videos with A audio files…`
-//     / `Resolving matches…`). No simulated Swift progress loop either way.
-//   - A determinate fraction is MONOTONIC within a phase: the app passes the value it
-//     last showed for the same phase as `phaseFloor` and this clamps regressions up to
-//     it, so a bar never visibly goes backwards inside one phase.
-//   - The strip appears only AFTER the work has lasted a debounce (~200–300 ms) so
-//     quick tasks don't flash; `elapsedMs < debounceMs` ⇒ no line (nil summary).
-//   - FAILURE surfaces as an actionable error rather than a stuck bar; SUCCESS / idle
-//     clears (nil summary). The app clears its timer when the summary goes nil.
+// WHAT STAYS SHELL-SIDE (genuinely stateful / presentation):
+//   - the DEBOUNCE TIMER and the CLOCK: the app measures `elapsedMs` from a real clock and
+//     passes it in as an explicit input (core never reads a clock). `ActivityStrip` owns
+//     the timer; this just forwards the value.
+//   - the per-phase MONOTONIC FLOOR: the controller carries the highest fraction it already
+//     showed for a `phaseKey` across recomputes and passes it back as `phaseFloor`. Core
+//     applies the clamp; the shell remembers the value.
+//   - all STRINGS / pluralization / localization (the `render` mapper below).
+// On an envelope error (a malformed/stale request — which should never happen with this
+// in-process call) the wrapper maps to the CONSERVATIVE fallback: show NOTHING (a `nil`
+// summary), the idle/empty line — never a crash and never a wrong-but-confident line.
 //
-// CONTRACT (the testable invariants):
-//   1. IDLE ⇒ NO STRIP — no active signal ⇒ `summary == nil`.
-//   2. DEBOUNCE — an active determinate/indeterminate job younger than `debounceMs`
-//      ⇒ `nil` (no flash); at/after it ⇒ a line. (A `.failed` signal is shown
-//      immediately — an error is not "quick work", it is a result to act on.)
-//   3. PAIRING IS INDETERMINATE — a `.pairing` signal ALWAYS yields `fraction == nil`
-//      (never a percentage): `Matching couples…` when it is an import's `importTail` (a
-//      moving bar that clears when matching finishes), else a count line / `Resolving
-//      matches...`.
-//   4. IMPORT / EXPORT ARE DETERMINATE — `.exporting` yields the job's per-row %, and
-//      `.importing` yields the OVERALL batch fraction (0…1), each clamped to `phaseFloor`
-//      for monotonicity. Import is ONE continuous bar across the batch (a single
-//      `phaseKey`), not a per-file reset.
-//   5. QUEUED WORK SHOWS POSITION — multiple queued sync couples yield
-//      `Syncing couple X of N: <video>` (indeterminate at the summary level — most
-//      sync phases report no fraction; the per-couple line carries the detail).
-//   6. PRIORITY WHEN SEVERAL RUN — the strip is a SUMMARY, so exactly one line wins:
-//      a failure to act on first, then the most user-relevant foreground operation
-//      (export ▸ import ▸ pairing ▸ sync), since the user is usually driving that one.
+// HONESTY is the central constraint (TODO-005 acceptance criteria), now enforced in core:
+//   - A determinate `fraction` is returned ONLY for work backed by trustworthy job progress:
+//     IMPORT (the OVERALL batch position) and batch EXPORT (per-row %), plus the unified
+//     INGEST bar that composes them. Everything else is INDETERMINATE (nil fraction ⇒ a
+//     moving bar, never a fabricated number).
+//   - PAIRING has NO real fraction (one synchronous FFI call) ⇒ ALWAYS indeterminate.
+//   - A determinate fraction is MONOTONIC within a phase (`phaseFloor`).
+//   - The strip appears only AFTER a debounce (~250 ms) so quick tasks don't flash; a
+//     FAILURE surfaces immediately (an error is a result to act on).
+//   - PRIORITY: exactly one line wins — failure ▸ ingest ▸ export ▸ import ▸ pairing ▸ sync.
 
+import CCouple
 import Foundation
 
 /// One imported snapshot of every long-running signal in the session (TODO-005),
@@ -148,11 +133,11 @@ public struct ActivitySignals: Sendable, Equatable {
     }
 
     /// The ONE in-flight INGEST operation (import → match → sync), composed into a single 0→100%
-    /// bar by `ActivitySummaryPolicy.unifiedSummarize` (the unified-bar boundary). Set ONLY by the
-    /// app's ingest orchestration (a dropped batch); a standalone export / re-sync / re-resolve
-    /// leaves it nil and uses the per-kind `winningLine` instead. `stagesPlanned` records which
-    /// stages this ingest will run (e.g. an all-duplicates drop is import-only), so the weighted
-    /// bar renormalizes over exactly the present stages and always spans the full range.
+    /// bar by `couple_core::policy::activity` (the unified-bar boundary). Set ONLY by the app's
+    /// ingest orchestration (a dropped batch); a standalone export / re-sync / re-resolve leaves it
+    /// nil and uses the per-kind line instead. `stagesPlanned` records which stages this ingest will
+    /// run (e.g. an all-duplicates drop is import-only), so the weighted bar renormalizes over
+    /// exactly the present stages and always spans the full range.
     public struct Ingest: Sendable, Equatable {
         public var importing: Importing?
         public var matching: Matching?
@@ -197,7 +182,7 @@ public struct ActivitySignals: Sendable, Equatable {
 /// The three core matching phases (incremental-matching boundary), each mapping a core phase
 /// string EXACTLY: `MatchFingerprint` ⇒ `.fingerprinting`, `MatchCorrelate` ⇒ `.comparing`,
 /// `MatchGraph` ⇒ `.crosschecking`. Keep this mapping stable in lockstep with the core `Phase`
-/// names (Open Decision 7).
+/// names (Open Decision 7). The `wireValue` matches `couple_core::policy::activity::MatchPhase`.
 public enum MatchPhase: String, Sendable, Equatable {
     case fingerprinting   // core "MatchFingerprint": building each track's fingerprint
     case comparing        // core "MatchCorrelate": filling the candidate matrix row by row
@@ -219,7 +204,8 @@ public struct Stages: OptionSet, Sendable, Equatable {
 /// Honest import phases (TODO-005). Only phases the core job reports DISTINCTLY get a
 /// distinct label; the rest collapse into `Building waveform` / `Finishing import`
 /// rather than inventing precision (e.g. there is no separate "analyzing transients"
-/// pass in the current pipeline, so we never claim one).
+/// pass in the current pipeline, so we never claim one). The `wireValue` matches
+/// `couple_core::policy::activity::ImportPhase`.
 public enum ImportPhase: String, Sendable, Equatable {
     case probing      // "Probe": Inspecting / Reading the file
     case decoding     // "Decode": Decoding audio
@@ -253,22 +239,28 @@ public struct ActivitySummary: Sendable, Equatable {
 
 public enum ActivitySummaryPolicy {
     /// The debounce before any non-error strip appears (TODO-005: "~200–300 ms so
-    /// quick tasks do not flash"). The midpoint of the spec window.
+    /// quick tasks do not flash"). The midpoint of the spec window. Mirrors
+    /// `couple_core::policy::activity::DEBOUNCE_MS`; the controller reads it to drive its timer.
     public static let debounceMs: Double = 250
 
     /// One stable phase token for the whole IMPORT phase, so the determinate import bar is
     /// monotonic across every file and sub-phase (the controller carries its floor across
     /// the batch and resets it only on idle — a new import therefore starts a fresh bar).
     /// MATCHING is a SEPARATE, indeterminate phase (no fraction), so it does not share this.
+    /// Mirrors `couple_core::policy::activity::INGEST_PHASE_KEY`.
     public static let ingestPhaseKey = "ingest"
 
     /// Compute the single summary line for the strip (TODO-005).
+    ///
+    /// Round-trips the snapshot + the explicit time inputs through `cpl_policy_activity` (the
+    /// decision math now lives in `couple_core::policy::activity`), then ASSEMBLES the localized
+    /// line from the structured decision core returns.
     ///
     /// - Parameters:
     ///   - signals: a snapshot of every long-running signal (see `ActivitySignals`).
     ///   - elapsedMs: how long the CURRENT foreground operation has been active, in
     ///     milliseconds. Below `debounceMs` a non-error operation returns `nil` (no
-    ///     flash). Modeling time as an input keeps the debounce testable.
+    ///     flash). Modeling time as an input keeps the debounce testable AND keeps core pure.
     ///   - phaseFloor: the highest determinate fraction the app has ALREADY shown for
     ///     the winning phase (matched by the returned `phaseKey`), or `nil` if the
     ///     phase just changed / is indeterminate. The result's `fraction` is clamped
@@ -278,287 +270,201 @@ public enum ActivitySummaryPolicy {
     public static func summarize(_ signals: ActivitySignals,
                                  elapsedMs: Double,
                                  phaseFloor: Double? = nil) -> ActivitySummary? {
-        // (2)/(failure) A failure is a result to act on — surface it immediately,
-        // ahead of any debounce and any concurrent progress.
-        if let failure = signals.failure {
-            return ActivitySummary(text: failure, fraction: nil, isError: true, phaseKey: nil)
-        }
-
-        // (6) Exactly one foreground operation wins the summary, most user-relevant
-        // first: the user is usually driving export ▸ import ▸ pairing, and a sync
-        // queue is the most ambient. Compute the winning RAW line first…
-        guard let raw = winningLine(signals) else { return .none } // (1) idle ⇒ nothing
-
-        // (2) …then gate non-error lines on the debounce so quick work never flashes.
-        guard elapsedMs >= debounceMs else { return .none }
-
-        // (4) Monotonic clamp for determinate phases only.
-        if let f = raw.fraction, let floor = phaseFloor {
-            return ActivitySummary(text: raw.text, fraction: max(f, floor),
-                                   isError: false, phaseKey: raw.phaseKey)
-        }
-        return raw
+        decide(signals, elapsedMs: elapsedMs, phaseFloor: phaseFloor)
     }
 
-    /// The winning raw line (no debounce / no monotonic clamp) given the priority
-    /// order. Split out so the priority + per-kind text is independently testable, and
-    /// so the app-side controller can read the winning `phaseKey` for its floor.
-    ///
-    /// When an INGEST operation is in flight (`signals.ingest` set), it OWNS the line: the unified
-    /// import→match→sync bar under the single stable `phaseKey = "ingest"` (the controller's
-    /// per-phaseKey floor then makes the WHOLE bar monotonic with no further change). The line is
-    /// produced for the ENTIRE in-flight span — including the brief hand-off gaps between stages
-    /// where no sub-signal is momentarily live — so the bar stays visible the whole 0→100% (the
-    /// floor holds its value across a gap). Standalone export/import/pairing/sync keep their lines.
-    public static func winningLine(_ s: ActivitySignals) -> ActivitySummary? {
-        if let ingest = s.ingest { return unifiedLine(ingest) }
-        if let e = s.exporting { return exportLine(e) }
-        if let i = s.importing { return importLine(i) }
-        if let p = s.pairing { return pairingLine(p) }
-        if let y = s.syncing { return syncLine(y) }
-        return nil
-    }
-
-    /// Compose an INGEST operation into ONE 0→100% summary (unified-bar boundary, decision B-i: the
-    /// pure policy owns the math). The bar is a WEIGHTED sub-range blend across the planned stages —
-    /// import 50% / match 20% / sync 30% (Open Decision 2), RENORMALIZED over exactly the stages in
-    /// `stagesPlanned` so it always spans 0→1 (e.g. a re-resolve `[.match,.sync]` ⇒ 40/60; an
-    /// all-duplicates drop `[.import]` ⇒ the import stage alone reaches 1.0). The TEXT follows the
-    /// currently-active stage ("Importing 2 of 4: clip.mov — 47%" → "Matching couples…" → "Syncing
-    /// couple 3 of 7: clip.mov"); the FRACTION is the blended overall (Open Decision 5: per-stage
-    /// text + a global bar, no blended % in the text). Always carries `phaseKey = "ingest"`.
-    ///
-    /// Pure and total: the SAME input always yields the SAME line. A present ingest ALWAYS yields a
-    /// line (even with no sub-stage momentarily live — a hand-off gap), so the bar stays visible for
-    /// the whole span; the controller's floor HOLDS the fraction at the top of the previous stage
-    /// across the gap (⇒ monotonic, never a flicker to nil). The bar clears only when the ingest
-    /// itself ends (`signals.ingest == nil`).
+    /// Compose an INGEST operation into ONE 0→100% summary (unified-bar boundary). Identical to
+    /// `summarize` when an ingest descriptor is set — both route to the same core decision (an
+    /// in-flight ingest OWNS the line). Kept as a named entry point for the app's unified-bar call
+    /// sites and the §F gate tests.
     public static func unifiedSummarize(_ signals: ActivitySignals,
                                         elapsedMs: Double,
                                         phaseFloor: Double? = nil) -> ActivitySummary? {
-        // A failure still wins immediately, even mid-ingest (an error is a result to act on).
-        if let failure = signals.failure {
-            return ActivitySummary(text: failure, fraction: nil, isError: true, phaseKey: nil)
-        }
-        guard let ingest = signals.ingest else { return .none }
-        guard elapsedMs >= debounceMs else { return .none } // (2) debounce still applies
-        let raw = unifiedLine(ingest)
-        if let f = raw.fraction, let floor = phaseFloor {
-            return ActivitySummary(text: raw.text, fraction: max(f, floor),
-                                   isError: false, phaseKey: raw.phaseKey)
-        }
-        return raw
+        decide(signals, elapsedMs: elapsedMs, phaseFloor: phaseFloor)
     }
 
-    /// The raw unified ingest line (no debounce / no clamp) — the blended fraction + active-stage
-    /// text. Split out so `winningLine` (controller floor) and `unifiedSummarize` share it.
-    private static func unifiedLine(_ ingest: ActivitySignals.Ingest) -> ActivitySummary {
-        let overall = unifiedFraction(ingest)
-        let text = unifiedText(ingest)
-        return ActivitySummary(text: text, fraction: overall, isError: false,
-                               phaseKey: ingestPhaseKey)
-    }
-
-    /// The weighted, renormalized 0…1 across the planned ingest stages (unified-bar boundary).
-    private static func unifiedFraction(_ ingest: ActivitySignals.Ingest) -> Double {
-        let stages = ingest.stagesPlanned
-        // Default top-level weights (Open Decision 2); summed only over the PRESENT stages.
-        let w: (Stages) -> Double = { s in
-            switch s {
-            case .importStage: return 0.50
-            case .matchStage:  return 0.20
-            case .syncStage:   return 0.30
-            default:           return 0
-            }
-        }
-        var total = 0.0
-        for s in [Stages.importStage, .matchStage, .syncStage] where stages.contains(s) {
-            total += w(s)
-        }
-        guard total > 0 else { return 0 }
-
-        // The latest-started present stage is "active"; every EARLIER present stage reads complete
-        // (1.0) so the bar never regresses when a stage hands off. (A stage that has not started yet
-        // contributes 0 of its sub-range = the top of the previous stage.)
-        let matchActive = ingest.matching != nil
-        let syncActive = ingest.syncing != nil
-
-        func stageFraction(_ s: Stages) -> Double {
-            switch s {
-            case .importStage:
-                if let i = ingest.importing { return batchImportFraction(i) }
-                // Import is planned but no longer reporting ⇒ a later stage started ⇒ import done.
-                return (matchActive || syncActive) ? 1.0 : 0.0
-            case .matchStage:
-                if let m = ingest.matching { return perMatchFraction(phase: m.phase, fraction: m.fraction) }
-                // Matching planned, not yet active: 0 while import runs; 1.0 once sync started.
-                if syncActive { return 1.0 }
-                return 0.0
-            case .syncStage:
-                if let y = ingest.syncing, y.total > 0 {
-                    // Position-only (Open Decision 4): index/total, clamped 0…1.
-                    return Swift.min(1, Swift.max(0, Double(y.index) / Double(y.total)))
-                }
-                return 0.0
-            default:
-                return 0
-            }
-        }
-
-        var sum = 0.0
-        for s in [Stages.importStage, .matchStage, .syncStage] where stages.contains(s) {
-            sum += (w(s) / total) * stageFraction(s)
-        }
-        return Swift.min(1, Swift.max(0, sum))
-    }
-
-    /// The active-stage text for the unified ingest line (Open Decision 5: per-stage text). The
-    /// active stage is the latest-started present stage; import ▸ match ▸ sync hand off in order.
-    private static func unifiedText(_ ingest: ActivitySignals.Ingest) -> String {
-        if let y = ingest.syncing {
-            var text = "Syncing couple \(y.index) of \(y.total)"
-            if let name = y.videoName { text += ": \(name)" }
-            return text
-        }
-        if ingest.matching != nil {
-            return "Matching couples…"
-        }
-        if let i = ingest.importing {
-            // Reuse the import line's text (batch position + current file + overall %).
-            return importLine(i).text
-        }
-        return "Working…"
-    }
-
-    // MARK: - Per-kind lines
-
-    /// Export (determinate, TODO-005: `Exporting 2 of 5 - 61%`, `Preparing export…`,
-    /// `Finishing export…`). The per-row fraction is the trustworthy number; the row
-    /// position gives the batch context an item count requires.
-    private static func exportLine(_ e: ActivitySignals.Exporting) -> ActivitySummary {
-        if e.preflight {
-            return ActivitySummary(text: "Preparing export…", fraction: nil,
-                                   isError: false, phaseKey: nil)
-        }
-        let f = e.rowFraction.clamped01
-        // A finished-but-not-yet-idle row reads "Finishing export…" rather than a
-        // stuck 100% bar.
-        if f >= 1.0 {
-            return ActivitySummary(text: "Finishing export…", fraction: 1.0,
-                                   isError: false, phaseKey: "export.\(e.index)")
-        }
-        let pct = Int((f * 100).rounded())
-        var text = "Exporting \(e.index) of \(e.total) — \(pct)%"
-        if let name = e.filename { text = "Exporting \(e.index) of \(e.total): \(name) — \(pct)%" }
-        return ActivitySummary(text: text, fraction: f, isError: false,
-                               phaseKey: "export.\(e.index)")
-    }
-
-    /// Import — ONE determinate bar for the whole batch, not a per-file reset (TODO). The
-    /// fraction is the OVERALL import progress across the dropped batch (0…1; see
-    /// `batchImportFraction`), under a single stable `phaseKey` so the controller carries
-    /// its monotonic floor across every file and phase — the bar only ever climbs, and
-    /// never restarts at 0 per file. The MATCHING that follows is a SEPARATE INDETERMINATE
-    /// phase (see `pairingLine`). The text gives the batch position + current file; the
-    /// percentage shown is the OVERALL one the bar draws.
-    private static func importLine(_ i: ActivitySignals.Importing) -> ActivitySummary {
-        let overall = batchImportFraction(i)
-        let pct = Int((overall * 100).rounded())
-        let text: String
-        if let idx = i.index, let total = i.total, total > 1, let name = i.filename {
-            text = "Importing \(idx) of \(total): \(name) — \(pct)%"
-        } else if let name = i.filename {
-            text = "Importing \(name) — \(pct)%"
-        } else {
-            text = "Importing — \(pct)%"
-        }
-        return ActivitySummary(text: text, fraction: overall, isError: false,
-                               phaseKey: ingestPhaseKey)
-    }
-
-    /// Overall determinate progress of the IMPORT phase (0…1 across the whole batch): the
-    /// files already finished (`index - 1`) plus the current file's progress, over the
-    /// batch size. With an unknown batch size it falls back to the single file's progress.
-    /// Reaches 1.0 only when the last file truly finishes.
-    private static func batchImportFraction(_ i: ActivitySignals.Importing) -> Double {
-        let pf = perFileFraction(phase: i.phase, fraction: i.fraction.clamped01)
-        let v: Double
-        if let idx = i.index, let total = i.total, total > 0 {
-            v = (Double(idx - 1) + pf) / Double(total)
-        } else {
-            v = pf
-        }
-        return Swift.min(1, Swift.max(0, v))
-    }
-
-    /// One file's import progress 0…1. The core runs ONE 0→1 per-file progress but emits
-    /// it SPLIT across phases — decode is 80% of it, waveform the next 15%, finishing the
-    /// last 5% (core/src/import.rs), each reported as its OWN 0→1. A naive read would show
-    /// a file "done" at the end of DECODE; this RE-JOINS the phases back into the single
-    /// per-file 0→1 using the core's own split, so the value tracks real import time and
-    /// reaches 1.0 only at true completion. (Probe precedes the 0→1 work ⇒ 0.)
-    private static func perFileFraction(phase: ImportPhase, fraction f: Double) -> Double {
-        switch phase {
-        case .probing:   return 0
-        case .decoding:  return 0.80 * f          // core: overall 0 → 0.80
-        case .waveform:  return 0.80 + 0.15 * f   // core: overall 0.80 → 0.95
-        case .finishing: return 0.95 + 0.05 * f   // core: overall 0.95 → 1.0
-        }
+    /// The winning RAW line (no debounce / no monotonic clamp) given the priority order. Split out
+    /// so the priority + per-kind text is independently testable, and so the app-side controller can
+    /// read the winning `phaseKey` for its floor. Implemented by asking core with `elapsedMs` past
+    /// the debounce and no floor, so the result is the un-gated, un-clamped winning line.
+    public static func winningLine(_ s: ActivitySignals) -> ActivitySummary? {
+        decide(s, elapsedMs: debounceMs, phaseFloor: nil)
     }
 
     /// One matching stage's progress 0…1 (unified-bar boundary), re-joining the three core match
-    /// phases into a single 0→1 over the whole match stage — the analogue of `perFileFraction` for
-    /// matching. The core job emits each phase's OWN 0→1 (`MatchFingerprint` is the dominant FFT
-    /// cost, `MatchCorrelate` the per-row matrix fill, `MatchGraph` the cheap §13 pass), so a naive
-    /// read would show the stage "done" at the end of fingerprinting; this splits the stage
-    /// 60% / 35% / 5% (Open Decision 1) so the value tracks real matching time and reaches 1.0 only
-    /// when the graph pass finishes.
+    /// phases into a single 0→1 over the whole match stage (fingerprint 60% / compare 35% /
+    /// cross-check 5%). The MATH lives in `couple_core::policy::activity::per_match_fraction`; this
+    /// reaches it by asking core for a match-only ingest's blended fraction (the match weight is then
+    /// the whole renormalized bar ⇒ exactly the per-match value).
     public static func perMatchFraction(phase: MatchPhase, fraction f: Double) -> Double {
-        let f = f.clamped01
-        switch phase {
-        case .fingerprinting: return 0.60 * f          // overall 0 → 0.60
-        case .comparing:      return 0.60 + 0.35 * f   // overall 0.60 → 0.95
-        case .crosschecking:  return 0.95 + 0.05 * f   // overall 0.95 → 1.0
-        }
+        let signals = ActivitySignals(ingest: .init(
+            matching: .init(phase: phase, fraction: f),
+            stagesPlanned: [.matchStage]))
+        return decide(signals, elapsedMs: debounceMs, phaseFloor: nil)?.fraction ?? 0
     }
 
-    /// Pairing — ALWAYS indeterminate (the candidate matrix is one synchronous FFI call
-    /// with no live %, TODO-005). The MATCHING TAIL of an import (`importTail`) reads
-    /// "Matching couples…" — the comparison stage of the import→couples process; the app
-    /// draws a MOVING bar for it (never a frozen number) and clears it when resolution
-    /// finishes. A STANDALONE pairing (no preceding import) is a count summary: the resolve
-    /// sub-phase reads `Resolving matches...`, a re-resolve after a later import reads
-    /// `Updating matches after import...`, else the V×A comparison counts.
-    private static func pairingLine(_ p: ActivitySignals.Pairing) -> ActivitySummary {
-        if p.importTail {
-            // Matching is the COMPARISON stage of the same import→couples process, but it
-            // is ONE engine call with no live % — so it is INDETERMINATE: the app draws a
-            // MOVING bar (never a frozen number), and it clears when resolution finishes.
-            return ActivitySummary(text: "Matching couples…", fraction: nil,
-                                   isError: false, phaseKey: nil)
-        }
-        let text: String
-        if p.resolving {
-            text = "Resolving matches…"
-        } else if p.afterImport {
-            text = "Updating matches after import…"
-        } else if p.videoCount > 0 && p.audioCount > 0 {
-            text = "Comparing \(p.videoCount) \(plural("video", p.videoCount)) "
-                + "with \(p.audioCount) audio \(plural("file", p.audioCount))…"
+    // MARK: - core round-trip + presentation
+
+    /// The snapshot FILENAMES core does not carry (they are shell strings) — threaded from the
+    /// snapshot the wrapper just sent into the localized line so the active stage can splice them in.
+    struct DisplayNames {
+        var importFilename: String?
+        var exportFilename: String?
+        var syncVideoName: String?
+    }
+
+    /// Build the request, call `cpl_policy_activity`, decode the envelope, and ASSEMBLE the localized
+    /// line. The CONSERVATIVE fallback for any envelope error / parse failure / unknown shape is
+    /// `nil` (show nothing) — never a crash, never a wrong-but-confident line.
+    static func decide(_ signals: ActivitySignals,
+                       elapsedMs: Double,
+                       phaseFloor: Double?) -> ActivitySummary? {
+        let request = requestObject(signals, elapsedMs: elapsedMs, phaseFloor: phaseFloor)
+        // The active stage's filename (import / sync) is what the line shows; capture from the
+        // standalone signals AND the unified ingest descriptor (whichever is present).
+        let names = DisplayNames(
+            importFilename: signals.importing?.filename ?? signals.ingest?.importing?.filename,
+            exportFilename: signals.exporting?.filename,
+            syncVideoName: signals.syncing?.videoName ?? signals.ingest?.syncing?.videoName)
+        let value: [String: Any]?
+        if let data = try? JSONSerialization.data(withJSONObject: request),
+           let json = String(data: data, encoding: .utf8) {
+            value = PolicyEnvelope.decodeValue(cpl_policy_activity(json))
         } else {
-            let n = p.videoCount + p.audioCount
-            text = "Analyzing \(n) \(plural("file", n)) for matches…"
+            value = nil
         }
-        return ActivitySummary(text: text, fraction: nil, isError: false, phaseKey: nil)
+        return render(fromEnvelopeValue: value, names: names)
     }
 
-    /// Queued auto-sync (summary-level indeterminate, TODO-005:
-    /// `Syncing couple 2 of 7: video.mov`). The per-couple `syncActivity` line keeps
-    /// the phase detail (Searching/Refining/Measuring drift/Fitting).
-    private static func syncLine(_ y: ActivitySignals.Syncing) -> ActivitySummary {
-        var text = "Syncing couple \(y.index) of \(y.total)"
-        if let name = y.videoName { text += ": \(name)" }
-        return ActivitySummary(text: text, fraction: nil, isError: false, phaseKey: nil)
+    /// Map a decoded envelope `value` (`{"summary": Decision|null}`) to the localized
+    /// `ActivitySummary`, applying the CONSERVATIVE fallback. A nil value (core returned an
+    /// `{ok:false,error}` envelope, or the call/parse failed), a missing/`null` summary, or an
+    /// unknown line `kind` ⇒ `nil` (show nothing) — the idle/empty line, NEVER a fabricated line.
+    /// Internal so a test can drive the error path (a stale/invalid shape ⇒ the fallback) without
+    /// reaching the C ABI (PLAN §3.2). `@inline(never)` keeps a standalone symbol the test links.
+    @inline(never)
+    static func render(fromEnvelopeValue value: [String: Any]?,
+                       names: DisplayNames = DisplayNames()) -> ActivitySummary? {
+        guard let value, let summary = value["summary"] as? [String: Any] else {
+            return nil  // error envelope, or "show nothing"
+        }
+        guard let line = summary["line"] as? [String: Any],
+              let kind = line["kind"] as? String else {
+            return nil  // malformed/unknown decision ⇒ conservative: show nothing
+        }
+        let fraction = (summary["fraction"] as? NSNumber)?.doubleValue
+        let isError = summary["isError"] as? Bool ?? false
+        let phaseKey = summary["phaseKey"] as? String
+        guard let text = text(forKind: kind, line: line, names: names) else {
+            return nil  // unknown kind ⇒ conservative: show nothing
+        }
+        return ActivitySummary(text: text, fraction: fraction, isError: isError, phaseKey: phaseKey)
+    }
+
+    /// Assemble the user-facing line text for the structured decision `kind` (all copy +
+    /// pluralization stays shell-side). Returns nil for an unknown kind (the caller shows nothing).
+    private static func text(forKind kind: String, line: [String: Any],
+                             names: DisplayNames) -> String? {
+        switch kind {
+        case "failure":
+            return line["message"] as? String ?? ""
+        case "import", "ingestImport":
+            // Batch position + current file + the OVERALL percentage core computed.
+            let pct = intField(line, "percent")
+            if let idx = optIntField(line, "index"), let total = optIntField(line, "total"),
+               total > 1, let name = names.importFilename {
+                return "Importing \(idx) of \(total): \(name) — \(pct)%"
+            } else if let name = names.importFilename {
+                return "Importing \(name) — \(pct)%"
+            } else {
+                return "Importing — \(pct)%"
+            }
+        case "export":
+            let pct = intField(line, "percent")
+            let idx = intField(line, "index")
+            let total = intField(line, "total")
+            if let name = names.exportFilename {
+                return "Exporting \(idx) of \(total): \(name) — \(pct)%"
+            }
+            return "Exporting \(idx) of \(total) — \(pct)%"
+        case "exportPreflight":
+            return "Preparing export…"
+        case "exportFinishing":
+            return "Finishing export…"
+        case "pairingMatchingTail", "ingestMatching":
+            return "Matching couples…"
+        case "pairingResolving":
+            return "Resolving matches…"
+        case "pairingAfterImport":
+            return "Updating matches after import…"
+        case "pairingComparing":
+            let v = intField(line, "videoCount")
+            let a = intField(line, "audioCount")
+            return "Comparing \(v) \(plural("video", v)) with \(a) audio \(plural("file", a))…"
+        case "pairingAnalyzing":
+            let n = intField(line, "count")
+            return "Analyzing \(n) \(plural("file", n)) for matches…"
+        case "syncing", "ingestSyncing":
+            let idx = intField(line, "index")
+            let total = intField(line, "total")
+            var text = "Syncing couple \(idx) of \(total)"
+            if let name = names.syncVideoName { text += ": \(name)" }
+            return text
+        case "ingestWorking":
+            return "Working…"
+        default:
+            return nil  // an unknown kind ⇒ conservative fallback (show nothing)
+        }
+    }
+
+    /// Build the camelCase request object for `cpl_policy_activity` from the snapshot + the explicit
+    /// time inputs (the FILENAMES are threaded separately by `decide`, since core does not carry
+    /// them).
+    private static func requestObject(_ s: ActivitySignals,
+                                      elapsedMs: Double,
+                                      phaseFloor: Double?) -> [String: Any] {
+        var req: [String: Any] = ["elapsedMs": elapsedMs, "debounceMs": debounceMs]
+        if let f = phaseFloor { req["phaseFloor"] = f }
+        if let i = s.importing { req["importing"] = importingObject(i) }
+        if let p = s.pairing {
+            req["pairing"] = [
+                "videoCount": p.videoCount, "audioCount": p.audioCount,
+                "resolving": p.resolving, "afterImport": p.afterImport, "importTail": p.importTail,
+            ]
+        }
+        if let y = s.syncing { req["syncing"] = ["index": y.index, "total": y.total] }
+        if let e = s.exporting {
+            req["exporting"] = [
+                "index": e.index, "total": e.total,
+                "rowFraction": e.rowFraction, "preflight": e.preflight,
+            ]
+        }
+        if let g = s.ingest {
+            var ingest: [String: Any] = ["stagesPlanned": stagesObject(g.stagesPlanned)]
+            if let i = g.importing { ingest["importing"] = importingObject(i) }
+            if let m = g.matching {
+                ingest["matching"] = ["phase": m.phase.rawValue, "fraction": m.fraction]
+            }
+            if let y = g.syncing { ingest["syncing"] = ["index": y.index, "total": y.total] }
+            req["ingest"] = ingest
+        }
+        if let failure = s.failure { req["failure"] = failure }
+        return req
+    }
+
+    private static func importingObject(_ i: ActivitySignals.Importing) -> [String: Any] {
+        var obj: [String: Any] = ["phase": i.phase.rawValue, "fraction": i.fraction]
+        if let idx = i.index { obj["index"] = idx }
+        if let total = i.total { obj["total"] = total }
+        return obj
+    }
+
+    private static func stagesObject(_ s: Stages) -> [String: Any] {
+        [
+            "importStage": s.contains(.importStage),
+            "matchStage": s.contains(.matchStage),
+            "syncStage": s.contains(.syncStage),
+        ]
     }
 
     // MARK: - helpers
@@ -566,10 +472,11 @@ public enum ActivitySummaryPolicy {
     private static func plural(_ word: String, _ n: Int) -> String {
         n == 1 ? word : word + "s"
     }
-}
 
-private extension Double {
-    /// Clamp a reported fraction into 0…1 so a slightly-out-of-range job value can
-    /// never produce a >100% / negative bar.
-    var clamped01: Double { Swift.min(1, Swift.max(0, self)) }
+    private static func intField(_ line: [String: Any], _ key: String) -> Int {
+        (line[key] as? NSNumber)?.intValue ?? 0
+    }
+    private static func optIntField(_ line: [String: Any], _ key: String) -> Int? {
+        (line[key] as? NSNumber)?.intValue
+    }
 }

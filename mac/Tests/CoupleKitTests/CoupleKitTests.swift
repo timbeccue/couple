@@ -417,6 +417,24 @@ struct CoupleKitTests {
         #expect(rows[0].audioKey == "k0")
     }
 
+    // ERROR PATH IS CONSERVATIVE (PLAN §3.2) — the projection now round-trips through
+    // `cpl_policy_shadow_rows`'s envelope. If core ever returns an {ok:false,error} envelope (a
+    // malformed/stale request), the wrapper falls back to an EMPTY projection: shadow telemetry
+    // simply does not display — NEVER a fabricated row. (Telemetry is observational, so "show
+    // nothing" is the honest conservative outcome.)
+    @Test func shadowTelemetryErrorEnvelopeMapsToEmptyProjection() throws {
+        // A nil envelope (call/encode failure or an error envelope reduces to nil) ⇒ [].
+        #expect(ShadowTelemetry.projectedRows(fromEnvelope: nil).isEmpty)
+        // A malformed row (missing required fields) is skipped, not fabricated.
+        #expect(ShadowTelemetry.projectedRows(fromEnvelope: [["audioKey": "k"]]).isEmpty)
+        // Sanity: a well-formed projected row decodes through (the happy path the live tests use).
+        let evidenceDict = try #require(ev(.match, score: 5).wireDict)
+        let good = ShadowTelemetry.projectedRows(
+            fromEnvelope: [["audioKey": "k", "audioName": "a.wav", "evidence": evidenceDict]])
+        #expect(good.count == 1)
+        #expect(good[0].classification == .match)
+    }
+
     @Test func importSessionSyncRoundTrip() async throws {
         let dir = makeTempDir()
         let engine = try Engine(cacheDir: dir + "/cache")
@@ -527,6 +545,132 @@ struct CoupleKitTests {
         session.free()
         cam.free()
         ext.free()
+    }
+
+    // §3.1 (PLAN-CORE-SHELL-BOUNDARY, Phase C) — the Swift shell now consumes core's `cpl_resolve` /
+    // `cpl_resolve_start` DECISION instead of its own duplicated §3.3 resolver. The DEEP Swift==CLI
+    // decision parity is STRUCTURALLY GUARANTEED: both shells call the SAME `couple_core::resolve` via
+    // FFI (the Swift `Engine.resolve*` wrappers and the Rust CLI both decode the identical
+    // `[ResolvedRow]` JSON), so there is no second resolver to drift from. These tests lock the only
+    // thing the Swift side adds — the WIRE DECODERS — against the core wire shape:
+    //   (1) the camelCase `[ResolvedRow]` JSON round-trips through the Swift types, incl. core's
+    //       `resolution` field mapping to the Swift `detail` field, the nested `RowCandidate.coverage`
+    //       object, and the no-coin-flip `selected: null` case;
+    //   (2) the DISPLAY-ONLY telemetry fields (per-candidate fitRmsMs/fitWindows/lockFraction/
+    //       expected/ppm/clamped; the row's fitBestRmsMs/fitSecondRmsMs/shadowEvidence) DEFAULT to nil
+    //       on decode — core never serializes them; the shell decorates them after the decision; and
+    //   (3) a `candidateOverflow` honest-ambiguous row decodes its eligible/limit/scope.
+    // No ffmpeg is needed (the JSON is the core wire contract, asserted directly). The deeper resolve
+    // execution is covered by core's Rust tests + `importSessionSyncRoundTrip` exercising the FFI.
+
+    /// A core `[ResolvedRow]` wire payload (camelCase, `resolution` object, `RowCandidate.coverage`).
+    /// Mirrors `cpl_resolve`'s output: a confident single-match row (selected + coverage) and an
+    /// ambiguous no-selection row carrying a `candidateOverflow`. NO telemetry fields are present —
+    /// the shell attaches those after the decision.
+    private static let resolvedRowsWireJSON = """
+    [
+      {"videoKey":"vk1","videoName":"clip1.mov","state":"confident","chip":"confident",
+       "selected":{"audioKey":"ak1","audioName":"take1.wav","z":12.5,"lagMs":1800.0,
+                   "coverage":{"t0":0.0,"t1":40.0,"seconds":40.0,"fraction":1.0}},
+       "alternates":[],
+       "resolution":{"margin":null,"clusters":1,"triangles":[],"note":null,"candidateOverflow":null}},
+      {"videoKey":"vk2","videoName":"clip2.mov","state":"ambiguous","chip":"ambiguous — check me",
+       "selected":null,
+       "alternates":[
+         {"audioKey":"ak2","audioName":"a.wav","z":9.0,"lagMs":100.0,
+          "coverage":{"t0":0.0,"t1":30.0,"seconds":30.0,"fraction":0.5}},
+         {"audioKey":"ak3","audioName":"b.wav","z":8.8,"lagMs":120.0,
+          "coverage":{"t0":0.0,"t1":30.0,"seconds":30.0,"fraction":0.5}}],
+       "resolution":{"margin":0.2,"clusters":1,
+         "triangles":[{"audioA":"a.wav","audioB":"b.wav","abZ":2.0,"abLagMs":20.0,
+                       "residualMs":40.0,"simultaneous":false}],
+         "note":"candidate overflow: 8 eligible exceed the 4 perVideo verify limit",
+         "candidateOverflow":{"eligible":8,"limit":4,"scope":"perVideo"}}}
+    ]
+    """
+
+    @Test func resolvedRowsDecodeCoreWireShape() throws {
+        let rows = try JSONDecoder().decode([ResolvedRow].self, from: Data(Self.resolvedRowsWireJSON.utf8))
+        #expect(rows.count == 2)
+
+        // (1) The confident row: key + name + state + the selected candidate with its coverage object.
+        let r0 = rows[0]
+        #expect(r0.videoKey == "vk1")
+        #expect(r0.videoName == "clip1.mov")
+        #expect(r0.state == .confident)
+        #expect(r0.chip == "confident")
+        let sel = try #require(r0.selected)
+        #expect(sel.audioKey == "ak1")
+        #expect(sel.audioName == "take1.wav")
+        #expect(sel.z == 12.5)
+        #expect(sel.lagMs == 1800.0)
+        #expect(sel.coverage.fraction == 1.0)       // nested coverage object decoded
+        #expect(sel.coverage.seconds == 40.0)
+        #expect(r0.alternates.isEmpty)
+        // Core's `resolution` field maps to the Swift `detail` field (CodingKeys).
+        #expect(r0.detail.clusters == 1)
+        #expect(r0.detail.margin == nil)
+        // (2) DISPLAY-ONLY telemetry is ABSENT on the wire ⇒ defaults to nil (decorated shell-side).
+        #expect(sel.fitRmsMs == nil)
+        #expect(sel.fitWindows == nil)
+        #expect(sel.lockFraction == nil)
+        #expect(sel.expected == nil)
+        #expect(sel.ppm == nil)
+        #expect(sel.clamped == nil)
+        #expect(r0.detail.fitBestRmsMs == nil)
+        #expect(r0.detail.fitSecondRmsMs == nil)
+        #expect(r0.detail.shadowEvidence == nil)
+
+        // (1) The ambiguous row: NO selection (never a coin-flip), alternates carry their own coverage.
+        let r1 = rows[1]
+        #expect(r1.state == .ambiguous)
+        #expect(r1.selected == nil)
+        #expect(r1.alternates.map(\.audioName) == ["a.wav", "b.wav"])
+        #expect(r1.alternates[0].coverage.fraction == 0.5)
+        #expect(r1.detail.margin == 0.2)
+        // The triangle honesty record decodes every field.
+        #expect(r1.detail.triangles.count == 1)
+        let tri = r1.detail.triangles[0]
+        #expect(tri.audioA == "a.wav" && tri.audioB == "b.wav")
+        #expect(tri.abZ == 2.0 && tri.abLagMs == 20.0 && tri.residualMs == 40.0)
+        #expect(!tri.simultaneous)
+        // (3) The candidate-overflow detail (honest ambiguity, never a silent eviction).
+        let ov = try #require(r1.detail.candidateOverflow)
+        #expect(ov.eligible == 8 && ov.limit == 4 && ov.scope == "perVideo")
+        #expect(r1.detail.note?.contains("candidate overflow") == true)
+    }
+
+    // §3.1 — the live FFI round-trips a real resolve through the new `Engine.resolve` wrapper. With
+    // an empty audio side every imported video resolves `no match` (no candidate possible), proving
+    // the wrapper plumbs ids → core → decoded `[ResolvedRow]` (the decision authority is core's). The
+    // empty-VIDEO shape returns `[]` like the other batch wrappers. Uses the same WAV fixture so no
+    // extra media is generated; the deeper match decision is core's own (Rust) coverage.
+    @Test func engineResolvePlumbsThroughFFI() async throws {
+        let dir = makeTempDir()
+        let engine = try Engine(cacheDir: dir + "/cache")
+        let (extPath, camPath) = try generateFixture(in: dir)
+        let cam = try await engine.importStart(camPath, role: .camera).value()
+        let ext = try await engine.importStart(extPath, role: .external).value()
+        let camH = engine.track(cam)
+        let extH = engine.track(ext)
+
+        // Empty videos ⇒ [] (the documented empty-input shape; no core call).
+        #expect(engine.resolve(videos: [], audios: [extH], paramsJSON: nil)?.isEmpty == true)
+
+        // Two imported videos, NO audios ⇒ a row each, all `no match` (nothing to pair to).
+        let rows = engine.resolve(videos: [camH, extH], audios: [], paramsJSON: nil)
+        let r = try #require(rows)
+        #expect(r.count == 2)
+        #expect(r.allSatisfy { $0.state == .noMatch })
+        #expect(r.allSatisfy { $0.selected == nil && $0.alternates.isEmpty })
+
+        // A partial ResolveParams override (camelCase) parses (serde fills the rest) and still resolves.
+        let rows2 = engine.resolve(videos: [camH], audios: [],
+                                   paramsJSON: #"{"matcher":"legacy","verifyActive":false}"#)
+        #expect(rows2?.count == 1)
+
+        camH.free()
+        extH.free()
     }
 }
 
@@ -826,6 +970,36 @@ struct CoupleKitTests {
         #expect(!plan.adoptFreshDisplay)
         #expect(!plan.rebuildSession)
     }
+
+    // (6) ERROR PATH IS CONSERVATIVE (PLAN §3.2) — the decision now round-trips through
+    //     `cpl_policy_row_merge`'s envelope. A core error (malformed/stale request) yields a nil
+    //     `value`; the wrapper must fall back to a PROTECTED-row plan over the current state —
+    //     keep the existing selection and candidates, take no fresh display, rebuild nothing — so
+    //     a failure can NEVER silently swap a source or tear down an approved couple's session.
+    @Test func errorEnvelopeMapsToConservativeProtectedPlan() {
+        let fallback = RowMergePolicy.plan(fromEnvelopeValue: nil,
+                                           currentSelectedKey: "queued",
+                                           currentCandidateKeys: ["queued", "alt"])
+        #expect(fallback.selectedAudioKey == "queued")   // selection preserved, never swapped
+        #expect(fallback.candidateKeys == ["queued", "alt"])
+        #expect(!fallback.adoptFreshDisplay)
+        #expect(!fallback.rebuildSession)                // no teardown of an approved session
+        #expect(!fallback.clearForced)
+        // A malformed value object (missing required fields) is equally conservative.
+        let stale = RowMergePolicy.plan(fromEnvelopeValue: ["selectedAudioKey": "bogus"],
+                                        currentSelectedKey: "queued",
+                                        currentCandidateKeys: ["queued"])
+        #expect(stale.selectedAudioKey == "queued")
+        #expect(!stale.rebuildSession)
+        // Sanity: a well-formed value decodes through (the happy path the public `plan` exercises
+        // live against the real core).
+        let good = RowMergePolicy.plan(
+            fromEnvelopeValue: ["selectedAudioKey": "A", "candidateKeys": ["A"],
+                                "adoptFreshDisplay": true, "rebuildSession": true, "clearForced": true],
+            currentSelectedKey: nil, currentCandidateKeys: [])
+        #expect(good.selectedAudioKey == "A")
+        #expect(good.rebuildSession)
+    }
 }
 
 // MARK: - Match quality vs. selection (TODO-009)
@@ -933,6 +1107,24 @@ struct CoupleKitTests {
                                           autoVerdict: .confident, manualMatchConfident: false)
         #expect(a == b)
         #expect(a == .questionable)
+    }
+
+    // (G) ERROR PATH IS CONSERVATIVE (PLAN §3.2 "Silent policy fallback") — the decision now
+    //     round-trips through `cpl_policy_match_quality`'s {ok,value|error} envelope. If core
+    //     ever reports an error (a malformed/stale request — e.g. the shell DTO drifts from
+    //     core's contract), the envelope's `value` is nil; the wrapper must map that to
+    //     `.questionable` — an honest "check this", NEVER silently green. A stale/wrong-shape
+    //     value (missing the `quality` field) is also conservative. This proves a malformed/stale
+    //     DTO cannot hide a failure as a green dot.
+    @Test func errorEnvelopeMapsToConservativeQuestionable() {
+        // Core returned {ok:false,error:...} ⇒ PolicyEnvelope.decodeValue → nil ⇒ questionable.
+        #expect(MatchQualityPolicy.quality(fromEnvelopeValue: nil) == .questionable)
+        // A stale value object missing `quality` ⇒ conservative, not a crash, not green.
+        #expect(MatchQualityPolicy.quality(fromEnvelopeValue: [:]) == .questionable)
+        #expect(MatchQualityPolicy.quality(fromEnvelopeValue: ["quality": "bogus"]) == .questionable)
+        // Sanity: a well-formed confident value still decodes to confident (the happy path the
+        // public `decide` exercises live against the real core).
+        #expect(MatchQualityPolicy.quality(fromEnvelopeValue: ["quality": "confident"]) == .confident)
     }
 }
 
@@ -1183,6 +1375,18 @@ struct CoupleKitTests {
             #expect(a == b)
         }
     }
+
+    // (10) ERROR PATH IS CONSERVATIVE (PLAN §3.2) — the decision now round-trips through
+    //      `cpl_policy_repair_drop`'s envelope. A core error (malformed/stale request) yields a
+    //      nil `value`; the wrapper maps that to `.reject`, which mutates NO state — NEVER a silent
+    //      accept/confirm that could replace an approved couple's source without asking.
+    @Test func errorEnvelopeMapsToConservativeReject() {
+        #expect(RepairDropPolicy.outcome(fromEnvelopeValue: nil) == .reject)
+        #expect(RepairDropPolicy.outcome(fromEnvelopeValue: [:]) == .reject)
+        #expect(RepairDropPolicy.outcome(fromEnvelopeValue: ["outcome": "bogus"]) == .reject)
+        // Sanity: a well-formed value still decodes.
+        #expect(RepairDropPolicy.outcome(fromEnvelopeValue: ["outcome": "needsConfirmation"]) == .needsConfirmation)
+    }
 }
 
 // TODO-001: the PURE removal/clear decisions (`MediaRemovalPolicy`) behind
@@ -1309,6 +1513,32 @@ struct CoupleKitTests {
         // Empty session ⇒ all zero.
         #expect(MediaRemovalPolicy.clearCounts(mediaCount: 0, couples: []) ==
                 ClearSessionCounts(media: 0, couples: 0, approved: 0))
+    }
+
+    // (9) ERROR PATH IS CONSERVATIVE (PLAN §3.2) — the decisions now round-trip through
+    //     `cpl_policy_media_removal`'s envelope. A core error (malformed/stale request, e.g. an
+    //     unknown op) yields a nil `value`; `plan` must fall back to the EMPTY plan (no removable
+    //     keys, no confirmation, zero counts) so a failure removes NOTHING and hides no approved
+    //     consequence; `clearCounts` falls back to all-zero. A malformed/stale DTO can never
+    //     silently delete media.
+    @Test func errorEnvelopeMapsToConservativeEmptyPlan() {
+        let plan = MediaRemovalPolicy.planFromEnvelope(nil)
+        #expect(plan.isEmpty)                       // nothing removable ⇒ caller no-ops
+        #expect(plan.needsConfirmation == false)
+        #expect(plan.affectedCouples == 0)
+        #expect(plan.affectedApproved == 0)
+        // A malformed value (missing required fields) is equally conservative.
+        #expect(MediaRemovalPolicy.planFromEnvelope(["removableKeys": ["a1"]]).isEmpty)
+        // clearCounts: a nil/malformed envelope ⇒ all zero (no misleading consequence shown).
+        #expect(MediaRemovalPolicy.clearCountsFromEnvelope(nil) ==
+                ClearSessionCounts(media: 0, couples: 0, approved: 0))
+        // Sanity: well-formed values decode through (the happy path the public APIs exercise live).
+        let good = MediaRemovalPolicy.planFromEnvelope(
+            ["removableKeys": ["a1"], "needsConfirmation": true,
+             "affectedCouples": 1, "affectedApproved": 1])
+        #expect(good.removableKeys == ["a1"])
+        #expect(good.needsConfirmation)
+        #expect(good.affectedApproved == 1)
     }
 }
 
@@ -1452,7 +1682,8 @@ struct CoupleKitTests {
     }
 
     // (10) The count is ALWAYS 0, 2, or 3 — never exactly one — across a sweep of overlap
-    //      lengths and candidate densities (the core invariant).
+    //      lengths and candidate densities (the core invariant). Now exercised end-to-end
+    //      through `cpl_policy_anchor_propose` (the relocated decision); it must stay green.
     @Test func proposalCountIsNeverExactlyOne() {
         for len in stride(from: 0.0, through: 130.0, by: 2.5) {
             let ov = 0.0...max(len, 0.0001)
@@ -1463,6 +1694,24 @@ struct CoupleKitTests {
                 #expect(inside(picks, ov))
             }
         }
+    }
+
+    // (11) ERROR PATH IS CONSERVATIVE (PLAN §3.2) — the decision now round-trips through
+    //      `cpl_policy_anchor_propose`'s envelope. If core ever returns an {ok:false,error}
+    //      envelope (a malformed/stale request), the envelope decoders return nil, and the
+    //      wrappers fall back to the manual-rescue state: `propose` ⇒ [] and `addAnchorCandidate`
+    //      ⇒ nil — NEVER a fabricated, out-of-overlap, or count-of-one anchor. These assert the
+    //      decoders that gate that fallback (the array/scalar paths return nil on a nil pointer,
+    //      which is what an error envelope reduces to for the wrapper).
+    @Test func errorEnvelopeMapsToConservativeEmptyAndNil() {
+        // A nil pointer (call/encode failure) or an error envelope ⇒ nil for both decoders ⇒ the
+        // wrappers' `?? []` / `nil` conservative results.
+        #expect(PolicyEnvelope.decodeValueArray(nil) == nil)
+        #expect(PolicyEnvelope.decodeScalar(nil) == nil)
+        // Sanity: the live happy path still produces honest non-fabricated results.
+        #expect(AnchorProposal.propose(overlap: nil, candidates: usableOnsets(0, 60)).isEmpty)
+        #expect(AnchorProposal.addAnchorCandidate(overlap: nil, existing: [],
+                                                  candidates: usableOnsets(0, 60)) == nil)
     }
 }
 
@@ -1814,5 +2063,30 @@ struct CoupleKitTests {
         // An ingest in flight is active even with NO sub-stage momentarily live (a hand-off gap),
         // so the unified bar never blinks out between stages.
         #expect(ActivitySignals(ingest: .init(stagesPlanned: [.importStage])).hasActiveWork == true)
+    }
+
+    // (Phase F error path) The decision now round-trips through `cpl_policy_activity`; on an envelope
+    // ERROR (a malformed/stale request — which should never happen with this in-process call) the
+    // wrapper must map to the CONSERVATIVE fallback: show NOTHING (a nil summary), the idle/empty
+    // line — never a crash and never a wrong-but-confident line. This drives `render` with the shapes
+    // a `{ok:false,error}` envelope (nil value), a missing summary, and an unknown line kind decode
+    // to, exercising the fallback WITHOUT reaching the C ABI.
+    @Test func envelopeErrorFallsBackToNoLine() {
+        // nil value == core returned {ok:false,error} OR the call/parse failed ⇒ show nothing.
+        #expect(ActivitySummaryPolicy.render(fromEnvelopeValue: nil) == nil)
+        // A success envelope whose summary is explicitly null ("show nothing") ⇒ nil.
+        #expect(ActivitySummaryPolicy.render(fromEnvelopeValue: ["summary": NSNull()]) == nil)
+        // A stale/garbled value missing the decision shape ⇒ conservative nil (no fabricated line).
+        #expect(ActivitySummaryPolicy.render(fromEnvelopeValue: ["unexpected": 1]) == nil)
+        // A decision with an UNKNOWN line kind (e.g. a newer core variant) ⇒ conservative nil.
+        let unknown: [String: Any] = ["summary": ["line": ["kind": "fromTheFuture"],
+                                                   "fraction": NSNull(), "isError": false]]
+        #expect(ActivitySummaryPolicy.render(fromEnvelopeValue: unknown) == nil)
+        // Sanity: a well-formed value DOES render (the happy path the round-trip uses), proving the
+        // fallback above is the error path, not a broken decoder.
+        let ok: [String: Any] = ["summary": ["line": ["kind": "pairingResolving"],
+                                              "fraction": NSNull(), "isError": false,
+                                              "phaseKey": NSNull()]]
+        #expect(ActivitySummaryPolicy.render(fromEnvelopeValue: ok)?.text == "Resolving matches…")
     }
 }

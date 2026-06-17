@@ -19,7 +19,9 @@
 use couple_core::matching::{MatchClassification, MatchMethod, PairEvidence};
 use couple_core::pair::PairCorrelation;
 use couple_core::pairing_params::MatcherMode;
-use couple_core::sync::overlap_info;
+use couple_core::resolve::{
+    Coverage, ResolutionDetail, ResolvedRow, RowCandidate as CoreRowCandidate, RowState,
+};
 use couple_core::{CancelToken, CoupleError, Ctx, MediaInfo, PairingParams, Result};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -110,15 +112,21 @@ pub struct PairParams {
 }
 
 impl Default for PairParams {
+    /// Phase D (PLAN-CORE-SHELL-BOUNDARY §4): the resolver constants live in ONE place —
+    /// `couple_core::resolve::ResolveParams::default()`. The CLI no longer hardcodes the
+    /// literals; it projects core's defaults into its own `PairParams` serialization shape.
+    /// The `--json` `constants` field is unchanged (same fields/values), so `couple pair --json`
+    /// stays byte-identical — only the SOURCE of the default values moved to core.
     fn default() -> Self {
+        let r = couple_core::resolve::ResolveParams::default();
         Self {
-            z_min: 8.5,
-            z_margin: 6.0,
-            triangle_tol_ms: 250.0,
-            coverage_full: 0.98,
-            disjoint_tol_s: 0.5,
-            verify_active: false,
-            pairing: PairingParams::default(),
+            z_min: r.z_min,
+            z_margin: r.z_margin,
+            triangle_tol_ms: r.triangle_tol_ms,
+            coverage_full: r.coverage_full,
+            disjoint_tol_s: r.disjoint_tol_s,
+            verify_active: r.verify_active,
+            pairing: r.pairing,
         }
     }
 }
@@ -173,16 +181,11 @@ struct MatrixCell {
     candidate: bool,
 }
 
-/// Video-timeline span the audio covers (§3.2, ppm = 0 arithmetic of §5.6).
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Coverage {
-    t0: f64,
-    t1: f64,
-    seconds: f64,
-    fraction: f64,
-}
-
+/// One candidate audio source for a video (the CLI's view of core's [`CoreRowCandidate`]).
+/// The §3.3 resolution now lives in `couple_core::resolve`; this layer projects each core
+/// candidate to the CLI wire shape, which serializes the file name as `audio` (the core type
+/// carries BOTH `audioKey` and `audioName` for cross-shell use — the CLI surfaces only the
+/// name). `coverage` reuses core's byte-identical [`Coverage`].
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RowCandidate {
@@ -190,83 +193,6 @@ struct RowCandidate {
     z: f64,
     lag_ms: f64,
     coverage: Coverage,
-}
-
-/// §3.4 record for one overlapping audio pair (raw numbers for calibration).
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TriangleCheck {
-    audio_a: String,
-    audio_b: String,
-    /// A×B stage-1 z (must clear Z_MIN).
-    ab_z: f64,
-    ab_lag_ms: f64,
-    /// |lag(V→B) − lag(V→A) − lag(A→B)|, ms.
-    residual_ms: f64,
-    simultaneous: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-enum RowState {
-    Confident,
-    Partial,
-    Split,
-    TwoSources,
-    Ambiguous,
-    NoMatch,
-}
-
-impl RowState {
-    /// §3.3 chip vocabulary (human output).
-    fn chip(&self) -> &'static str {
-        match self {
-            RowState::Confident => "confident",
-            RowState::Partial => "partial",
-            RowState::Split => "split across files",
-            RowState::TwoSources => "2 sources",
-            RowState::Ambiguous => "ambiguous — check me",
-            RowState::NoMatch => "no match",
-        }
-    }
-}
-
-/// Why a row's candidates could not be verified within the configured resource
-/// ceiling (PLAN-AUDIO-MATCHING-PREWORK §9.2). Constructed ONLY when the eligible
-/// candidate count for a row would exceed `max_verify_pairs_per_video`, or the
-/// running total across rows would exceed `max_verify_pairs_total`. The honest
-/// alternative to silently dropping candidates: NO subset is verified, the row is
-/// `ambiguous` (never `noMatch`/`confident`), and every candidate name stays visible
-/// so the user can resolve it manually. Non-persisted (resolver-local telemetry).
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CandidateOverflow {
-    /// Number of eligible (`prefilter_candidate`) cells for this row.
-    eligible: usize,
-    /// The resource ceiling that was exceeded.
-    limit: usize,
-    /// Which ceiling: "perVideo" (`max_verify_pairs_per_video`) or "total"
-    /// (`max_verify_pairs_total`).
-    scope: &'static str,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ResolutionDetail {
-    /// z_best − z_second among conflicting (overlapping, non-simultaneous)
-    /// candidates; null when the margin rule never ran.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    margin: Option<f64>,
-    /// Coverage-interval clusters (1 = all overlapping, >1 = disjoint groups).
-    clusters: usize,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    triangles: Vec<TriangleCheck>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    note: Option<String>,
-    /// Set ONLY when a resource ceiling forced this row to honest ambiguity instead
-    /// of silently truncating candidates (§9.2). Optional + non-persisted.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    candidate_overflow: Option<CandidateOverflow>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -278,7 +204,39 @@ struct Row {
     /// Null for `no match` and `ambiguous` (V2-F2: no coin-flip selection).
     selected: Option<RowCandidate>,
     alternates: Vec<RowCandidate>,
+    /// The §3.4/§3.5 honesty trail — reused verbatim from core (byte-identical serde).
     resolution: ResolutionDetail,
+}
+
+impl RowCandidate {
+    /// Project a core [`CoreRowCandidate`] to the CLI wire shape: the CLI surfaces the audio
+    /// FILE NAME as `audio` (dropping the content key the core type also carries). `z`/`lagMs`/
+    /// `coverage` carry over unchanged.
+    fn from_core(c: CoreRowCandidate) -> Self {
+        RowCandidate {
+            audio: c.audio_name,
+            z: c.z,
+            lag_ms: c.lag_ms,
+            coverage: c.coverage,
+        }
+    }
+}
+
+impl Row {
+    /// Project a core [`ResolvedRow`] to the CLI `Row`: `video` is the video FILE NAME (the
+    /// core type also carries `videoKey`); `state`/`chip`/`resolution` carry over verbatim
+    /// (reused core types, byte-identical serde); `selected`/`alternates` map to the CLI
+    /// `RowCandidate` (file name as `audio`).
+    fn from_core(rr: ResolvedRow) -> Self {
+        Row {
+            video: rr.video_name,
+            state: rr.state,
+            chip: rr.chip,
+            selected: rr.selected.map(RowCandidate::from_core),
+            alternates: rr.alternates.into_iter().map(RowCandidate::from_core).collect(),
+            resolution: rr.resolution,
+        }
+    }
 }
 
 /// One spectral-evidence cell (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.3), emitted ONLY in
@@ -423,9 +381,10 @@ pub fn run_pair(
     let sp = params.pairing.clone();
     let importable: Vec<u64> = video_ids.iter().flatten().copied().collect();
     let cells = ctx.pair_candidates(&importable, &audio_ids, &sp)?;
+    // The legacy candidate `matrix` field (the per-cell `candidate` boolean is read by
+    // gate4/gate7). RESOLUTION no longer reads `per_video` — it is the core resolver's job
+    // (`ctx.resolve` below); this loop only builds the display matrix.
     let mut matrix: Vec<MatrixCell> = Vec::new();
-    // Per-video candidate measurements, indexed like `videos`.
-    let mut per_video: Vec<Vec<(usize, PairCorrelation)>> = vec![Vec::new(); videos.len()];
     {
         let mut row_iter = cells.into_iter();
         for (vi, id) in video_ids.iter().enumerate() {
@@ -437,11 +396,10 @@ pub fn run_pair(
                 // `candidate` = "passed the pre-filter" (ruling D4 — its meaning/shape is
                 // unchanged for a given input, so gate6 stays trivially safe). Flag ON: the
                 // loose Stage-A pre-filter — core's `prefilter_candidate` (ncc ≥ refine_ncc_min,
-                // §7.2), consumed not re-derived (invariant 8); `z` no longer rejects and the
-                // fine classifier disposes below. Flag OFF: the unchanged default z-gate against
-                // the RESOLVER's own `z_min` (a resolution constant distinct from the pairing
-                // `legacy_z_min`/`legacy_candidate`, so `--params z-min` still tightens it and
-                // the row decision is byte-identical to today, §7.2 / invariant 7).
+                // §7.2), consumed not re-derived (invariant 8). Flag OFF: the unchanged default
+                // z-gate against the RESOLVER's own `z_min` (a resolution constant distinct from
+                // the pairing `legacy_z_min`/`legacy_candidate`, so `--params z-min` still
+                // tightens it; the resolver applies the identical gate internally, §7.2).
                 let candidate = if params.verify_active {
                     m.prefilter_candidate
                 } else {
@@ -450,72 +408,10 @@ pub fn run_pair(
                 matrix.push(MatrixCell {
                     video: videos[vi].file.clone(),
                     audio: audios[ai].file.clone(),
-                    m: m.clone(),
+                    m,
                     candidate,
                 });
-                if candidate {
-                    per_video[vi].push((ai, m));
-                }
             }
-        }
-    }
-
-    // 3a. Match classifier (PLAN-MATCH-CLASSIFIER §5.2 / Stage B; Phase-4 §9 rework) —
-    // flag ON only. We verify EVERY `prefilter_candidate` (no sort-and-truncate top-K — that
-    // was a silent false-negative path, §2.5/§9.1): the real-match set (is_match survivors)
-    // REPLACES `per_video[vi]` feeding the UNCHANGED §3.3 pipeline. The ONLY bound on work is
-    // the core-owned `max_verify_pairs_per_video`/`max_verify_pairs_total` SAFETY CEILING; a
-    // row that would exceed it verifies NO arbitrary subset, records a `candidate_overflow`
-    // condition, and is forced to honest `ambiguous` with every candidate still visible
-    // (§9.2) — a resource limit can degrade to ambiguity but can never manufacture a false
-    // negative. Verification runs in chunks to bound temporary allocation (the request/result
-    // buffers), independent of how many cells a video admits. Flag OFF: this block is skipped
-    // and `per_video` is the z-passing set — byte-identical to today.
-    let mut overflow: Vec<Option<CandidateOverflow>> = vec![None; videos.len()];
-    if params.verify_active {
-        // Chunk size bounds the transient verify request/result allocation; correctness is
-        // independent of it (every eligible cell within the ceiling is verified).
-        const VERIFY_CHUNK: usize = 256;
-        let per_video_limit = sp.max_verify_pairs_per_video;
-        let total_limit = sp.max_verify_pairs_total;
-        let mut total_verified: usize = 0;
-        for (vi, id) in video_ids.iter().enumerate() {
-            let Some(vid) = id else { continue };
-            let cands = &mut per_video[vi];
-            if cands.is_empty() {
-                continue;
-            }
-            let eligible = cands.len();
-            // Resource guard, NOT a ranking policy: a row whose eligible set exceeds the
-            // per-video ceiling, or whose addition would exceed the per-resolve ceiling,
-            // overflows. We keep `cands` intact (all names visible) and verify nothing for
-            // it — `resolve_row` will surface it as `ambiguous` with the overflow detail.
-            if eligible > per_video_limit {
-                overflow[vi] = Some(CandidateOverflow { eligible, limit: per_video_limit, scope: "perVideo" });
-                continue;
-            }
-            if total_verified + eligible > total_limit {
-                overflow[vi] = Some(CandidateOverflow { eligible, limit: total_limit, scope: "total" });
-                continue;
-            }
-            total_verified += eligible;
-
-            // Verify ALL eligible cells in chunks, keeping only the real matches (is_match).
-            // Verify numbers stay OUT of the serialized Row/MatrixCell (gate6 byte-stability).
-            let mut real: Vec<(usize, PairCorrelation)> = Vec::new();
-            for chunk in cands.chunks(VERIFY_CHUNK) {
-                let req: Vec<(u64, u64, f64)> =
-                    chunk.iter().map(|(ai, m)| (*vid, audio_ids[*ai], m.lag_ms)).collect();
-                let fits = ctx.verify_batch(&req, &sp)?;
-                for ((ai, m), fit) in chunk.iter().zip(fits) {
-                    if let Some(f) = fit {
-                        if couple_core::verify::is_match(&f) {
-                            real.push((*ai, m.clone()));
-                        }
-                    }
-                }
-            }
-            *cands = real;
         }
     }
     let matrix_ms = t_matrix.elapsed().as_secs_f64() * 1000.0;
@@ -530,17 +426,19 @@ pub fn run_pair(
     }
 
     // 3c. The spectral `PairEvidence` matrix (PLAN-SPECTRAL-FINGERPRINT-MATCHING §13.4 / §14.3 /
-    // §16.1). Computed for `shadow` (observational) AND `fingerprint` (the boundary-13 DEFAULT
-    // resolution authority). For `fingerprint` it is the GRAPH-ADJUSTED matrix under the REAL `sp`
-    // (FingerprintPrimary by default), resolved into rows below; for `shadow` it is a separate
-    // FingerprintShadow computation attached for comparison while the legacy rows resolve. In
-    // `legacy` mode this is skipped ⇒ `evidenceMatrix` is None and the output is byte-identical to
-    // the legacy surface.
+    // §16.1), the SHADOW/FINGERPRINT DISPLAY field. Computed for `shadow` (observational) AND
+    // `fingerprint`. For `fingerprint` it is the GRAPH-ADJUSTED matrix under the REAL `sp`
+    // (FingerprintPrimary by default); for `shadow` it is a separate FingerprintShadow computation
+    // attached for comparison. In `legacy` mode this is skipped ⇒ `evidenceMatrix` is None and the
+    // output is byte-identical to the legacy surface.
+    //
+    // NOTE (perf follow-up): in fingerprint mode the GRAPH-ADJUSTED matrix is computed here for the
+    // `evidenceMatrix` display AND AGAIN inside `ctx.resolve` (which builds its own matrix to resolve
+    // the rows). This double-compute is correct + byte-identical; a later phase can thread one matrix
+    // through both. Sharing it now would change the resolver's public entry point, out of scope here.
     //
     // `importable` (videos with an audio stream) maps row-for-row onto the matrix; audio-less videos
-    // are absent (their row is an honest `no match`). `fp_rows` holds the graph-adjusted evidence
-    // indexed like `importable` for the §13.4 resolver.
-    let mut fp_rows: Option<Vec<Vec<PairEvidence>>> = None;
+    // are absent (their row is an honest `no match`, woven in shell-side after `ctx.resolve`).
     let evidence_matrix: Option<Vec<Vec<EvidenceCell>>> = if matcher.computes_evidence() {
         let ev = if matcher.resolves_with_fingerprints() {
             // The DEFAULT (§16.1): the GRAPH-ADJUSTED matrix under the real params (FingerprintPrimary
@@ -548,9 +446,7 @@ pub fn run_pair(
             // version, or a forced legacy override) is handled INSIDE core (`match_candidates_graph`
             // → `match_candidates` falls a cell back to `EnvelopeV1` when its fingerprint is
             // unavailable; the method/reason is visible in the cell + the debug table below).
-            let g = ctx.match_candidates_graph(&importable, &audio_ids, &sp)?;
-            fp_rows = Some(g.clone());
-            g
+            ctx.match_candidates_graph(&importable, &audio_ids, &sp)?
         } else {
             // `shadow`: a SEPARATE FingerprintShadow computation (legacy correlation attached); the
             // legacy rows remain the resolution authority.
@@ -589,40 +485,65 @@ pub fn run_pair(
         None
     };
 
-    // 4. Resolution (§3.3) per video row. The boundary-13 DEFAULT resolves from the graph-adjusted
-    // `PairEvidence` (`resolve_row_fp`, §13.4 — `classification` is the identity authority); the
-    // `--matcher legacy` developer override (and `shadow`) keep the byte-identical legacy resolver.
+    // 4. Resolution (§3.3) — now the CORE resolver's job (PLAN-CORE-SHELL-BOUNDARY Phase B). The
+    // §3.3 coverage clustering / disjoint discrimination / §3.4 triangle / §3.5 margin rule / row
+    // states all moved to `couple_core::resolve`; this layer maps the CLI params in, calls
+    // `ctx.resolve`, and projects the result back onto the CLI wire `Row`.
     let t_resolve = std::time::Instant::now();
-    let mut rows: Vec<Row> = Vec::new();
-    if let Some(fp) = fp_rows {
-        // Map the importable-indexed evidence rows back onto the full video list; an audio-less
-        // video resolves `no match` (no evidence row, exactly like the legacy path).
-        let mut ab_memo: HashMap<(usize, usize), PairEvidence> = HashMap::new();
-        let mut fp_iter = fp.into_iter();
-        for (vi, v) in videos.iter().enumerate() {
-            cancel.check()?;
-            if video_ids[vi].is_none() {
-                rows.push(resolve_row_fp(
-                    ctx, params, &sp, v, &[], None, &audios, &audio_ids, &mut ab_memo,
-                )?);
-                continue;
-            }
-            let ev_row = fp_iter.next().expect("evidence row per imported video");
-            let cells: Vec<(usize, PairEvidence)> = ev_row.into_iter().enumerate().collect();
-            rows.push(resolve_row_fp(
-                ctx, params, &sp, v, &cells, None, &audios, &audio_ids, &mut ab_memo,
-            )?);
-        }
-    } else {
-        let mut ab_memo: HashMap<(usize, usize), PairCorrelation> = HashMap::new();
-        for (vi, v) in videos.iter().enumerate() {
-            cancel.check()?;
-            rows.push(resolve_row(
-                ctx, params, &sp, v, &per_video[vi], overflow[vi].clone(), &audios, &audio_ids,
-                &mut ab_memo,
-            )?);
+
+    // Build `ResolveParams` from the CLI `PairParams`. `rms_escalation = false` is CRITICAL: the CLI
+    // legacy resolver NEVER escalated, so keeping it off makes the legacy output byte-identical (the
+    // rms_* knobs below are unused when escalation is off — they take the core defaults). The CLI
+    // `--params` path already wrote every threshold into `params`, so we copy fields directly.
+    let resolve_params = couple_core::ResolveParams {
+        pairing: params.pairing.clone(),
+        matcher: match matcher {
+            MatcherChoice::Legacy => couple_core::MatcherChoice::Legacy,
+            MatcherChoice::Shadow => couple_core::MatcherChoice::Shadow,
+            MatcherChoice::Fingerprint => couple_core::MatcherChoice::Fingerprint,
+        },
+        z_min: params.z_min,
+        z_margin: params.z_margin,
+        triangle_tol_ms: params.triangle_tol_ms,
+        coverage_full: params.coverage_full,
+        disjoint_tol_s: params.disjoint_tol_s,
+        verify_active: params.verify_active,
+        rms_escalation: false,
+        ..couple_core::ResolveParams::default()
+    };
+
+    // `ctx.resolve` is IMPORTED-TRACK ONLY — it sees only videos with an analyzable audio stream
+    // (`importable`), one resolved row per importable video in order. Audio-less videos are absent.
+    let resolved = ctx.resolve(&importable, &audio_ids, &resolve_params)?;
+
+    // WEAVE the core rows back onto the FULL video list IN ORDER: an audio-less video (has_audio ==
+    // Some(false)) gets an inert `no match` row constructed shell-side (matching the resolver's own
+    // has_audio-false output exactly); every other video consumes the next core `ResolvedRow`.
+    let mut rows: Vec<Row> = Vec::with_capacity(videos.len());
+    let mut resolved_iter = resolved.into_iter();
+    for v in &videos {
+        cancel.check()?;
+        if v.has_audio == Some(false) {
+            rows.push(Row {
+                video: v.file.clone(),
+                state: RowState::NoMatch,
+                chip: RowState::NoMatch.chip().to_string(),
+                selected: None,
+                alternates: Vec::new(),
+                resolution: ResolutionDetail {
+                    margin: None,
+                    clusters: 0,
+                    triangles: Vec::new(),
+                    note: Some("no audio stream".into()),
+                    candidate_overflow: None,
+                },
+            });
+        } else {
+            let rr = resolved_iter.next().expect("a resolved row per importable video");
+            rows.push(Row::from_core(rr));
         }
     }
+
     // §3.6: audio no row SELECTS stays visible in the unused tray.
     let used: std::collections::HashSet<&str> = rows
         .iter()
@@ -851,563 +772,6 @@ fn import_quiet(
     let id = ctx.import_blocking(path, role, reporter.progress_fn(), cancel, job)?;
     reporter.finish();
     Ok(id)
-}
-
-fn coverage(dur_video: f64, dur_audio: f64, lag_ms: f64) -> Coverage {
-    let o = overlap_info(dur_video, dur_audio, lag_ms, 0.0);
-    Coverage {
-        t0: o.t0,
-        t1: o.t1,
-        seconds: o.seconds,
-        fraction: o.fraction_of_video,
-    }
-}
-
-/// §3.3 resolution for one video. `cands` = (audio index, measurement) with z ≥ floor.
-/// `overflow` (Phase-4 §9.2) is `Some` only when this row's eligible candidates exceeded a
-/// resource ceiling, in which case the row is forced to honest `ambiguous` (no subset was
-/// verified) with every candidate name still visible.
-#[allow(clippy::too_many_arguments)]
-fn resolve_row(
-    ctx: &Arc<Ctx>,
-    params: &PairParams,
-    sp: &PairingParams,
-    video: &PoolTrack,
-    cands: &[(usize, PairCorrelation)],
-    overflow: Option<CandidateOverflow>,
-    audios: &[PoolTrack],
-    audio_ids: &[u64],
-    ab_memo: &mut HashMap<(usize, usize), PairCorrelation>,
-) -> Result<Row> {
-    let mk = |ai: usize, m: &PairCorrelation| RowCandidate {
-        audio: audios[ai].file.clone(),
-        z: m.z,
-        lag_ms: m.lag_ms,
-        coverage: coverage(video.duration_s, audios[ai].duration_s, m.lag_ms),
-    };
-    let row = |state: RowState,
-               selected: Option<RowCandidate>,
-               alternates: Vec<RowCandidate>,
-               resolution: ResolutionDetail| Row {
-        video: video.file.clone(),
-        chip: chip_text(state, &selected, video.duration_s),
-        state,
-        selected,
-        alternates,
-        resolution,
-    };
-    let detail = |margin, clusters, triangles, note: Option<String>| ResolutionDetail {
-        margin,
-        clusters,
-        triangles,
-        note,
-        candidate_overflow: None,
-    };
-
-    if video.has_audio == Some(false) {
-        return Ok(row(
-            RowState::NoMatch,
-            None,
-            Vec::new(),
-            detail(None, 0, Vec::new(), Some("no audio stream".into())),
-        ));
-    }
-
-    // Resource ceiling exceeded (§9.2): NEVER a silent eviction. We verified no subset, so
-    // we cannot confidently select — the row is `ambiguous` with all candidate names listed
-    // and the overflow detail (eligible count + configured limit) for the user/calibration.
-    if let Some(ov) = overflow {
-        let alternates: Vec<RowCandidate> = cands.iter().map(|(ai, m)| mk(*ai, m)).collect();
-        return Ok(row(
-            RowState::Ambiguous,
-            None,
-            alternates,
-            ResolutionDetail {
-                margin: None,
-                clusters: 0,
-                triangles: Vec::new(),
-                note: Some(format!(
-                    "candidate overflow: {} eligible exceed the {} {} verify limit",
-                    ov.eligible, ov.limit, ov.scope
-                )),
-                candidate_overflow: Some(ov),
-            },
-        ));
-    }
-
-    // Candidates sorted by z desc; ties by file name — deterministic, clock-free
-    // (timestamps MUST NOT order a pairing decision, SPEC §1.4).
-    let mut c: Vec<(usize, &PairCorrelation)> = cands.iter().map(|(ai, m)| (*ai, m)).collect();
-    c.sort_by(|a, b| b.1.z.total_cmp(&a.1.z).then_with(|| audios[a.0].file.cmp(&audios[b.0].file)));
-
-    match c.len() {
-        0 => Ok(row(
-            RowState::NoMatch,
-            None,
-            Vec::new(),
-            detail(None, 0, Vec::new(), None),
-        )),
-        1 => {
-            let (ai, m) = c[0];
-            let sel = mk(ai, m);
-            let state = if sel.coverage.fraction >= params.coverage_full {
-                RowState::Confident
-            } else {
-                RowState::Partial
-            };
-            Ok(row(state, Some(sel), Vec::new(), detail(None, 1, Vec::new(), None)))
-        }
-        _ => {
-            // Cluster coverage intervals into connected components by overlap
-            // (§3.3 disjoint/overlapping discrimination, generalized past 2).
-            let covs: Vec<Coverage> = c
-                .iter()
-                .map(|(ai, m)| coverage(video.duration_s, audios[*ai].duration_s, m.lag_ms))
-                .collect();
-            let clusters = cluster_intervals(&covs, params.disjoint_tol_s);
-
-            // Resolve each cluster to a winner (index into `c`), or None = ambiguous.
-            let mut triangles: Vec<TriangleCheck> = Vec::new();
-            let mut margin_out: Option<f64> = None;
-            let mut winners: Vec<(usize, bool)> = Vec::new(); // (idx in c, simultaneous-cluster)
-            let mut ambiguous = false;
-            for cluster in &clusters {
-                if cluster.len() == 1 {
-                    winners.push((cluster[0], false));
-                    continue;
-                }
-                // §3.4 simultaneity over every pair in the cluster.
-                let mut all_simultaneous = true;
-                for (i, &ci) in cluster.iter().enumerate() {
-                    for &cj in &cluster[i + 1..] {
-                        let (ai, ma) = c[ci];
-                        let (aj, mb) = c[cj];
-                        let ab = correlate_audio_pair(ctx, audio_ids, ai, aj, sp, ab_memo)?;
-                        let residual = (mb.lag_ms - ma.lag_ms - ab.lag_ms).abs();
-                        let simultaneous =
-                            ab.z >= params.z_min && residual <= params.triangle_tol_ms;
-                        all_simultaneous &= simultaneous;
-                        triangles.push(TriangleCheck {
-                            audio_a: audios[ai].file.clone(),
-                            audio_b: audios[aj].file.clone(),
-                            ab_z: ab.z,
-                            ab_lag_ms: ab.lag_ms,
-                            residual_ms: residual,
-                            simultaneous,
-                        });
-                    }
-                }
-                if all_simultaneous {
-                    // Genuine alternates: best z wins, cluster is `2 sources`.
-                    winners.push((cluster[0], true));
-                } else {
-                    // Conflict (different takes?): §3.5 margin rule, biased to
-                    // `ambiguous` over a coin-flip (V2-F2).
-                    let z_best = c[cluster[0]].1.z;
-                    let z_second = c[cluster[1]].1.z;
-                    let margin = z_best - z_second;
-                    margin_out = Some(margin);
-                    if z_second < params.z_min || margin >= params.z_margin {
-                        winners.push((cluster[0], false));
-                    } else {
-                        ambiguous = true;
-                    }
-                }
-            }
-
-            if ambiguous {
-                let alternates: Vec<RowCandidate> = c.iter().map(|(ai, m)| mk(*ai, m)).collect();
-                return Ok(row(
-                    RowState::Ambiguous,
-                    None,
-                    alternates,
-                    detail(margin_out, clusters.len(), triangles, None),
-                ));
-            }
-
-            // Pick the row selection among cluster winners: disjoint clusters ⇒
-            // recorder restart ⇒ max coverage (§3.3); ties by z then file name.
-            let (sel_pos, _) = winners
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| {
-                    let ca = &covs[a.0];
-                    let cb = &covs[b.0];
-                    ca.seconds
-                        .total_cmp(&cb.seconds)
-                        .then_with(|| c[a.0].1.z.total_cmp(&c[b.0].1.z))
-                        .then_with(|| audios[c[b.0].0].file.cmp(&audios[c[a.0].0].file))
-                })
-                .expect("non-empty winners");
-            let (sel_idx, sel_simul) = winners[sel_pos];
-            let sel = mk(c[sel_idx].0, c[sel_idx].1);
-            let alternates: Vec<RowCandidate> = c
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != sel_idx)
-                .map(|(_, (ai, m))| mk(*ai, m))
-                .collect();
-            let state = if clusters.len() > 1 {
-                RowState::Split
-            } else if sel_simul {
-                RowState::TwoSources
-            } else if sel.coverage.fraction >= params.coverage_full {
-                RowState::Confident
-            } else {
-                RowState::Partial
-            };
-            Ok(row(state, Some(sel), alternates, detail(margin_out, clusters.len(), triangles, None)))
-        }
-    }
-}
-
-// ======================= boundary-13 fingerprint resolver (§13.4) =======================
-//
-// The DEFAULT resolver: rows come from core `PairEvidence` (the graph-adjusted matrix from
-// `Ctx::match_candidates_graph`). `classification` is the SOLE identity authority — a cell is a
-// candidate iff `classification == Match` (NO z-gate / acceptance threshold is re-derived here,
-// invariant 8). Coverage clustering, disjoint/split/2-sources discrimination, the §3.4 simultaneity
-// triangle, the §3.5 margin rule, and user override stay shell policy. The audio-audio triangle's
-// raw `z` is replaced by the core `match_graph::triangle_closes` predicate over AFFINE evidence +
-// composed-map residuals (§13.4): the A↔B edge's core `classification` decides identity and the
-// composed V→A→B map must reproduce V→B at start/mid/end. `score` gives the deterministic order.
-
-/// The effective (lag_ms, drift_ppm) a `PairEvidence` cell describes — the REFINED mapping when
-/// boundary 7 populated it, else the consensus mapping (§13.1). Both finite (§20).
-fn evidence_lag_drift(e: &PairEvidence) -> (f64, f64) {
-    (e.refined_lag_ms.unwrap_or(e.lag_ms), e.refined_drift_ppm.unwrap_or(e.drift_ppm))
-}
-
-/// §3.3 resolution for one video from core `PairEvidence` cells (the boundary-13 default, §13.4).
-/// `cells` = (audio index, evidence) for THIS video, one per audio. Candidacy is core's
-/// `classification == Match` (the identity authority); everything else is the same shell coverage /
-/// cluster / triangle / margin policy as the legacy `resolve_row`. `overflow` forces honest
-/// ambiguity exactly as the legacy path (the resource-ceiling guard is matcher-independent).
-#[allow(clippy::too_many_arguments)]
-fn resolve_row_fp(
-    ctx: &Arc<Ctx>,
-    params: &PairParams,
-    sp: &PairingParams,
-    video: &PoolTrack,
-    cells: &[(usize, PairEvidence)],
-    overflow: Option<CandidateOverflow>,
-    audios: &[PoolTrack],
-    audio_ids: &[u64],
-    ab_memo: &mut HashMap<(usize, usize), PairEvidence>,
-) -> Result<Row> {
-    // A row candidate's displayed `z` carries the spectral SCORE (the deterministic ranking lever),
-    // and `lag_ms` the effective (refined) lag — coverage uses ppm = 0 like the legacy `coverage()`
-    // so the §3.2 video-timeline span is identical to the legacy surface.
-    let mk = |ai: usize, e: &PairEvidence| RowCandidate {
-        audio: audios[ai].file.clone(),
-        z: e.score,
-        lag_ms: evidence_lag_drift(e).0,
-        coverage: coverage(video.duration_s, audios[ai].duration_s, evidence_lag_drift(e).0),
-    };
-    let row = |state: RowState,
-               selected: Option<RowCandidate>,
-               alternates: Vec<RowCandidate>,
-               resolution: ResolutionDetail| Row {
-        video: video.file.clone(),
-        chip: chip_text(state, &selected, video.duration_s),
-        state,
-        selected,
-        alternates,
-        resolution,
-    };
-    let detail = |margin, clusters, triangles, note: Option<String>| ResolutionDetail {
-        margin,
-        clusters,
-        triangles,
-        note,
-        candidate_overflow: None,
-    };
-
-    if video.has_audio == Some(false) {
-        return Ok(row(
-            RowState::NoMatch,
-            None,
-            Vec::new(),
-            detail(None, 0, Vec::new(), Some("no audio stream".into())),
-        ));
-    }
-
-    // Resource ceiling exceeded (§9.2): identical honest-ambiguity behavior to the legacy resolver.
-    if let Some(ov) = overflow {
-        let alternates: Vec<RowCandidate> = cells.iter().map(|(ai, e)| mk(*ai, e)).collect();
-        return Ok(row(
-            RowState::Ambiguous,
-            None,
-            alternates,
-            ResolutionDetail {
-                margin: None,
-                clusters: 0,
-                triangles: Vec::new(),
-                note: Some(format!(
-                    "candidate overflow: {} eligible exceed the {} {} verify limit",
-                    ov.eligible, ov.limit, ov.scope
-                )),
-                candidate_overflow: Some(ov),
-            },
-        ));
-    }
-
-    // CANDIDACY = core's identity verdict: keep only `Match` cells (invariant 8 — no re-derived
-    // threshold). `Ambiguous`/`NoMatch`/`InsufficientOverlap`/`Unavailable` are NOT row candidates;
-    // a deliberate fingerprint rejection is honored (§16.2 — the weaker matcher never overrides it).
-    let mut c: Vec<(usize, &PairEvidence)> = cells
-        .iter()
-        .filter(|(_, e)| e.classification == MatchClassification::Match)
-        .map(|(ai, e)| (*ai, e))
-        .collect();
-    // Deterministic order: score desc, ties by audio file name (clock-free, SPEC §1.4).
-    c.sort_by(|a, b| b.1.score.total_cmp(&a.1.score).then_with(|| audios[a.0].file.cmp(&audios[b.0].file)));
-
-    match c.len() {
-        0 => Ok(row(RowState::NoMatch, None, Vec::new(), detail(None, 0, Vec::new(), None))),
-        1 => {
-            let (ai, e) = c[0];
-            let sel = mk(ai, e);
-            let state = if sel.coverage.fraction >= params.coverage_full {
-                RowState::Confident
-            } else {
-                RowState::Partial
-            };
-            Ok(row(state, Some(sel), Vec::new(), detail(None, 1, Vec::new(), None)))
-        }
-        _ => {
-            let covs: Vec<Coverage> = c
-                .iter()
-                .map(|(ai, e)| coverage(video.duration_s, audios[*ai].duration_s, evidence_lag_drift(e).0))
-                .collect();
-            let clusters = cluster_intervals(&covs, params.disjoint_tol_s);
-
-            let mut triangles: Vec<TriangleCheck> = Vec::new();
-            let mut margin_out: Option<f64> = None;
-            let mut winners: Vec<(usize, bool)> = Vec::new();
-            let mut ambiguous = false;
-            // The §3.4 closure window is the video coverage span (the residual time window in V's
-            // clock); the §13.3 tolerances come from the core PairingParams.
-            let tri_offset_tol = sp.graph_offset_tol_ms;
-            let tri_drift_tol = sp.graph_drift_tol_ppm;
-            for cluster in &clusters {
-                if cluster.len() == 1 {
-                    winners.push((cluster[0], false));
-                    continue;
-                }
-                // §3.4 simultaneity over every pair in the cluster — the AFFINE composed-map check
-                // (replaces the raw-`z` triangle, §13.4).
-                let mut all_simultaneous = true;
-                for (i, &ci) in cluster.iter().enumerate() {
-                    for &cj in &cluster[i + 1..] {
-                        let (ai, ea) = c[ci];
-                        let (aj, eb) = c[cj];
-                        let ab = match_audio_pair_evidence(ctx, audio_ids, ai, aj, sp, ab_memo)?;
-                        // V→A, V→B from the row cells; A→B from the audio-audio evidence. The
-                        // closure window is V's coverage; A↔B identity is core's classification.
-                        let va = couple_core::match_graph::evidence_map(ea);
-                        let vb = couple_core::match_graph::evidence_map(eb);
-                        let ab_map = couple_core::match_graph::evidence_map(&ab);
-                        let simultaneous = couple_core::match_graph::triangle_closes(
-                            va, ab_map, vb, ab.classification, video.duration_s,
-                            tri_offset_tol, tri_drift_tol,
-                        );
-                        all_simultaneous &= simultaneous;
-                        // The triangle record keeps the start/mid/end composed-residual MAX (ms) and
-                        // surfaces the A↔B core score in `ab_z` for calibration read-out.
-                        let residual = composed_residual_max_ms(va, ab_map, vb, video.duration_s);
-                        triangles.push(TriangleCheck {
-                            audio_a: audios[ai].file.clone(),
-                            audio_b: audios[aj].file.clone(),
-                            ab_z: ab.score,
-                            ab_lag_ms: evidence_lag_drift(&ab).0,
-                            residual_ms: residual,
-                            simultaneous,
-                        });
-                    }
-                }
-                if all_simultaneous {
-                    winners.push((cluster[0], true));
-                } else {
-                    // Conflict (different takes registering the same span): §3.5 margin rule on the
-                    // spectral SCORE, biased to `ambiguous` over a coin-flip (V2-F2).
-                    let z_best = c[cluster[0]].1.score;
-                    let z_second = c[cluster[1]].1.score;
-                    let margin = z_best - z_second;
-                    margin_out = Some(margin);
-                    if margin >= params.z_margin {
-                        winners.push((cluster[0], false));
-                    } else {
-                        ambiguous = true;
-                    }
-                }
-            }
-
-            if ambiguous {
-                let alternates: Vec<RowCandidate> = c.iter().map(|(ai, e)| mk(*ai, e)).collect();
-                return Ok(row(
-                    RowState::Ambiguous,
-                    None,
-                    alternates,
-                    detail(margin_out, clusters.len(), triangles, None),
-                ));
-            }
-
-            let (sel_pos, _) = winners
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| {
-                    let ca = &covs[a.0];
-                    let cb = &covs[b.0];
-                    ca.seconds
-                        .total_cmp(&cb.seconds)
-                        .then_with(|| c[a.0].1.score.total_cmp(&c[b.0].1.score))
-                        .then_with(|| audios[c[b.0].0].file.cmp(&audios[c[a.0].0].file))
-                })
-                .expect("non-empty winners");
-            let (sel_idx, sel_simul) = winners[sel_pos];
-            let sel = mk(c[sel_idx].0, c[sel_idx].1);
-            let alternates: Vec<RowCandidate> = c
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != sel_idx)
-                .map(|(_, (ai, e))| mk(*ai, e))
-                .collect();
-            let state = if clusters.len() > 1 {
-                RowState::Split
-            } else if sel_simul {
-                RowState::TwoSources
-            } else if sel.coverage.fraction >= params.coverage_full {
-                RowState::Confident
-            } else {
-                RowState::Partial
-            };
-            Ok(row(state, Some(sel), alternates, detail(margin_out, clusters.len(), triangles, None)))
-        }
-    }
-}
-
-/// The MAX of the start/mid/end composed-offset residuals (ms) between the direct V→B map and the
-/// composed V→A→B map — the calibration read-out behind the §3.4 closure (the affine analogue of
-/// the legacy scalar `|lag_vb − lag_va − lag_ab|`). `f64::INFINITY` would never be serialized; we
-/// return a finite sentinel (`0.0`) when a map is missing so the row JSON stays finite (§20).
-fn composed_residual_max_ms(
-    va: Option<couple_core::match_graph::AffineMap>,
-    ab: Option<couple_core::match_graph::AffineMap>,
-    vb: Option<couple_core::match_graph::AffineMap>,
-    coverage_s: f64,
-) -> f64 {
-    let (Some(va), Some(ab), Some(vb)) = (va, ab, vb) else {
-        return 0.0;
-    };
-    let Some(composed) = va.compose(ab) else {
-        return 0.0;
-    };
-    let t1 = if coverage_s.is_finite() && coverage_s > 0.0 { coverage_s } else { 1.0 };
-    couple_core::match_graph::CycleResidual::between(&vb, &composed, 0.0, t1).max_offset_ms()
-}
-
-/// Audio-audio `PairEvidence` for the §3.4 triangle, memoized with antisymmetric lag/drift
-/// (L(B,A) = −L(A,B)). Uses `match_pair` (the same core path the matrix used, so the A↔B identity
-/// `classification` is consistent with the V→A / V→B cells). Keyed by the unordered audio pair.
-fn match_audio_pair_evidence(
-    ctx: &Arc<Ctx>,
-    audio_ids: &[u64],
-    a: usize,
-    b: usize,
-    sp: &PairingParams,
-    memo: &mut HashMap<(usize, usize), PairEvidence>,
-) -> Result<PairEvidence> {
-    let key = (a.min(b), a.max(b));
-    if !memo.contains_key(&key) {
-        let e = ctx.match_pair(audio_ids[key.0], audio_ids[key.1], sp)?;
-        memo.insert(key, e);
-    }
-    let mut e = memo[&key].clone();
-    if a > b {
-        // Antisymmetric orientation: negate the (refined) lag so V→A→B composes correctly when the
-        // memo holds the (lo, hi) orientation but the caller asked for (hi, lo).
-        e.lag_ms = -e.lag_ms;
-        e.drift_ppm = -e.drift_ppm;
-        if let Some(l) = e.refined_lag_ms.as_mut() {
-            *l = -*l;
-        }
-        if let Some(d) = e.refined_drift_ppm.as_mut() {
-            *d = -*d;
-        }
-    }
-    Ok(e)
-}
-
-/// A×B stage-1, memoized with antisymmetric lag (L(B,A) = −L(A,B)).
-fn correlate_audio_pair(
-    ctx: &Arc<Ctx>,
-    audio_ids: &[u64],
-    a: usize,
-    b: usize,
-    sp: &PairingParams,
-    memo: &mut HashMap<(usize, usize), PairCorrelation>,
-) -> Result<PairCorrelation> {
-    let key = (a.min(b), a.max(b));
-    if !memo.contains_key(&key) {
-        let m = ctx.pair_correlate(audio_ids[key.0], audio_ids[key.1], sp)?;
-        memo.insert(key, m);
-    }
-    let mut m = memo[&key].clone();
-    if a > b {
-        m.lag_ms = -m.lag_ms;
-    }
-    Ok(m)
-}
-
-/// Connected components of intervals overlapping by more than `tol` seconds,
-/// each component sorted by input order (z-descending order of `covs`).
-fn cluster_intervals(covs: &[Coverage], tol: f64) -> Vec<Vec<usize>> {
-    let n = covs.len();
-    let mut parent: Vec<usize> = (0..n).collect();
-    fn find(p: &mut Vec<usize>, i: usize) -> usize {
-        if p[i] != i {
-            let r = find(p, p[i]);
-            p[i] = r;
-        }
-        p[i]
-    }
-    for i in 0..n {
-        for j in i + 1..n {
-            let inter = covs[i].t1.min(covs[j].t1) - covs[i].t0.max(covs[j].t0);
-            if inter > tol {
-                let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
-                parent[ri.max(rj)] = ri.min(rj);
-            }
-        }
-    }
-    let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
-    for i in 0..n {
-        let r = find(&mut parent, i);
-        groups.entry(r).or_default().push(i);
-    }
-    let mut out: Vec<Vec<usize>> = groups.into_values().collect();
-    out.sort_by_key(|g| g[0]);
-    out
-}
-
-fn fmt_mmss(s: f64) -> String {
-    let total = s.round() as i64;
-    format!("{}:{:02}", total / 60, total % 60)
-}
-
-/// §3.3 chip detail, e.g. partial → "audio covers 0:00–18:40 of 23:55".
-fn chip_text(state: RowState, selected: &Option<RowCandidate>, dur_video: f64) -> String {
-    match (state, selected) {
-        (RowState::Partial, Some(s)) | (RowState::Split, Some(s)) => format!(
-            "{} — audio covers {}–{} of {}",
-            state.chip(),
-            fmt_mmss(s.coverage.t0),
-            fmt_mmss(s.coverage.t1),
-            fmt_mmss(dur_video)
-        ),
-        _ => state.chip().to_string(),
-    }
 }
 
 fn print_human(r: &PairReport) {

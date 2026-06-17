@@ -1,0 +1,26 @@
+{
+  "rows": [
+    {
+      "alternates": [
+        "extB.wav"
+      ],
+      "candidateOverflow": null,
+      "chip": "2 sources",
+      "clusters": 1,
+      "note": null,
+      "selected": "extA.wav",
+      "state": "twoSources",
+      "triangles": [
+        {
+          "audioA": "extA.wav",
+          "audioB": "extB.wav",
+          "simultaneous": true
+        }
+      ],
+      "video": "video.mp4"
+    }
+  ],
+  "unusedAudio": [
+    "extB.wav"
+  ]
+}

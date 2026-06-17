@@ -45,8 +45,8 @@ final class AppModel {
     var resolving = false {
         didSet { if resolving != oldValue { activity.refresh() } }
     }
-    /// Determinate MATCHING progress (incremental-matching boundary): the live phase+fraction of the
-    /// graph-adjusted matching JOB (`Engine.matchCandidatesGraphStart`), mapped from each
+    /// Determinate MATCHING progress (PLAN-CORE-SHELL-BOUNDARY §3.1): the live phase+fraction of the
+    /// core ROW-RESOLUTION JOB (`Engine.resolveStart`), mapped from each
     /// `ProgressUpdate`. Drives the MATCH stage of the unified ingest bar. Set on the main actor as
     /// the job reports; CLEARED SYNCHRONOUSLY alongside `resolving = false` in `resolveQueue` (the
     /// same late-final-frame gate as import — the matching signal is only ever read while
@@ -267,17 +267,18 @@ final class AppModel {
         saveQueue()
     }
 
-    /// Run the §3 candidate matrix + §3.3 resolution over the pool (off-main),
-    /// then build/update couples — pinned/approved selections survive (§3.6).
+    /// Run the §3.3 row resolution over the pool, then build/update couples — pinned/approved
+    /// selections survive (§3.6).
     ///
-    /// Incremental-matching boundary: the graph-adjusted candidate MATRIX is now built by a
-    /// DETERMINATE JOB (`Engine.matchCandidatesGraphStart`) so the unified bar can show real
-    /// fingerprint→compare→cross-check progress, instead of one opaque synchronous call. The matrix
-    /// is `await`ed off-main; its `progress` is consumed on a child task that writes
-    /// `matchingActivity` (main actor). The per-row §3.3 resolution policy then runs `Task.detached`
-    /// over that PREBUILT matrix exactly as before — the resolved output is byte-identical to the
-    /// synchronous path (the matrix is the only input). The legacy matcher and the empty-matrix
-    /// cases keep the old synchronous path (no job started ⇒ `matchingActivity` stays nil).
+    /// Core-shell boundary (PLAN §3.1, Phase C): the §3.3 DECISION runs in couple-core via a SINGLE
+    /// DETERMINATE JOB (`Engine.resolveStart`, the `cpl_resolve_start` twin) — the SAME resolver the
+    /// CLI uses, so the resolved `[ResolvedRow]` is byte-identical cross-platform. The job's
+    /// `progress` is consumed on a child task that writes `matchingActivity` (main actor), giving the
+    /// unified bar real fingerprint→compare→cross-check→verify→resolve progress. Core resolves the
+    /// IMPORTED-TRACK videos only; audio-less videos are wrapped here as inert no-match rows. The
+    /// resulting rows are then DECORATED off-main (`Resolver.decorate`) with the DISPLAY-ONLY
+    /// fine-verify telemetry + (legacy-override) spectral shadow — never re-deciding the rows. No
+    /// importable videos ⇒ no job (every row inert), `matchingActivity` stays nil.
     func resolveQueue(partOfImport: Bool = false) async {
         guard let engine, !pool.videos.isEmpty || !pool.audios.isEmpty else { return }
         // A resolve over an already-populated queue is an UPDATE (the strip reads
@@ -296,16 +297,19 @@ final class AppModel {
         }
         let params = params
 
-        // Build the graph-adjusted matrix via the determinate job, but only on the fingerprint path
-        // with a non-empty V×A batch (the only case `resolveFingerprint` would call core for one).
-        // Otherwise fall back to nil ⇒ `Resolver.resolve` does its usual synchronous build.
+        // Core-shell boundary (PLAN §3.1, Phase C): the §3.3 DECISION runs in core via a SINGLE
+        // determinate job (`cpl_resolve_start`) — it replaces the old two-step (matrix job +
+        // `Resolver.resolve`). Core resolves over the IMPORTED-TRACK videos only; audio-less videos
+        // are wrapped here as inert no-match rows (the header contract). The job's progress drives
+        // the determinate match stage; the value is `[ResolvedRow]`, the SAME decision the CLI gets.
         let importableVideoHandles = pool.videos.compactMap(\.handle)
         let audioHandles = pool.audios.compactMap(\.handle)
-        var prebuiltMatrix: [[PairEvidence]]?
-        if params.matcherFingerprintPrimary,
-           !importableVideoHandles.isEmpty, !audioHandles.isEmpty,
-           let job = try? engine.matchCandidatesGraphStart(
-               videos: importableVideoHandles, audios: audioHandles) {
+        let paramsJSON = params.resolveParamsJSON()
+
+        var coreRows: [ResolvedRow] = []
+        if !importableVideoHandles.isEmpty,
+           let job = try? engine.resolveStart(videos: importableVideoHandles, audios: audioHandles,
+                                               paramsJSON: paramsJSON) {
             // Consume the job's progress into the determinate match stage (main actor). The child
             // task ends when the stream finishes (the job's terminal callback closes it).
             let progressTask = Task { @MainActor [weak self] in
@@ -315,14 +319,30 @@ final class AppModel {
                     self.activity.refresh()
                 }
             }
-            prebuiltMatrix = (try? await job.value()) ?? []
+            coreRows = (try? await job.value()) ?? []
             _ = await progressTask.value
         }
 
-        let captured = prebuiltMatrix
+        // Splice core's importable-video rows back into the full pool order, wrapping each audio-less
+        // video as an inert no-match row (byte-identical to the old resolver's stripped-audio row).
+        // Then DECORATE shell-side: fine-verify telemetry + (legacy-override) spectral shadow — the
+        // display-only fields the UI shows alongside core's decision (off-main; never re-decides).
+        var byVideo = Dictionary(coreRows.map { ($0.videoKey, $0) }, uniquingKeysWith: { a, _ in a })
+        var assembled: [ResolvedRow] = []
+        assembled.reserveCapacity(videos.count)
+        for v in videos {
+            if v.handle != nil, let r = byVideo.removeValue(forKey: v.key) {
+                assembled.append(r)
+            } else {
+                assembled.append(ResolvedRow(
+                    videoKey: v.key, videoName: v.name, state: .noMatch, chip: RowState.noMatch.chip,
+                    selected: nil, alternates: [],
+                    detail: ResolutionDetail(margin: nil, clusters: 0, note: "no audio stream")))
+            }
+        }
+        let toDecorate = assembled
         let rows = await Task.detached(priority: .userInitiated) {
-            Resolver.resolve(videos: videos, audios: audios, engine: engine,
-                             params: params, prebuiltMatrix: captured)
+            Resolver.decorate(toDecorate, videos: videos, audios: audios, engine: engine, params: params)
         }.value
         applyResolution(rows)
         // GATE (late-final-frame, mirrors import): clear the matching signal SYNCHRONOUSLY as
@@ -332,15 +352,18 @@ final class AppModel {
         resolving = false
     }
 
-    /// Map a matching JOB `ProgressUpdate` (core phase string + 0…1) to the strip's `Matching`
-    /// signal (incremental-matching boundary). The three core phase strings map EXACTLY (Open
-    /// Decision 7); an unknown phase is ignored by holding the comparing stage at 0.
+    /// Map a resolve JOB `ProgressUpdate` (core phase string + 0…1) to the strip's `Matching`
+    /// signal (PLAN §3.1). The matrix-build phases map EXACTLY (Open Decision 7); the cheap row-pass
+    /// tail phases "Verify"/"Resolve" map to the cross-check stage (the final matrix-side step the
+    /// strip shows). An unknown phase holds the fingerprinting stage.
     private static func matchPhase(from u: ProgressUpdate) -> ActivitySignals.Matching {
         let phase: MatchPhase
         switch u.phase {
         case "MatchFingerprint": phase = .fingerprinting
         case "MatchCorrelate":   phase = .comparing
         case "MatchGraph":       phase = .crosschecking
+        case "Verify":           phase = .comparing
+        case "Resolve":          phase = .crosschecking
         default:                 phase = .fingerprinting
         }
         return ActivitySignals.Matching(phase: phase, fraction: u.fraction)

@@ -1,0 +1,38 @@
+{
+  "rows": [
+    {
+      "alternates": [],
+      "candidateOverflow": null,
+      "chip": "confident",
+      "clusters": 1,
+      "note": null,
+      "selected": "external.wav",
+      "state": "confident",
+      "triangles": [],
+      "video": "video1.mp4"
+    },
+    {
+      "alternates": [],
+      "candidateOverflow": null,
+      "chip": "confident",
+      "clusters": 1,
+      "note": null,
+      "selected": "external.wav",
+      "state": "confident",
+      "triangles": [],
+      "video": "video2.mp4"
+    },
+    {
+      "alternates": [],
+      "candidateOverflow": null,
+      "chip": "confident",
+      "clusters": 1,
+      "note": null,
+      "selected": "external.wav",
+      "state": "confident",
+      "triangles": [],
+      "video": "video3.mp4"
+    }
+  ],
+  "unusedAudio": []
+}

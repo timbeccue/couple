@@ -33,7 +33,16 @@
 //   4. IDEMPOTENT — applying the same fresh resolution twice yields the same row
 //      and (after the first) `rebuildSession == false`, so repeated imports never
 //      duplicate candidates, sessions, or sync work.
+//
+// RELOCATION (PLAN-CORE-SHELL-BOUNDARY Phase E): the DECISION now lives in
+// `couple_core::policy::row_merge` and is reached over the FFI (`cpl_policy_row_merge`).
+// This type is a thin WRAPPER. On a core error (a malformed/stale request —
+// unreachable with this in-process call) it maps to the CONSERVATIVE PROTECTED-row
+// plan: keep the existing selection, candidates, and display, with no session rebuild
+// — i.e. treat the merge as if the row were protected, so a failure can NEVER silently
+// swap a source or tear down an approved couple's session (CONTRACT invariant 1).
 
+import CCouple
 import Foundation
 
 /// The complete, atomic outcome of folding one fresh `ResolvedRow` into an
@@ -88,30 +97,59 @@ public enum RowMergePolicy {
                             currentCandidateKeys: [String],
                             freshSelectedKey: String?,
                             freshCandidateKeys: [String]) -> RowMergePlan {
-        if protected {
-            // §3.6 stability: keep the user's selection and display untouched;
-            // append only candidate keys not already present, preserving order so
-            // a re-resolve cannot reshuffle the picker. Idempotent: a fresh set
-            // already fully present appends nothing.
-            var merged = currentCandidateKeys
-            let known = Set(currentCandidateKeys)
-            for k in freshCandidateKeys where !known.contains(k) {
-                merged.append(k)
-            }
-            return RowMergePlan(selectedAudioKey: currentSelectedKey,
-                                candidateKeys: merged,
-                                adoptFreshDisplay: false,
-                                rebuildSession: false,
-                                clearForced: false)
+        // Build the camelCase request and round-trip through `cpl_policy_row_merge`
+        // (the decision now lives in `couple_core::policy::row_merge`).
+        var req: [String: Any] = [
+            "protected": protected,
+            "currentSelectedKey": currentSelectedKey as Any,
+            "currentCandidateKeys": currentCandidateKeys,
+            "freshSelectedKey": freshSelectedKey as Any,
+            "freshCandidateKeys": freshCandidateKeys,
+        ]
+        if currentSelectedKey == nil { req["currentSelectedKey"] = NSNull() }
+        if freshSelectedKey == nil { req["freshSelectedKey"] = NSNull() }
+        let value: [String: Any]?
+        if let data = try? JSONSerialization.data(withJSONObject: req),
+           let json = String(data: data, encoding: .utf8) {
+            value = PolicyEnvelope.decodeValue(cpl_policy_row_merge(json))
+        } else {
+            value = nil
         }
-        // Unprotected: adopt the fresh resolution wholesale. The session is rebuilt
-        // (and sync re-queued) only when the effective selection actually changes,
-        // so re-picking the same source — or re-applying an identical resolution —
-        // does no work and creates no duplicates.
-        return RowMergePlan(selectedAudioKey: freshSelectedKey,
-                            candidateKeys: freshCandidateKeys,
-                            adoptFreshDisplay: true,
-                            rebuildSession: currentSelectedKey != freshSelectedKey,
-                            clearForced: true)
+        return plan(fromEnvelopeValue: value,
+                    currentSelectedKey: currentSelectedKey,
+                    currentCandidateKeys: currentCandidateKeys)
+    }
+
+    /// Map a decoded envelope `value` object to the merge plan, applying the CONSERVATIVE
+    /// fallback. A nil value (core returned an error envelope, or the call/parse failed) or a
+    /// malformed value ⇒ a PROTECTED-row plan computed from the current state: keep the existing
+    /// selection and candidates, take no fresh display, rebuild nothing. A failure can therefore
+    /// NEVER silently swap a source or tear down an approved couple's session. Internal so a test
+    /// can drive the error path without reaching the C ABI (PLAN §3.2).
+    @inline(never)
+    static func plan(fromEnvelopeValue value: [String: Any]?,
+                     currentSelectedKey: String?,
+                     currentCandidateKeys: [String]) -> RowMergePlan {
+        if let value,
+           let candidateKeys = value["candidateKeys"] as? [String],
+           let adoptFreshDisplay = value["adoptFreshDisplay"] as? Bool,
+           let rebuildSession = value["rebuildSession"] as? Bool,
+           let clearForced = value["clearForced"] as? Bool {
+            // selectedAudioKey is `str|null`; an absent/NSNull value decodes to nil (never a
+            // coin-flip), matching core's `Option<String>`.
+            let selectedAudioKey = value["selectedAudioKey"] as? String
+            return RowMergePlan(selectedAudioKey: selectedAudioKey,
+                                candidateKeys: candidateKeys,
+                                adoptFreshDisplay: adoptFreshDisplay,
+                                rebuildSession: rebuildSession,
+                                clearForced: clearForced)
+        }
+        // Conservative fallback: behave as a protected row over the current state — preserve the
+        // user's selection and candidate list, change no display, rebuild no session.
+        return RowMergePlan(selectedAudioKey: currentSelectedKey,
+                            candidateKeys: currentCandidateKeys,
+                            adoptFreshDisplay: false,
+                            rebuildSession: false,
+                            clearForced: false)
     }
 }

@@ -20,6 +20,8 @@ pub enum Phase {
     MatchFingerprint,
     MatchCorrelate,
     MatchGraph,
+    Verify,
+    Resolve,
     ExportRender,
     ExportMux,
 }
@@ -39,6 +41,8 @@ impl Phase {
             Phase::MatchFingerprint => "Fingerprinting…",
             Phase::MatchCorrelate => "Comparing…",
             Phase::MatchGraph => "Cross-checking…",
+            Phase::Verify => "Verifying…",
+            Phase::Resolve => "Resolving…",
             Phase::ExportRender => "Rendering audio…",
             Phase::ExportMux => "Writing file…",
         }
@@ -60,10 +64,20 @@ impl Phase {
             Phase::SyncWindows => (0.75, 0.98),
             Phase::SyncFit => (0.98, 1.0),
             // Match job: fingerprinting is the dominant first-match cost, then per-row
-            // correlation, then the §13 graph-consistency pass ends at 1.0.
+            // correlation, then the §13 graph-consistency pass ends at 1.0. (The standalone
+            // `cpl_match_candidates_graph_start` job terminates on `MatchGraph` at 1.0 — these
+            // three bands are UNCHANGED so that job's bar is unaffected.)
             Phase::MatchFingerprint => (0.0, 0.70),
             Phase::MatchCorrelate => (0.70, 0.95),
             Phase::MatchGraph => (0.95, 1.0),
+            // Resolve job (couple_core::resolve): the matrix build above carries the bar to
+            // ~1.0; the cheap row pass ends on `Resolve` at 1.0 (a terminal tick, monotone with
+            // MatchGraph's 1.0). The LEGACY verify-active / RMS-escalation path does real work
+            // AFTER the matrix (which terminates the legacy build on `MatchCorrelate` at 0.95),
+            // so `Verify` (chunked verify_batch) and `Resolve` (batched pair_fit_batch + the row
+            // pass) occupy the 0.95→1.0 tail honestly rather than hiding under MatchGraph.
+            Phase::Verify => (0.95, 0.98),
+            Phase::Resolve => (0.98, 1.0),
             Phase::ExportRender => (0.0, 0.70),
             Phase::ExportMux => (0.70, 1.0),
         }

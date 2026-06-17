@@ -1,0 +1,11 @@
+{
+  "seed": 11,
+  "cameras": [
+    { "name": "video1", "masterT0": 30.0, "durS": 40.0 },
+    { "name": "video2", "masterT0": 150.0, "durS": 40.0 },
+    { "name": "video3", "masterT0": 270.0, "durS": 40.0 }
+  ],
+  "externals": [
+    { "name": "external", "masterT0": 0.0, "durS": 330.0 }
+  ]
+}

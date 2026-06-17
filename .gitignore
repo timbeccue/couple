@@ -28,6 +28,15 @@ fixtures/matcher-corpus/*
 fixtures/matcher-corpus/*/*
 !fixtures/matcher-corpus/*/*.json
 !fixtures/matcher-corpus/*/*.md
+# The Phase-0 golden decision-freeze harness (PLAN-CORE-SHELL-BOUNDARY §4): the SessionSpec inputs
+# and the committed decision-projection goldens ARE tracked (the byte-identity-of-decision contract;
+# small JSON), same walk-the-path-down idiom as the corpus above. Any regenerated media stays ignored.
+!fixtures/golden/
+fixtures/golden/*
+!fixtures/golden/*/
+!fixtures/golden/*.json
+fixtures/golden/*/*
+!fixtures/golden/*/*.json
 
 # Caches
 .couple-cache/

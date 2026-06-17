@@ -243,6 +243,7 @@ dependencies = [
  "couple-core",
  "hound",
  "libc",
+ "serde",
  "serde_json",
  "tempfile",
 ]

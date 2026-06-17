@@ -1,6 +1,7 @@
 // Value types mirroring couple-core's wire JSON (SPEC §4; field names are the
 // wire format verbatim, so no key-decoding strategy is needed).
 
+import CCouple
 import Foundation
 
 public enum TrackRole: String, Codable, Sendable {
@@ -496,21 +497,252 @@ public enum ShadowTelemetry {
     public static func rows(
         evidence: [PairEvidence], audioKeys: [String], audioNames: [String]
     ) -> [ShadowEvidenceRow] {
-        let n = min(evidence.count, min(audioKeys.count, audioNames.count))
+        // RELOCATION (PLAN-CORE-SHELL-BOUNDARY Phase E): the PROJECTION (ordering + index-alignment
+        // + truncation) now lives in `couple_core::policy::shadow` and is reached over the FFI
+        // (`cpl_policy_shadow_rows`). This is a thin WRAPPER: it sends the evidence row + keys/names,
+        // and rebuilds each display `ShadowEvidenceRow` from core's verbatim, score-ordered evidence
+        // (so the display fields/strings stay Swift-side). On a core error (a malformed/stale
+        // request — unreachable in practice) it maps to an EMPTY projection: shadow telemetry simply
+        // does not display, never a fabricated row.
+        let req: [String: Any] = [
+            "evidence": evidence.compactMap(\.wireDict),
+            "audioKeys": audioKeys,
+            "audioNames": audioNames,
+        ]
+        return projectedRows(fromEnvelope: callPolicy(req))
+    }
+
+    /// Decode core's score-ordered projection rows (`[{audioKey,audioName,evidence}]`) into display
+    /// `ShadowEvidenceRow`s. A nil/malformed envelope ⇒ [] (telemetry does not display; never a
+    /// fabricated row). Internal test seam (PLAN §3.2).
+    @inline(never)
+    static func projectedRows(fromEnvelope value: [Any]?) -> [ShadowEvidenceRow] {
+        guard let value else { return [] }
         var out: [ShadowEvidenceRow] = []
-        out.reserveCapacity(n)
-        for i in 0..<n {
-            out.append(ShadowEvidenceRow(audioKey: audioKeys[i], audioName: audioNames[i],
-                                         evidence: evidence[i]))
-        }
-        // Deterministic TOTAL order: score desc, then name asc, then key asc (key is unique).
-        // `score` orders the display; it is NEVER an acceptance gate (that is core's classification).
-        out.sort { a, b in
-            if a.score != b.score { return a.score > b.score }
-            if a.audioName != b.audioName { return a.audioName < b.audioName }
-            return a.audioKey < b.audioKey
+        out.reserveCapacity(value.count)
+        for case let row as [String: Any] in value {
+            guard let audioKey = row["audioKey"] as? String,
+                  let audioName = row["audioName"] as? String,
+                  let evidenceObj = row["evidence"],
+                  let evidenceData = try? JSONSerialization.data(withJSONObject: evidenceObj),
+                  let evidence = try? JSONDecoder().decode(PairEvidence.self, from: evidenceData)
+            else { continue }
+            out.append(ShadowEvidenceRow(audioKey: audioKey, audioName: audioName, evidence: evidence))
         }
         return out
+    }
+
+    /// Encode the request, call `cpl_policy_shadow_rows`, and return the envelope `value` array
+    /// (nil on an encode/call/parse failure or an error envelope — the caller maps nil to []).
+    private static func callPolicy(_ req: [String: Any]) -> [Any]? {
+        guard let data = try? JSONSerialization.data(withJSONObject: req),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return PolicyEnvelope.decodeValueArray(cpl_policy_shadow_rows(json))
+    }
+}
+
+extension PairEvidence {
+    /// The core `PairEvidence` wire dict — re-encode the Codable value to a JSON object so it can be
+    /// embedded in the shadow-projection request. nil only on an (unreachable) encode failure.
+    var wireDict: [String: Any]? {
+        guard let data = try? JSONEncoder().encode(self),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return obj
+    }
+}
+
+// ---------- row resolution wire types (PLAN-CORE-SHELL-BOUNDARY §3.1) ----------
+//
+// These decode core `cpl_resolve` / `cpl_resolve_start`'s `[ResolvedRow]` JSON (camelCase verbatim).
+// Core returns the DECISION (state / selected / alternates with z·lagMs·coverage + the resolution
+// honesty trail); the shell DECORATES each row with DISPLAY-ONLY telemetry afterwards — the
+// per-candidate fine-verify fields (`fitRmsMs`/`fitWindows`/`lockFraction`/`expected`/`ppm`/`clamped`)
+// and the spectral shadow evidence (`shadowEvidence`, `fitBestRmsMs`/`fitSecondRmsMs`). Those decorated
+// fields are NOT on core's wire, so they DEFAULT to nil on decode and are filled shell-side. The public
+// shape (memberwise inits, field names) is exactly what AppModel / CoupleRow / the Views consumed
+// before this layer moved into CoupleKit.
+
+/// Span of the video timeline an audio covers (§3.2; overlap_info with ppm 0). Decodes core's
+/// `coverage` object verbatim; the convenience init reproduces the SPEC §5.6 drift-0 arithmetic for
+/// the shell's manual-pick construction sites.
+public struct Coverage: Sendable, Equatable, Decodable {
+    public var t0: Double
+    public var t1: Double
+    public var seconds: Double
+    public var fraction: Double
+
+    public init(t0: Double, t1: Double, seconds: Double, fraction: Double) {
+        self.t0 = t0; self.t1 = t1; self.seconds = seconds; self.fraction = fraction
+    }
+
+    /// SPEC §5.6 overlap arithmetic at drift 0 (delta = 1).
+    public init(durVideo: Double, durAudio: Double, lagMs: Double) {
+        let offS = lagMs / 1000
+        t0 = max(0, -offS)
+        t1 = min(durVideo, durAudio - offS)
+        seconds = max(0, t1 - t0)
+        fraction = durVideo > 0 ? seconds / durVideo : 0
+    }
+}
+
+/// §3.3 row states (chip vocabulary mirrors the CLI/UX-DECISIONS-V2). Wire is the camelCase string
+/// verbatim. The UI `Verdict` mapping (`verdict`) lives app-side (where `Verdict` is defined).
+public enum RowState: String, Sendable, Codable {
+    case confident, partial, split, twoSources, ambiguous, noMatch
+
+    public var chip: String {
+        switch self {
+        case .confident: return "confident"
+        case .partial: return "partial"
+        case .split: return "split across files"
+        case .twoSources: return "2 sources"
+        case .ambiguous: return "ambiguous — check me"
+        case .noMatch: return "no match"
+        }
+    }
+}
+
+/// One candidate audio source for a video, with its measured fit and coverage. `audioKey` is the pool
+/// content key (stable identity); `audioName` drives the CLI-identical name tie-breaks (SPEC §1.4 —
+/// clock-free). Core supplies `audioKey`/`audioName`/`z`/`lagMs`/`coverage`; the telemetry fields below
+/// are DISPLAY-ONLY (no `if` reads them; excluded from any stability surface — not Equatable/Hashable;
+/// QueueStore persists only key/flags, never metrics) and default to nil on decode (decorated shell-side).
+public struct RowCandidate: Sendable, Identifiable, Decodable {
+    public var id: String { audioKey }
+    public var audioKey: String
+    public var audioName: String
+    public var z: Double
+    public var lagMs: Double
+    public var coverage: Coverage
+    // Phase-1 tie-breaker + fine-verify telemetry (decorated shell-side; not on core's wire).
+    public var fitRmsMs: Double? = nil
+    public var fitWindows: Int? = nil
+    public var lockFraction: Double? = nil
+    public var expected: Int? = nil
+    public var ppm: Double? = nil
+    public var clamped: Bool? = nil
+
+    public init(audioKey: String, audioName: String, z: Double, lagMs: Double, coverage: Coverage,
+                fitRmsMs: Double? = nil, fitWindows: Int? = nil, lockFraction: Double? = nil,
+                expected: Int? = nil, ppm: Double? = nil, clamped: Bool? = nil) {
+        self.audioKey = audioKey; self.audioName = audioName; self.z = z; self.lagMs = lagMs
+        self.coverage = coverage
+        self.fitRmsMs = fitRmsMs; self.fitWindows = fitWindows; self.lockFraction = lockFraction
+        self.expected = expected; self.ppm = ppm; self.clamped = clamped
+    }
+
+    // Decode ONLY core's fields; the telemetry fields stay at their nil defaults (decorated later).
+    enum CodingKeys: String, CodingKey { case audioKey, audioName, z, lagMs, coverage }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        audioKey = try c.decode(String.self, forKey: .audioKey)
+        audioName = try c.decode(String.self, forKey: .audioName)
+        z = try c.decode(Double.self, forKey: .z)
+        lagMs = try c.decode(Double.self, forKey: .lagMs)
+        coverage = try c.decode(Coverage.self, forKey: .coverage)
+    }
+}
+
+/// §3.4 record for one overlapping audio pair (raw numbers for V2-F2 calibration). Decodes core verbatim.
+public struct TriangleCheck: Sendable, Decodable {
+    public var audioA: String
+    public var audioB: String
+    public var abZ: Double
+    public var abLagMs: Double
+    public var residualMs: Double
+    public var simultaneous: Bool
+
+    public init(audioA: String, audioB: String, abZ: Double, abLagMs: Double,
+                residualMs: Double, simultaneous: Bool) {
+        self.audioA = audioA; self.audioB = audioB; self.abZ = abZ; self.abLagMs = abLagMs
+        self.residualMs = residualMs; self.simultaneous = simultaneous
+    }
+}
+
+/// Why a row's candidates could not be verified within the configured resource ceiling
+/// (PLAN-AUDIO-MATCHING-PREWORK §9.2). Decodes core's `candidateOverflow` object verbatim.
+public struct CandidateOverflow: Sendable, Decodable {
+    /// Number of eligible (`prefilterCandidate`) cells for this row.
+    public var eligible: Int
+    /// The resource ceiling that was exceeded.
+    public var limit: Int
+    /// Which ceiling: "perVideo" (`maxVerifyPairsPerVideo`) or "total" (`maxVerifyPairsTotal`).
+    public var scope: String
+
+    public init(eligible: Int, limit: Int, scope: String) {
+        self.eligible = eligible; self.limit = limit; self.scope = scope
+    }
+}
+
+/// The honesty trail behind a row's state — surfaced raw so the owner can tune. Core supplies
+/// `margin`/`clusters`/`triangles`/`note`/`candidateOverflow`; the fit-summary and shadow fields are
+/// DISPLAY-ONLY (decorated shell-side) and default to nil on decode.
+public struct ResolutionDetail: Sendable, Decodable {
+    public var margin: Double?
+    public var clusters: Int
+    public var triangles: [TriangleCheck] = []
+    public var note: String?
+    public var candidateOverflow: CandidateOverflow? = nil
+    // Decorated shell-side (telemetry, not core's decision; non-persisted).
+    public var fitBestRmsMs: Double? = nil
+    public var fitSecondRmsMs: Double? = nil
+    public var shadowEvidence: [ShadowEvidenceRow]? = nil
+
+    public init(margin: Double?, clusters: Int, triangles: [TriangleCheck] = [], note: String? = nil,
+                candidateOverflow: CandidateOverflow? = nil,
+                fitBestRmsMs: Double? = nil, fitSecondRmsMs: Double? = nil,
+                shadowEvidence: [ShadowEvidenceRow]? = nil) {
+        self.margin = margin; self.clusters = clusters; self.triangles = triangles; self.note = note
+        self.candidateOverflow = candidateOverflow
+        self.fitBestRmsMs = fitBestRmsMs; self.fitSecondRmsMs = fitSecondRmsMs
+        self.shadowEvidence = shadowEvidence
+    }
+
+    // Decode only core's fields (triangles/note/candidateOverflow optional); telemetry stays nil.
+    enum CodingKeys: String, CodingKey { case margin, clusters, triangles, note, candidateOverflow }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        margin = try c.decodeIfPresent(Double.self, forKey: .margin)
+        clusters = try c.decode(Int.self, forKey: .clusters)
+        triangles = try c.decodeIfPresent([TriangleCheck].self, forKey: .triangles) ?? []
+        note = try c.decodeIfPresent(String.self, forKey: .note)
+        candidateOverflow = try c.decodeIfPresent(CandidateOverflow.self, forKey: .candidateOverflow)
+    }
+}
+
+/// A resolved queue row = one video + its selected audio (nil for ambiguous / no-match: never a
+/// coin-flip) + the alternates. Mirrors `couple pair`'s Row. Core's row field is `resolution`; the
+/// Swift field is `detail` (mapped via CodingKeys), keeping the shape the UI consumed.
+public struct ResolvedRow: Sendable, Decodable {
+    public var videoKey: String
+    public var videoName: String
+    public var state: RowState
+    public var chip: String
+    public var selected: RowCandidate?
+    public var alternates: [RowCandidate]
+    public var detail: ResolutionDetail
+
+    public init(videoKey: String, videoName: String, state: RowState, chip: String,
+                selected: RowCandidate?, alternates: [RowCandidate], detail: ResolutionDetail) {
+        self.videoKey = videoKey; self.videoName = videoName; self.state = state; self.chip = chip
+        self.selected = selected; self.alternates = alternates; self.detail = detail
+    }
+
+    // Map core's `resolution` → the Swift `detail` field; everything else is the wire name verbatim.
+    enum CodingKeys: String, CodingKey {
+        case videoKey, videoName, state, chip, selected, alternates
+        case detail = "resolution"
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        videoKey = try c.decode(String.self, forKey: .videoKey)
+        videoName = try c.decode(String.self, forKey: .videoName)
+        state = try c.decode(RowState.self, forKey: .state)
+        chip = try c.decode(String.self, forKey: .chip)
+        selected = try c.decodeIfPresent(RowCandidate.self, forKey: .selected)
+        alternates = try c.decode([RowCandidate].self, forKey: .alternates)
+        detail = try c.decode(ResolutionDetail.self, forKey: .detail)
     }
 }
 

@@ -25,7 +25,9 @@ pub mod media;
 pub mod onsets;
 pub mod pair;
 pub mod pairing_params;
+pub mod policy;
 pub mod pyramid;
+pub mod resolve;
 pub mod robust_fit;
 pub mod session;
 pub mod sync;
@@ -37,6 +39,10 @@ pub use ctx::{Ctx, CtxConfig};
 pub use error::{CoupleError, Result};
 pub use matching::{MatchClassification, MatchMethod, PairEvidence};
 pub use pairing_params::{MatcherMode, PairingParams};
+pub use resolve::{
+    CandidateOverflow, Coverage, MatcherChoice, ResolutionDetail, ResolveParams, ResolvedRow,
+    RowCandidate, RowState, TriangleCheck,
+};
 pub use job::{CancelToken, JobId, Phase, Progress, ProgressFn};
 pub use media::*;
 pub use onsets::Onset;

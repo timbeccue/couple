@@ -1,0 +1,38 @@
+{
+  "rows": [
+    {
+      "alternates": [
+        "aaa_rec.wav",
+        "bbb_rec.wav",
+        "ccc_rec.wav",
+        "ddd_rec.wav",
+        "eee_rec.wav",
+        "fff_rec.wav",
+        "ggg_rec.wav",
+        "zzz_true.wav"
+      ],
+      "candidateOverflow": {
+        "eligible": 8,
+        "limit": 4,
+        "scope": "perVideo"
+      },
+      "chip": "ambiguous \u2014 check me",
+      "clusters": 0,
+      "note": "candidate overflow: 8 eligible exceed the 4 perVideo verify limit",
+      "selected": null,
+      "state": "ambiguous",
+      "triangles": [],
+      "video": "video.mp4"
+    }
+  ],
+  "unusedAudio": [
+    "aaa_rec.wav",
+    "bbb_rec.wav",
+    "ccc_rec.wav",
+    "ddd_rec.wav",
+    "eee_rec.wav",
+    "fff_rec.wav",
+    "ggg_rec.wav",
+    "zzz_true.wav"
+  ]
+}

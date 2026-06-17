@@ -39,7 +39,17 @@
 //   5. AN AUTOMATIC SELECTION TRUSTS THE RESOLVER — an auto-resolved selection takes
 //      `autoVerdict` directly (the resolver already classified that pair); no
 //      separate manual evidence is needed or consulted.
+//
+// RELOCATION (PLAN-CORE-SHELL-BOUNDARY Phase E): the DECISION now lives in
+// `couple_core::policy::match_quality` and is reached over the FFI
+// (`cpl_policy_match_quality`). This type is a thin WRAPPER: it builds the request
+// JSON, calls core, and decodes the uniform `{ok,value|error}` envelope. The
+// user-facing `MatchQuality`/`SelectionProvenance` enums and all strings stay here.
+// On a core error (a malformed/stale request — which should never happen with this
+// in-process call) it maps to the CONSERVATIVE fallback `.questionable` — never
+// silently green (CONTRACT honesty posture).
 
+import CCouple
 import Foundation
 
 /// Three-category pairing quality (UX-DECISIONS-V2 §V2.3) — the evidence-based dot
@@ -86,21 +96,65 @@ public enum MatchQualityPolicy {
                               selection: SelectionProvenance,
                               autoVerdict: MatchQuality,
                               manualMatchConfident: Bool?) -> MatchQuality {
-        // (3) A below-floor forced pairing is always questionable — it is kept on
-        //     purpose but the evidence does not support it.
-        if forced { return .questionable }
-        switch selection {
-        case .none:
-            // (4) Nothing selected ⇒ the resolver's verdict (never a coin-flip).
-            return autoVerdict
-        case .automatic:
-            // (5) The resolver picked and classified this pair ⇒ trust its verdict.
-            return autoVerdict
-        case .manual:
-            // (1)/(2) A manual pick is green ONLY when that exact pair independently
-            //         cleared the same confident classifier; otherwise it stays
-            //         questionable no matter how it was selected.
-            return manualMatchConfident == true ? .confident : .questionable
+        // Build the camelCase request the core policy expects and round-trip through
+        // `cpl_policy_match_quality` (the decision now lives in
+        // `couple_core::policy::match_quality`). manualMatchConfident == nil serializes
+        // as JSON null ("not yet evaluated"), which core treats as not-confident.
+        var req: [String: Any] = [
+            "forced": forced,
+            "selection": selection.wireValue,
+            "autoVerdict": autoVerdict.wireValue,
+            "manualMatchConfident": manualMatchConfident as Any,
+        ]
+        if manualMatchConfident == nil { req["manualMatchConfident"] = NSNull() }
+        let value: [String: Any]?
+        if let data = try? JSONSerialization.data(withJSONObject: req),
+           let json = String(data: data, encoding: .utf8) {
+            value = PolicyEnvelope.decodeValue(cpl_policy_match_quality(json))
+        } else {
+            value = nil
+        }
+        return quality(fromEnvelopeValue: value)
+    }
+
+    /// Map a decoded envelope `value` object to the UI quality, applying the CONSERVATIVE
+    /// fallback. A nil value (core returned an `{ok:false,error}` envelope, or the call/parse
+    /// failed) or an unknown/missing `quality` string ⇒ `.questionable` — an honest "check
+    /// this", NEVER silently green. Internal so a test can drive the error path (a stale/invalid
+    /// shape ⇒ the conservative fallback) without reaching the C ABI (PLAN §3.2).
+    /// `@inline(never)` keeps a standalone symbol so the test can link it (the optimizer would
+    /// otherwise inline this sole-caller helper into `decide` and emit no symbol).
+    @inline(never)
+    static func quality(fromEnvelopeValue value: [String: Any]?) -> MatchQuality {
+        guard let quality = (value?["quality"] as? String).flatMap(MatchQuality.init(wire:)) else {
+            return .questionable
+        }
+        return quality
+    }
+}
+
+extension MatchQuality {
+    /// The core wire string (`couple_core::policy::match_quality::MatchQuality`, camelCase).
+    var wireValue: String {
+        switch self {
+        case .confident: return "confident"
+        case .questionable: return "questionable"
+        case .none: return "none"
         }
     }
+
+    /// Decode a core wire string back into the UI enum; nil on an unknown value.
+    init?(wire: String) {
+        switch wire {
+        case "confident": self = .confident
+        case "questionable": self = .questionable
+        case "none": self = .none
+        default: return nil
+        }
+    }
+}
+
+extension SelectionProvenance {
+    /// The core wire string — identical to the persisted `rawValue`.
+    var wireValue: String { rawValue }
 }

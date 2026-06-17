@@ -1,0 +1,28 @@
+{
+  "rows": [
+    {
+      "alternates": [
+        "extB.wav",
+        "extA.wav"
+      ],
+      "candidateOverflow": null,
+      "chip": "ambiguous \u2014 check me",
+      "clusters": 1,
+      "note": null,
+      "selected": null,
+      "state": "ambiguous",
+      "triangles": [
+        {
+          "audioA": "extB.wav",
+          "audioB": "extA.wav",
+          "simultaneous": false
+        }
+      ],
+      "video": "video.mp4"
+    }
+  ],
+  "unusedAudio": [
+    "extA.wav",
+    "extB.wav"
+  ]
+}

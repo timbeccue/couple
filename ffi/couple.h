@@ -429,6 +429,174 @@ uint64_t cpl_match_candidates_graph_start(uint64_t ctx,
  char *cpl_verify_batch_params(uint64_t ctx, const char *pairs_json, const char *params_json);
 
 /*
+ Default `ResolveParams` as JSON (PLAN-CORE-SHELL-BOUNDARY §3.1) — the single source of the
+ row-resolver defaults (matcher choice, z gate/margin, triangle tol, coverage-full, cluster
+ tol, the verify/RMS-escalation knobs) that the CLI and Swift shells read instead of
+ hardcoding copies, exactly as `cpl_pairing_params_default_json` does for the pairing layer.
+ The embedded `pairing` object is the same default `PairingParams`. Free with cpl_string_free.
+ */
+ char *cpl_resolve_params_default_json(void);
+
+/*
+ Full §3.3 ROW RESOLUTION over imported tracks (PLAN-CORE-SHELL-BOUNDARY §3.1) — the single
+ cross-platform home for coverage clustering, the §3.4 audio↔audio simultaneity (triangle)
+ check, the §3.5 margin rule, the §3.3 row states, candidate-overflow handling, and the
+ legacy RMS tie-breaker. Rows = `videos`, the resolver picks each row's audio from `audios`
+ (IMPORTED-TRACK ONLY: the caller excludes audio-less videos; a shell wraps those as inert
+ no-match rows). Returns a JSON `[ResolvedRow]` array (camelCase; each row carries BOTH the
+ content key and the file name so each shell projects its own view, the row `state`/`chip`,
+ the `selected` candidate or null — NEVER a coin-flip — plus `alternates` and the
+ `resolution` honesty trail). No serialized field is NaN/Infinity (§20); output is
+ byte-identical to `cpl_resolve_start`'s terminal payload by construction.
+
+ `params_json` is an optional `ResolveParams` override (camelCase). null/empty ⇒
+ `ResolveParams::default()` (matcher `fingerprint`, z 8.5); a partial object defaults the
+ unset keys (`#[serde(default)]`); malformed JSON or a value whose pairing thresholds fail
+ `validate()` ⇒ InvalidArgument. A null id array paired with a positive count ⇒
+ InvalidArgument. ADDITIVE — `cpl_abi_version` stays 1; every existing symbol is unchanged.
+ Null on error; free with cpl_string_free.
+ */
+
+char *cpl_resolve(uint64_t ctx,
+                  const uint64_t *videos,
+                  uintptr_t n_videos,
+                  const uint64_t *audios,
+                  uintptr_t n_audios,
+                  const char *params_json);
+
+/*
+ Start a ROW-RESOLUTION JOB (PLAN-CORE-SHELL-BOUNDARY §3.1) — the asynchronous,
+ progress-reporting twin of `cpl_resolve`. Same domain arguments (`videos`/`audios` id
+ arrays + an optional `ResolveParams` JSON override), then the standard `(cb, user)` job
+ callback pair. Returns the job id (0 on error), exactly like `cpl_autosync_start`.
+
+ The terminal "done" payload is the SAME `[ResolvedRow]` JSON array that the synchronous
+ `cpl_resolve` returns — so a caller can switch a resolver from the blocking symbol to this
+ job purely to gain a determinate bar, with NO change to the resolved output (the resolution
+ authority is byte-identical; progress is observational). Non-terminal callbacks carry the
+ phase name as the core emits it — the matrix build dominates first-match cost
+ (`MatchFingerprint` while each track's fingerprint is built, `MatchCorrelate` per matrix
+ row, `MatchGraph` around the §13 graph pass), then `Verify`/`Resolve` while the row pass
+ (and any flag-ON classifier / RMS escalation) runs — and a fraction. Cancellation
+ (`cpl_job_cancel`) yields a "cancelled" terminal callback and NEVER a partial result.
+
+ null/empty `params_json` ⇒ `ResolveParams::default()`; a partial object defaults the unset
+ keys; malformed/validate()-failing JSON ⇒ InvalidArgument (returns 0). A null id array with
+ a positive count ⇒ InvalidArgument. ADDITIVE — `cpl_abi_version` stays 1; the synchronous
+ symbol and every other entry are unchanged.
+ */
+
+uint64_t cpl_resolve_start(uint64_t ctx,
+                           const uint64_t *videos,
+                           uintptr_t n_videos,
+                           const uint64_t *audios,
+                           uintptr_t n_audios,
+                           const char *params_json,
+                           CplProgressCb cb,
+                           void *user);
+
+/*
+ PURE match-quality decision (TODO-009 / PLAN §3.2) — the evidence-based verdict-dot color for a
+ row, lifted from Swift `MatchQualityPolicy.decide`. `json` is the request
+ `{"forced":bool,"selection":"none|automatic|manual","autoVerdict":"confident|questionable|none",
+ "manualMatchConfident":bool|null}`. Returns the uniform envelope: on success
+ `{"ok":true,"value":{"quality":"confident|questionable|none"}}`; on malformed/stale JSON
+ `{"ok":false,"error":{"kind":"invalid","message":"..."}}` (the wrapper maps the error to the
+ conservative `questionable`, never silently green). PURE (no ctx). Free with cpl_string_free.
+ */
+ char *cpl_policy_match_quality(const char *json);
+
+/*
+ PURE manual drag-to-pair decision (TODO-013 / PLAN §3.2) — what dropping an audio file onto the
+ selected couple should do, lifted from Swift `RepairDropPolicy.decide` (both drop gestures share
+ it so they cannot diverge). `json` is the request `{"hasSelectedCouple":bool,
+ "payloadIsAudio":bool,"videoAvailable":bool,"currentSelectedKey":str|null,"droppedKey":str,
+ "approved":bool}`. Returns the uniform envelope: on success
+ `{"ok":true,"value":{"outcome":"noOp|accept|needsConfirmation|reject"}}`; on malformed/stale JSON
+ the `{"ok":false,"error":{"kind":"invalid",...}}` envelope (the wrapper maps the error to the
+ conservative `reject`, which mutates NO state). PURE (no ctx). Free with cpl_string_free.
+ */
+ char *cpl_policy_repair_drop(const char *json);
+
+/*
+ PURE re-resolution merge decision (TODO-007 / PLAN §3.2) — how to fold a fresh `ResolvedRow`
+ into an existing queue row, lifted from Swift `RowMergePolicy.plan`. `json` is the request
+ `{"protected":bool,"currentSelectedKey":str|null,"currentCandidateKeys":[str],
+ "freshSelectedKey":str|null,"freshCandidateKeys":[str]}`. Returns the uniform envelope: on
+ success `{"ok":true,"value":{"selectedAudioKey":str|null,"candidateKeys":[str],
+ "adoptFreshDisplay":bool,"rebuildSession":bool,"clearForced":bool}}`; on malformed/stale JSON
+ the error envelope (the wrapper maps it to the conservative PROTECTED-row plan: keep the
+ existing selection/candidates/display, never silently swap a source). PURE (no ctx). Free with
+ cpl_string_free.
+ */
+ char *cpl_policy_row_merge(const char *json);
+
+/*
+ PURE media-removal / clear-session decision (TODO-001 / PLAN §3.2) — whether a removal needs a
+ confirmation and with what counts, lifted from Swift `MediaRemovalPolicy` (both the trash button
+ and the Delete key share it). A single TAGGED request dispatches the two pure functions:
+   - `{"op":"plan","selectedKeys":[str],"poolKeys":[str],"couples":[{"videoKey","selectedAudioKey":
+     str|null,"approved"}]}` ⇒ `value` is `{"removableKeys":[str],"needsConfirmation":bool,
+     "affectedCouples":u32,"affectedApproved":u32}`;
+   - `{"op":"clearCounts","mediaCount":u32,"couples":[…]}` ⇒ `value` is
+     `{"media":u32,"couples":u32,"approved":u32}`.
+ Returns the uniform envelope; on malformed/stale JSON (e.g. an unknown `op`) the error envelope
+ (the wrapper maps the error to the conservative EMPTY/no-op plan — `needsConfirmation:false`,
+ zero counts — so a failure removes nothing). PURE (no ctx). Free with cpl_string_free.
+ */
+ char *cpl_policy_media_removal(const char *json);
+
+/*
+ PURE automatic anchor proposal / "+ anchor" decision (TODO-011 / PLAN §3.2) — overlap-bounded
+ anchor placement, lifted from Swift `AnchorProposal` (pure geometry/scoring; numeric behavior
+ preserved exactly). A single TAGGED request dispatches the two pure functions:
+   - `{"op":"propose","overlap":{"start","end"}|null,"candidates":[{"t","score","usable"}],
+     "tuning":{…}?}` ⇒ `value` is a sorted `[f64]` (always length 0, 2, or 3 — never 1, all
+     inside the overlap);
+   - `{"op":"add","overlap":…,"existing":[f64],"candidates":[…],"tuning":{…}?}` ⇒ `value` is one
+     in-overlap, separated time or `null`.
+ `tuning` defaults to the historical values when omitted. Returns the uniform envelope; on
+ malformed/stale JSON the error envelope (the wrapper maps the error to the conservative EMPTY
+ proposal / `nil` add — the manual-rescue state, never a fabricated/out-of-overlap anchor). PURE
+ (no ctx). Free with cpl_string_free.
+ */
+
+char *cpl_policy_anchor_propose(const char *json);
+
+/*
+ PURE shadow-telemetry projection (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.2 / PLAN §3.2) — orders
+ one video's `PairEvidence` row by score and projects displayable rows, lifted from Swift
+ `ShadowTelemetry.rows`. NO acceptance thresholding (it surfaces core's `classification`
+ verbatim). `json` is the request `{"evidence":[PairEvidence],"audioKeys":[str],
+ "audioNames":[str]}` (the arrays index-aligned: cell `i` scores audio `i`). Returns the uniform
+ envelope: on success `{"ok":true,"value":[{"audioKey","audioName","evidence":<PairEvidence>}]}`
+ sorted by score desc / name asc / key asc (a TOTAL order — key is unique); mismatched lengths
+ truncate to the shortest. On malformed/stale JSON the error envelope (the wrapper maps the error
+ to an EMPTY projection — telemetry simply does not display, never a fabricated row). PURE (no
+ ctx). Free with cpl_string_free.
+ */
+
+char *cpl_policy_shadow_rows(const char *json);
+
+/*
+ PURE activity-strip decision (TODO-005 / PLAN §3.2 / Phase F) — the single honest summary line the
+ global activity strip should show for a snapshot of the in-flight job signals, lifted from the
+ MATH of Swift `ActivitySummaryPolicy` (priority / weighting / fraction / debounce). PURE: `json`
+ carries the snapshot PLUS the explicit time inputs (`elapsedMs`, optional `debounceMs`,
+ `phaseFloor`) so core never reads a clock — the shell holds the debounce timer + the per-phase
+ floor. `json` is the request `{"importing"?,"pairing"?,"syncing"?,"exporting"?,"ingest"?,
+ "failure"?:str,"elapsedMs":f64,"debounceMs"?:f64,"phaseFloor"?:f64}`. Returns the uniform envelope:
+ on success `{"ok":true,"value":{"summary":<Decision>|null}}` where `Decision` is a STRUCTURED
+ decision (`{"line":{"kind":…,…},"fraction":f64|null,"isError":bool,"phaseKey":str|null}`) the
+ shell formats into localized strings — the user-facing copy stays shell-side. `summary:null` means
+ "show nothing". On malformed/stale JSON the error envelope (the wrapper maps the error to a
+ conservative no-line/idle fallback, never a wrong-but-confident line). PURE (no ctx). Free with
+ cpl_string_free.
+ */
+
+char *cpl_policy_activity(const char *json);
+
+/*
  LRU-GC the cache down to max_bytes; returns bytes freed.
  */
  uint64_t cpl_cache_gc(uint64_t ctx, uint64_t max_bytes);

@@ -47,7 +47,16 @@
 //   5. "+ ANCHOR" STAYS INSIDE — `addAnchorCandidate` only ever returns a time that is
 //      inside the overlap and ≥ minSeparation from every existing anchor; with no usable
 //      in-overlap onset it returns nil (no anchor added), never an out-of-overlap onset.
+//
+// RELOCATION (PLAN-CORE-SHELL-BOUNDARY Phase E): the DECISION (the pure geometry/scoring)
+// now lives in `couple_core::policy::anchor` and is reached over the FFI
+// (`cpl_policy_anchor_propose`, a single tagged endpoint dispatching `propose`/`add`).
+// These functions are thin WRAPPERS; the numeric behavior is byte-faithful. On a core error
+// (a malformed/stale request — unreachable with this in-process call) `propose` maps to the
+// CONSERVATIVE EMPTY set and `addAnchorCandidate` to `nil` — the manual-rescue state, NEVER
+// a fabricated, out-of-overlap, or count-of-one anchor (CONTRACT).
 
+import CCouple
 import Foundation
 
 public enum AnchorProposal {
@@ -127,78 +136,15 @@ public enum AnchorProposal {
     public static func propose(overlap: ClosedRange<Double>?,
                                candidates: [Candidate],
                                tuning: Tuning = Tuning()) -> [Double] {
-        guard let overlap else { return [] }
-        let len = overlap.upperBound - overlap.lowerBound
-        guard len > 0 else { return [] }
-
-        // Only in-overlap, usable candidates are ever eligible (invariant 1).
-        let eligible = candidates.filter {
-            $0.usable && $0.t >= overlap.lowerBound && $0.t <= overlap.upperBound
-        }
-
-        if len >= tuning.longOverlapMinS {
-            let zoned = proposeZoned(overlap: overlap, eligible: eligible, tuning: tuning)
-            // A long overlap should yield three zoned anchors; only if the zones can't
-            // supply a non-degenerate set (e.g. essentially everything is silent) do we
-            // fall through to the short-overlap rule rather than fabricate midpoints.
-            if zoned.count >= 2 { return zoned }
-        }
-
-        return proposeShortPair(overlap: overlap, eligible: eligible, tuning: tuning)
-    }
-
-    /// Three anchors, one per zone, each the sharpest usable onset inside that zone of the
-    /// overlap. A zone with no usable onset contributes nothing (no midpoint). Distinct
-    /// times only; sorted ascending.
-    private static func proposeZoned(overlap: ClosedRange<Double>,
-                                     eligible: [Candidate],
-                                     tuning: Tuning) -> [Double] {
-        let len = overlap.upperBound - overlap.lowerBound
-        var picks: [Double] = []
-        for zone in tuning.zones {
-            let a = overlap.lowerBound + zone.lo * len
-            let b = overlap.lowerBound + zone.hi * len
-            let best = eligible
-                .filter { $0.t >= a && $0.t <= b && !picks.contains($0.t) }
-                .max { $0.score < $1.score }
-            if let best { picks.append(best.t) }
-        }
-        return picks.sorted()
-    }
-
-    /// Two well-separated usable anchors for a short overlap: the strongest usable onset
-    /// in the earlier half paired with the strongest in the later half, kept at least
-    /// `shortMinSeparationFraction` of the overlap apart. Falls back to the best globally
-    /// separated usable pair if the half-split doesn't satisfy separation. Returns [] when
-    /// no two usable candidates are far enough apart (invariant 3 — never one, never a
-    /// midpoint).
-    private static func proposeShortPair(overlap: ClosedRange<Double>,
-                                         eligible: [Candidate],
-                                         tuning: Tuning) -> [Double] {
-        guard eligible.count >= 2 else { return [] }
-        let len = overlap.upperBound - overlap.lowerBound
-        let minSep = tuning.shortMinSeparationFraction * len
-        let mid = overlap.lowerBound + len / 2
-
-        // Prefer one clearly-earlier and one clearly-later anchor (TODO-011 readability):
-        // the strongest usable onset in each half, if they clear the separation.
-        let early = eligible.filter { $0.t < mid }.max { $0.score < $1.score }
-        let late = eligible.filter { $0.t >= mid }.max { $0.score < $1.score }
-        if let early, let late, abs(late.t - early.t) >= minSep {
-            return [early.t, late.t].sorted()
-        }
-
-        // Otherwise take the strongest candidate and the strongest OTHER candidate that
-        // is ≥ minSep away from it — still two real events, still separated, but not
-        // forced onto a half boundary. Considering anchors strongest-first keeps the more
-        // distinctive shape in the pair.
-        for anchor in eligible.sorted(by: { $0.score > $1.score }) {
-            let partner = eligible
-                .filter { abs($0.t - anchor.t) >= minSep }
-                .max { $0.score < $1.score }
-            if let partner { return [anchor.t, partner.t].sorted() }
-        }
-        return []
+        var req: [String: Any] = [
+            "op": "propose",
+            "candidates": candidates.map(\.wireDict),
+            "tuning": tuning.wireDict,
+        ]
+        req["overlap"] = overlap.map(Self.overlapDict) ?? NSNull()
+        // CONSERVATIVE fallback on any failure: the EMPTY set (manual-rescue), never a fabricated
+        // or count-of-one proposal.
+        return PolicyEnvelope.decodeValueArray(callPolicy(req))?.compactMap { ($0 as? NSNumber)?.doubleValue } ?? []
     }
 
     /// The automatic "+ anchor" pick (TODO-011 / UX §2.2): the strongest usable onset that
@@ -210,14 +156,49 @@ public enum AnchorProposal {
                                           existing: [Double],
                                           candidates: [Candidate],
                                           tuning: Tuning = Tuning()) -> Double? {
-        guard existing.count < tuning.maxAnchors, let overlap else { return nil }
-        let len = overlap.upperBound - overlap.lowerBound
-        guard len > 0 else { return nil }
-        let minSep = tuning.addMinSeparationFraction * len
-        return candidates
-            .filter { $0.usable && $0.t >= overlap.lowerBound && $0.t <= overlap.upperBound }
-            .filter { c in existing.allSatisfy { abs($0 - c.t) >= minSep } }
-            .max { $0.score < $1.score }?
-            .t
+        var req: [String: Any] = [
+            "op": "add",
+            "existing": existing,
+            "candidates": candidates.map(\.wireDict),
+            "tuning": tuning.wireDict,
+        ]
+        req["overlap"] = overlap.map(Self.overlapDict) ?? NSNull()
+        // CONSERVATIVE fallback on any failure: add NOTHING (nil), never an out-of-overlap onset.
+        // The `add` value is a bare number or JSON null; decodeValueArray expects an array, so use
+        // the object-less decode path: parse the envelope and read the scalar `value`.
+        guard let value = PolicyEnvelope.decodeScalar(callPolicy(req)),
+              let t = (value as? NSNumber)?.doubleValue else {
+            return nil
+        }
+        return t
+    }
+
+    /// Encode a request dict, call `cpl_policy_anchor_propose`, and return the C string (nil on an
+    /// encode failure). The caller's envelope decoder applies the conservative fallback.
+    private static func callPolicy(_ req: [String: Any]) -> UnsafeMutablePointer<CChar>? {
+        guard let data = try? JSONSerialization.data(withJSONObject: req),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return cpl_policy_anchor_propose(json)
+    }
+
+    /// The core `Overlap` wire dict for a closed range.
+    private static func overlapDict(_ ov: ClosedRange<Double>) -> [String: Any] {
+        ["start": ov.lowerBound, "end": ov.upperBound]
+    }
+}
+
+extension AnchorProposal.Candidate {
+    /// The core `AnchorCandidate` wire dict (`{"t","score","usable"}`).
+    var wireDict: [String: Any] { ["t": t, "score": score, "usable": usable] }
+}
+
+extension AnchorProposal.Tuning {
+    /// The core `AnchorTuning` wire dict (zones become `{lo,hi}` objects, matching core's `Zone`).
+    var wireDict: [String: Any] {
+        ["longOverlapMinS": longOverlapMinS,
+         "zones": zones.map { ["lo": $0.lo, "hi": $0.hi] },
+         "shortMinSeparationFraction": shortMinSeparationFraction,
+         "addMinSeparationFraction": addMinSeparationFraction,
+         "maxAnchors": maxAnchors]
     }
 }

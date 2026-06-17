@@ -1305,6 +1305,338 @@ pub unsafe extern "C" fn cpl_verify_batch_params(
     }
 }
 
+// ---------- resolve (PLAN-CORE-SHELL-BOUNDARY §3.1, the core row resolver) ----------
+
+/// Decode `ResolveParams` for the `cpl_resolve*` symbols (PLAN-CORE-SHELL-BOUNDARY §3.1) —
+/// the resolver twin of [`pairing_params_or_error`]. null or empty `params_json` ⇒
+/// `ResolveParams::default()`; malformed JSON ⇒ `InvalidArgument` (sets the thread-local
+/// last-error and returns `None`, so the caller returns null/0). `ResolveParams` is
+/// `#[serde(default)]`, so a PARTIAL object fills only the named keys and defaults the rest.
+/// The core-owned pairing thresholds (`params.pairing`) are validated before any work; a
+/// value that fails `validate()` ⇒ `InvalidArgument` + `None`.
+unsafe fn resolve_params_or_error(
+    params_json: *const c_char,
+) -> Option<couple_core::resolve::ResolveParams> {
+    let params: couple_core::resolve::ResolveParams = if params_json.is_null() {
+        couple_core::resolve::ResolveParams::default()
+    } else {
+        let raw = CStr::from_ptr(params_json).to_string_lossy();
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            couple_core::resolve::ResolveParams::default()
+        } else {
+            match serde_json::from_str(trimmed) {
+                Ok(p) => p,
+                Err(e) => {
+                    set_error(&couple_core::CoupleError::invalid(format!("resolve params: {e}")));
+                    return None;
+                }
+            }
+        }
+    };
+    if let Err(e) = params.pairing.validate() {
+        set_error(&e);
+        return None;
+    }
+    Some(params)
+}
+
+/// Default `ResolveParams` as JSON (PLAN-CORE-SHELL-BOUNDARY §3.1) — the single source of the
+/// row-resolver defaults (matcher choice, z gate/margin, triangle tol, coverage-full, cluster
+/// tol, the verify/RMS-escalation knobs) that the CLI and Swift shells read instead of
+/// hardcoding copies, exactly as `cpl_pairing_params_default_json` does for the pairing layer.
+/// The embedded `pairing` object is the same default `PairingParams`. Free with cpl_string_free.
+#[no_mangle]
+pub extern "C" fn cpl_resolve_params_default_json() -> *mut c_char {
+    to_cstring(serde_json::to_string(&couple_core::resolve::ResolveParams::default()).unwrap())
+}
+
+/// Full §3.3 ROW RESOLUTION over imported tracks (PLAN-CORE-SHELL-BOUNDARY §3.1) — the single
+/// cross-platform home for coverage clustering, the §3.4 audio↔audio simultaneity (triangle)
+/// check, the §3.5 margin rule, the §3.3 row states, candidate-overflow handling, and the
+/// legacy RMS tie-breaker. Rows = `videos`, the resolver picks each row's audio from `audios`
+/// (IMPORTED-TRACK ONLY: the caller excludes audio-less videos; a shell wraps those as inert
+/// no-match rows). Returns a JSON `[ResolvedRow]` array (camelCase; each row carries BOTH the
+/// content key and the file name so each shell projects its own view, the row `state`/`chip`,
+/// the `selected` candidate or null — NEVER a coin-flip — plus `alternates` and the
+/// `resolution` honesty trail). No serialized field is NaN/Infinity (§20); output is
+/// byte-identical to `cpl_resolve_start`'s terminal payload by construction.
+///
+/// `params_json` is an optional `ResolveParams` override (camelCase). null/empty ⇒
+/// `ResolveParams::default()` (matcher `fingerprint`, z 8.5); a partial object defaults the
+/// unset keys (`#[serde(default)]`); malformed JSON or a value whose pairing thresholds fail
+/// `validate()` ⇒ InvalidArgument. A null id array paired with a positive count ⇒
+/// InvalidArgument. ADDITIVE — `cpl_abi_version` stays 1; every existing symbol is unchanged.
+/// Null on error; free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_resolve(
+    ctx: u64,
+    videos: *const u64,
+    n_videos: usize,
+    audios: *const u64,
+    n_audios: usize,
+    params_json: *const c_char,
+) -> *mut c_char {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return std::ptr::null_mut();
+    };
+    if (videos.is_null() && n_videos > 0) || (audios.is_null() && n_audios > 0) {
+        set_error(&couple_core::CoupleError::invalid("null track id array"));
+        return std::ptr::null_mut();
+    }
+    let Some(params) = resolve_params_or_error(params_json) else {
+        return std::ptr::null_mut();
+    };
+    let vs = id_slice(videos, n_videos);
+    let aus = id_slice(audios, n_audios);
+    match ctx.resolve(vs, aus, &params) {
+        Ok(rows) => to_cstring(serde_json::to_string(&rows).unwrap()),
+        Err(e) => {
+            set_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Start a ROW-RESOLUTION JOB (PLAN-CORE-SHELL-BOUNDARY §3.1) — the asynchronous,
+/// progress-reporting twin of `cpl_resolve`. Same domain arguments (`videos`/`audios` id
+/// arrays + an optional `ResolveParams` JSON override), then the standard `(cb, user)` job
+/// callback pair. Returns the job id (0 on error), exactly like `cpl_autosync_start`.
+///
+/// The terminal "done" payload is the SAME `[ResolvedRow]` JSON array that the synchronous
+/// `cpl_resolve` returns — so a caller can switch a resolver from the blocking symbol to this
+/// job purely to gain a determinate bar, with NO change to the resolved output (the resolution
+/// authority is byte-identical; progress is observational). Non-terminal callbacks carry the
+/// phase name as the core emits it — the matrix build dominates first-match cost
+/// (`MatchFingerprint` while each track's fingerprint is built, `MatchCorrelate` per matrix
+/// row, `MatchGraph` around the §13 graph pass), then `Verify`/`Resolve` while the row pass
+/// (and any flag-ON classifier / RMS escalation) runs — and a fraction. Cancellation
+/// (`cpl_job_cancel`) yields a "cancelled" terminal callback and NEVER a partial result.
+///
+/// null/empty `params_json` ⇒ `ResolveParams::default()`; a partial object defaults the unset
+/// keys; malformed/validate()-failing JSON ⇒ InvalidArgument (returns 0). A null id array with
+/// a positive count ⇒ InvalidArgument. ADDITIVE — `cpl_abi_version` stays 1; the synchronous
+/// symbol and every other entry are unchanged.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_resolve_start(
+    ctx: u64,
+    videos: *const u64,
+    n_videos: usize,
+    audios: *const u64,
+    n_audios: usize,
+    params_json: *const c_char,
+    cb: CplProgressCb,
+    user: *mut c_void,
+) -> u64 {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return 0;
+    };
+    if (videos.is_null() && n_videos > 0) || (audios.is_null() && n_audios > 0) {
+        set_error(&couple_core::CoupleError::invalid("null track id array"));
+        return 0;
+    }
+    let Some(params) = resolve_params_or_error(params_json) else {
+        return 0;
+    };
+    // Copy the id slices into OWNED Vecs BEFORE the spawn_job move — the caller's pointers are
+    // only valid for this call, and the job runs on a worker thread (mirrors how autosync/export
+    // and cpl_match_candidates_graph_start capture their owned args). An empty array with a null
+    // pointer yields an empty Vec.
+    let vs: Vec<u64> = if n_videos == 0 {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(videos, n_videos).to_vec()
+    };
+    let aus: Vec<u64> = if n_audios == 0 {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(audios, n_audios).to_vec()
+    };
+    spawn_job(ctx, cb, user, move |ctx, progress, cancel| {
+        let mut prog = ProgressEmitter::new(0, progress);
+        let rows = ctx.resolve_prog(&vs, &aus, &params, &mut prog, cancel)?;
+        Ok(serde_json::to_string(&rows).unwrap())
+    })
+}
+
+// ---------- policy (PLAN-CORE-SHELL-BOUNDARY §3.2, the pure interaction-decision policies) ----------
+//
+// Each `cpl_policy_*` is PURE (no ctx) — exactly like `cpl_triangle_closes`, but with a UNIFORM
+// `{ok,value|error}` envelope instead of null-on-malformed, so a malformed request or a stale shell
+// DTO surfaces as an explicit error the wrapper maps to a CONSERVATIVE fallback (never a silent wrong
+// answer; PLAN §3.2 risk "Silent policy fallback"). These run on UI gestures (clicks/drops/imports),
+// never per frame, so the JSON round-trip is free. ADDITIVE — `cpl_abi_version` stays 1.
+
+/// Build the success envelope `{"ok":true,"value":<value>}` for a serializable policy `Response`.
+fn policy_ok<T: serde::Serialize>(value: &T) -> *mut c_char {
+    to_cstring(serde_json::json!({ "ok": true, "value": value }).to_string())
+}
+
+/// Build the error envelope `{"ok":false,"error":{"kind":"invalid","message":msg}}` — the only
+/// failure shape a pure policy returns (a malformed/stale request). Always `"invalid"`: a policy
+/// fn is total over valid inputs, so the only failure is a request that does not parse.
+fn policy_err(msg: impl std::fmt::Display) -> *mut c_char {
+    to_cstring(
+        serde_json::json!({
+            "ok": false,
+            "error": { "kind": "invalid", "message": msg.to_string() }
+        })
+        .to_string(),
+    )
+}
+
+/// Parse a pure policy request JSON into `T`, or return the error envelope. Null/empty/malformed ⇒
+/// `Err(envelope)` the caller returns verbatim. Factored so every `cpl_policy_*` shares the exact
+/// same parse + error shape.
+unsafe fn policy_request<T: serde::de::DeserializeOwned>(
+    json: *const c_char,
+) -> std::result::Result<T, *mut c_char> {
+    if json.is_null() {
+        return Err(policy_err("policy request JSON required"));
+    }
+    let raw = CStr::from_ptr(json).to_string_lossy();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(policy_err("policy request JSON required"));
+    }
+    serde_json::from_str::<T>(trimmed).map_err(|e| policy_err(format!("bad policy request: {e}")))
+}
+
+/// PURE match-quality decision (TODO-009 / PLAN §3.2) — the evidence-based verdict-dot color for a
+/// row, lifted from Swift `MatchQualityPolicy.decide`. `json` is the request
+/// `{"forced":bool,"selection":"none|automatic|manual","autoVerdict":"confident|questionable|none",
+/// "manualMatchConfident":bool|null}`. Returns the uniform envelope: on success
+/// `{"ok":true,"value":{"quality":"confident|questionable|none"}}`; on malformed/stale JSON
+/// `{"ok":false,"error":{"kind":"invalid","message":"..."}}` (the wrapper maps the error to the
+/// conservative `questionable`, never silently green). PURE (no ctx). Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_policy_match_quality(json: *const c_char) -> *mut c_char {
+    use couple_core::policy::match_quality::{decide, Request};
+    match policy_request::<Request>(json) {
+        Ok(req) => policy_ok(&decide(&req)),
+        Err(envelope) => envelope,
+    }
+}
+
+/// PURE manual drag-to-pair decision (TODO-013 / PLAN §3.2) — what dropping an audio file onto the
+/// selected couple should do, lifted from Swift `RepairDropPolicy.decide` (both drop gestures share
+/// it so they cannot diverge). `json` is the request `{"hasSelectedCouple":bool,
+/// "payloadIsAudio":bool,"videoAvailable":bool,"currentSelectedKey":str|null,"droppedKey":str,
+/// "approved":bool}`. Returns the uniform envelope: on success
+/// `{"ok":true,"value":{"outcome":"noOp|accept|needsConfirmation|reject"}}`; on malformed/stale JSON
+/// the `{"ok":false,"error":{"kind":"invalid",...}}` envelope (the wrapper maps the error to the
+/// conservative `reject`, which mutates NO state). PURE (no ctx). Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_policy_repair_drop(json: *const c_char) -> *mut c_char {
+    use couple_core::policy::repair_drop::{decide, Request};
+    match policy_request::<Request>(json) {
+        Ok(req) => policy_ok(&decide(&req)),
+        Err(envelope) => envelope,
+    }
+}
+
+/// PURE re-resolution merge decision (TODO-007 / PLAN §3.2) — how to fold a fresh `ResolvedRow`
+/// into an existing queue row, lifted from Swift `RowMergePolicy.plan`. `json` is the request
+/// `{"protected":bool,"currentSelectedKey":str|null,"currentCandidateKeys":[str],
+/// "freshSelectedKey":str|null,"freshCandidateKeys":[str]}`. Returns the uniform envelope: on
+/// success `{"ok":true,"value":{"selectedAudioKey":str|null,"candidateKeys":[str],
+/// "adoptFreshDisplay":bool,"rebuildSession":bool,"clearForced":bool}}`; on malformed/stale JSON
+/// the error envelope (the wrapper maps it to the conservative PROTECTED-row plan: keep the
+/// existing selection/candidates/display, never silently swap a source). PURE (no ctx). Free with
+/// cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_policy_row_merge(json: *const c_char) -> *mut c_char {
+    use couple_core::policy::row_merge::{plan, Request};
+    match policy_request::<Request>(json) {
+        Ok(req) => policy_ok(&plan(&req)),
+        Err(envelope) => envelope,
+    }
+}
+
+/// PURE media-removal / clear-session decision (TODO-001 / PLAN §3.2) — whether a removal needs a
+/// confirmation and with what counts, lifted from Swift `MediaRemovalPolicy` (both the trash button
+/// and the Delete key share it). A single TAGGED request dispatches the two pure functions:
+///   - `{"op":"plan","selectedKeys":[str],"poolKeys":[str],"couples":[{"videoKey","selectedAudioKey":
+///     str|null,"approved"}]}` ⇒ `value` is `{"removableKeys":[str],"needsConfirmation":bool,
+///     "affectedCouples":u32,"affectedApproved":u32}`;
+///   - `{"op":"clearCounts","mediaCount":u32,"couples":[…]}` ⇒ `value` is
+///     `{"media":u32,"couples":u32,"approved":u32}`.
+/// Returns the uniform envelope; on malformed/stale JSON (e.g. an unknown `op`) the error envelope
+/// (the wrapper maps the error to the conservative EMPTY/no-op plan — `needsConfirmation:false`,
+/// zero counts — so a failure removes nothing). PURE (no ctx). Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_policy_media_removal(json: *const c_char) -> *mut c_char {
+    use couple_core::policy::media_removal::{dispatch, Request};
+    match policy_request::<Request>(json) {
+        Ok(req) => policy_ok(&dispatch(&req)),
+        Err(envelope) => envelope,
+    }
+}
+
+/// PURE automatic anchor proposal / "+ anchor" decision (TODO-011 / PLAN §3.2) — overlap-bounded
+/// anchor placement, lifted from Swift `AnchorProposal` (pure geometry/scoring; numeric behavior
+/// preserved exactly). A single TAGGED request dispatches the two pure functions:
+///   - `{"op":"propose","overlap":{"start","end"}|null,"candidates":[{"t","score","usable"}],
+///     "tuning":{…}?}` ⇒ `value` is a sorted `[f64]` (always length 0, 2, or 3 — never 1, all
+///     inside the overlap);
+///   - `{"op":"add","overlap":…,"existing":[f64],"candidates":[…],"tuning":{…}?}` ⇒ `value` is one
+///     in-overlap, separated time or `null`.
+/// `tuning` defaults to the historical values when omitted. Returns the uniform envelope; on
+/// malformed/stale JSON the error envelope (the wrapper maps the error to the conservative EMPTY
+/// proposal / `nil` add — the manual-rescue state, never a fabricated/out-of-overlap anchor). PURE
+/// (no ctx). Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_policy_anchor_propose(json: *const c_char) -> *mut c_char {
+    use couple_core::policy::anchor::{dispatch, Request};
+    match policy_request::<Request>(json) {
+        Ok(req) => policy_ok(&dispatch(&req)),
+        Err(envelope) => envelope,
+    }
+}
+
+/// PURE shadow-telemetry projection (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.2 / PLAN §3.2) — orders
+/// one video's `PairEvidence` row by score and projects displayable rows, lifted from Swift
+/// `ShadowTelemetry.rows`. NO acceptance thresholding (it surfaces core's `classification`
+/// verbatim). `json` is the request `{"evidence":[PairEvidence],"audioKeys":[str],
+/// "audioNames":[str]}` (the arrays index-aligned: cell `i` scores audio `i`). Returns the uniform
+/// envelope: on success `{"ok":true,"value":[{"audioKey","audioName","evidence":<PairEvidence>}]}`
+/// sorted by score desc / name asc / key asc (a TOTAL order — key is unique); mismatched lengths
+/// truncate to the shortest. On malformed/stale JSON the error envelope (the wrapper maps the error
+/// to an EMPTY projection — telemetry simply does not display, never a fabricated row). PURE (no
+/// ctx). Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_policy_shadow_rows(json: *const c_char) -> *mut c_char {
+    use couple_core::policy::shadow::{project, Request};
+    match policy_request::<Request>(json) {
+        Ok(req) => policy_ok(&project(&req)),
+        Err(envelope) => envelope,
+    }
+}
+
+/// PURE activity-strip decision (TODO-005 / PLAN §3.2 / Phase F) — the single honest summary line the
+/// global activity strip should show for a snapshot of the in-flight job signals, lifted from the
+/// MATH of Swift `ActivitySummaryPolicy` (priority / weighting / fraction / debounce). PURE: `json`
+/// carries the snapshot PLUS the explicit time inputs (`elapsedMs`, optional `debounceMs`,
+/// `phaseFloor`) so core never reads a clock — the shell holds the debounce timer + the per-phase
+/// floor. `json` is the request `{"importing"?,"pairing"?,"syncing"?,"exporting"?,"ingest"?,
+/// "failure"?:str,"elapsedMs":f64,"debounceMs"?:f64,"phaseFloor"?:f64}`. Returns the uniform envelope:
+/// on success `{"ok":true,"value":{"summary":<Decision>|null}}` where `Decision` is a STRUCTURED
+/// decision (`{"line":{"kind":…,…},"fraction":f64|null,"isError":bool,"phaseKey":str|null}`) the
+/// shell formats into localized strings — the user-facing copy stays shell-side. `summary:null` means
+/// "show nothing". On malformed/stale JSON the error envelope (the wrapper maps the error to a
+/// conservative no-line/idle fallback, never a wrong-but-confident line). PURE (no ctx). Free with
+/// cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_policy_activity(json: *const c_char) -> *mut c_char {
+    use couple_core::policy::activity::{decide, Request};
+    match policy_request::<Request>(json) {
+        Ok(req) => policy_ok(&decide(&req)),
+        Err(envelope) => envelope,
+    }
+}
+
 // ---------- cache ----------
 
 /// LRU-GC the cache down to max_bytes; returns bytes freed.
@@ -1397,6 +1729,302 @@ mod tests {
         assert!(take(unsafe { cpl_triangle_closes(bad.as_ptr()) }).is_none(), "malformed ⇒ null");
     }
 
+    // PLAN §3.2: cpl_policy_match_quality returns the UNIFORM {ok,value|error} envelope (NOT
+    // null-on-malformed). The VALUE path decides; the ERROR path surfaces a malformed/stale request
+    // as an explicit invalid error so a wrapper maps it to a conservative fallback (never silent).
+    #[test]
+    fn policy_match_quality_envelope() {
+        // Value path: an automatic confident selection ⇒ confident.
+        let ok = CString::new(
+            r#"{"forced":false,"selection":"automatic","autoVerdict":"confident","manualMatchConfident":null}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_match_quality(ok.as_ptr()) }).expect("envelope json");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "value path ok: {r}");
+        assert_eq!(v["value"]["quality"], serde_json::json!("confident"), "value path quality: {r}");
+
+        // Value path: a manual pick with no/false evidence ⇒ questionable (never silently green).
+        let manual = CString::new(
+            r#"{"forced":false,"selection":"manual","autoVerdict":"confident","manualMatchConfident":false}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_match_quality(manual.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["value"]["quality"], serde_json::json!("questionable"), "manual stays amber: {r}");
+
+        // Error path (malformed): explicit {ok:false,error:{kind:invalid}} — NOT null, NOT a silent value.
+        let bad = CString::new("{not json").unwrap();
+        let r = take(unsafe { cpl_policy_match_quality(bad.as_ptr()) }).expect("error envelope, not null");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "malformed ⇒ ok:false: {r}");
+        assert_eq!(v["error"]["kind"], serde_json::json!("invalid"), "malformed ⇒ invalid: {r}");
+
+        // Error path (stale shape): a wrong-shape DTO (missing required fields) is also invalid.
+        let stale = CString::new(r#"{"selection":"manual"}"#).unwrap();
+        let r = take(unsafe { cpl_policy_match_quality(stale.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "stale DTO ⇒ ok:false: {r}");
+    }
+
+    // PLAN §3.2: cpl_policy_repair_drop — value path decides the drop outcome; error path surfaces
+    // a malformed/stale request explicitly (the wrapper maps it to the conservative `reject`).
+    #[test]
+    fn policy_repair_drop_envelope() {
+        // Value path: an approved couple + a different source ⇒ needsConfirmation.
+        let ok = CString::new(
+            r#"{"hasSelectedCouple":true,"payloadIsAudio":true,"videoAvailable":true,
+                "currentSelectedKey":"old","droppedKey":"new","approved":true}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_repair_drop(ok.as_ptr()) }).expect("envelope json");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "value path ok: {r}");
+        assert_eq!(v["value"]["outcome"], serde_json::json!("needsConfirmation"), "outcome: {r}");
+
+        // Value path: a non-audio payload ⇒ reject (a malformed drop never mutates).
+        let reject = CString::new(
+            r#"{"hasSelectedCouple":true,"payloadIsAudio":false,"videoAvailable":true,
+                "currentSelectedKey":null,"droppedKey":"x","approved":false}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_repair_drop(reject.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["value"]["outcome"], serde_json::json!("reject"), "non-audio ⇒ reject: {r}");
+
+        // Error path: malformed JSON ⇒ explicit invalid error, not null, not a silent outcome.
+        let bad = CString::new("{nope").unwrap();
+        let r = take(unsafe { cpl_policy_repair_drop(bad.as_ptr()) }).expect("error envelope");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "malformed ⇒ ok:false: {r}");
+        assert_eq!(v["error"]["kind"], serde_json::json!("invalid"), "malformed ⇒ invalid: {r}");
+    }
+
+    // PLAN §3.2: cpl_policy_row_merge — value path folds a fresh resolution into an existing row;
+    // error path surfaces a malformed/stale request explicitly (the wrapper maps it to a protected
+    // no-change plan).
+    #[test]
+    fn policy_row_merge_envelope() {
+        // Value path: an unprotected unresolved row adopting a confident result ⇒ adopt+rebuild.
+        let ok = CString::new(
+            r#"{"protected":false,"currentSelectedKey":null,"currentCandidateKeys":[],
+                "freshSelectedKey":"A","freshCandidateKeys":["A"]}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_row_merge(ok.as_ptr()) }).expect("envelope json");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "value path ok: {r}");
+        assert_eq!(v["value"]["selectedAudioKey"], serde_json::json!("A"), "selected: {r}");
+        assert_eq!(v["value"]["rebuildSession"], serde_json::json!(true), "rebuild once: {r}");
+        assert_eq!(v["value"]["adoptFreshDisplay"], serde_json::json!(true), "adopt: {r}");
+
+        // Value path: a protected row keeps its selection (stronger source only appended).
+        let protected = CString::new(
+            r#"{"protected":true,"currentSelectedKey":"chosen","currentCandidateKeys":["chosen"],
+                "freshSelectedKey":"stronger","freshCandidateKeys":["stronger","chosen"]}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_row_merge(protected.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["value"]["selectedAudioKey"], serde_json::json!("chosen"), "protected keeps: {r}");
+        assert_eq!(v["value"]["candidateKeys"], serde_json::json!(["chosen", "stronger"]), "appended: {r}");
+        assert_eq!(v["value"]["rebuildSession"], serde_json::json!(false), "no rebuild: {r}");
+
+        // Error path: a stale/wrong-shape DTO (missing required arrays) ⇒ explicit invalid error.
+        let stale = CString::new(r#"{"protected":false}"#).unwrap();
+        let r = take(unsafe { cpl_policy_row_merge(stale.as_ptr()) }).expect("error envelope");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "stale ⇒ ok:false: {r}");
+        assert_eq!(v["error"]["kind"], serde_json::json!("invalid"), "stale ⇒ invalid: {r}");
+    }
+
+    // PLAN §3.2: cpl_policy_media_removal — a tagged request dispatches the per-file plan and the
+    // clear-session counts; the error path surfaces a malformed/unknown-op request explicitly.
+    #[test]
+    fn policy_media_removal_envelope() {
+        // Value path (plan): removing a selected audio used by an approved couple ⇒ confirm.
+        let plan = CString::new(
+            r#"{"op":"plan","selectedKeys":["a1"],"poolKeys":["v1","a1"],
+                "couples":[{"videoKey":"v1","selectedAudioKey":"a1","approved":true}]}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_media_removal(plan.as_ptr()) }).expect("envelope json");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "plan ok: {r}");
+        assert_eq!(v["value"]["needsConfirmation"], serde_json::json!(true), "needs confirm: {r}");
+        assert_eq!(v["value"]["affectedCouples"], serde_json::json!(1), "affected: {r}");
+        assert_eq!(v["value"]["affectedApproved"], serde_json::json!(1), "approved: {r}");
+
+        // Value path (clearCounts): media/couple/approved projection.
+        let cc = CString::new(
+            r#"{"op":"clearCounts","mediaCount":5,
+                "couples":[{"videoKey":"v1","selectedAudioKey":"a1","approved":true},
+                           {"videoKey":"v2","selectedAudioKey":null,"approved":false}]}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_media_removal(cc.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["value"]["media"], serde_json::json!(5), "media: {r}");
+        assert_eq!(v["value"]["couples"], serde_json::json!(2), "couples: {r}");
+        assert_eq!(v["value"]["approved"], serde_json::json!(1), "approved: {r}");
+
+        // Error path: an unknown op (a stale shell DTO) ⇒ explicit invalid error, not a silent plan.
+        let bad_op = CString::new(r#"{"op":"frobnicate"}"#).unwrap();
+        let r = take(unsafe { cpl_policy_media_removal(bad_op.as_ptr()) }).expect("error envelope");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "unknown op ⇒ ok:false: {r}");
+        assert_eq!(v["error"]["kind"], serde_json::json!("invalid"), "unknown op ⇒ invalid: {r}");
+    }
+
+    // PLAN §3.2: cpl_policy_anchor_propose — a tagged request dispatches `propose` (sorted times)
+    // and `add` (one time | null); the error path surfaces a malformed/unknown-op request.
+    #[test]
+    fn policy_anchor_propose_envelope() {
+        // Value path (propose): a long overlap ⇒ three sorted in-overlap times.
+        let propose = CString::new(
+            r#"{"op":"propose","overlap":{"start":0,"end":120},
+                "candidates":[{"t":10,"score":1,"usable":true},{"t":50,"score":2,"usable":true},
+                              {"t":100,"score":3,"usable":true}]}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_anchor_propose(propose.as_ptr()) }).expect("envelope json");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "propose ok: {r}");
+        let times = v["value"].as_array().expect("propose array");
+        assert_eq!(times.len(), 3, "three anchors: {r}");
+        // Never exactly one; all inside [0,120].
+        assert!(times.iter().all(|t| (0.0..=120.0).contains(&t.as_f64().unwrap())), "inside: {r}");
+
+        // Value path (propose): no overlap ⇒ empty (the manual-rescue state), never one.
+        let none = CString::new(
+            r#"{"op":"propose","overlap":null,"candidates":[{"t":5,"score":1,"usable":true}]}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_anchor_propose(none.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["value"], serde_json::json!([]), "no overlap ⇒ empty: {r}");
+
+        // Value path (add): the strongest in-overlap candidate; the outside one is ignored.
+        let add = CString::new(
+            r#"{"op":"add","overlap":{"start":0,"end":60},"existing":[],
+                "candidates":[{"t":30,"score":5,"usable":true},{"t":90,"score":9999,"usable":true}]}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_anchor_propose(add.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["value"], serde_json::json!(30.0), "add picks in-overlap: {r}");
+
+        // Error path: an unknown op (stale DTO) ⇒ explicit invalid error, not a fabricated anchor.
+        let bad = CString::new(r#"{"op":"teleport","candidates":[]}"#).unwrap();
+        let r = take(unsafe { cpl_policy_anchor_propose(bad.as_ptr()) }).expect("error envelope");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "unknown op ⇒ ok:false: {r}");
+        assert_eq!(v["error"]["kind"], serde_json::json!("invalid"), "unknown op ⇒ invalid: {r}");
+    }
+
+    // PLAN §3.2 / §14.2: cpl_policy_shadow_rows — value path orders evidence by score (no
+    // thresholding); error path surfaces a malformed/stale request explicitly.
+    #[test]
+    fn policy_shadow_rows_envelope() {
+        // Value path: two cells out of score order ⇒ projected score-desc; classification verbatim.
+        let cell = |cls: &str, score: f64| {
+            format!(
+                r#"{{"method":"spectralLandmarkV1","classification":"{cls}","lagMs":0,"driftPpm":0,
+                    "score":{score},"runnerUpScore":0,"scoreMargin":0,"support":0,
+                    "candidateCorrespondences":0,"inlierFraction":0,"temporalCoverage":0,
+                    "residualRmsMs":null,"residualP95Ms":null,"overlapS":0,"refinedLagMs":null,
+                    "refinedDriftPpm":null,"refinedRmsMs":null}}"#
+            )
+        };
+        let ok = CString::new(format!(
+            r#"{{"evidence":[{},{}],"audioKeys":["kb","ka"],"audioNames":["b.wav","a.wav"]}}"#,
+            cell("noMatch", 1.0),
+            cell("match", 9.0)
+        ))
+        .unwrap();
+        let r = take(unsafe { cpl_policy_shadow_rows(ok.as_ptr()) }).expect("envelope json");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "value path ok: {r}");
+        let rows = v["value"].as_array().expect("rows array");
+        assert_eq!(rows.len(), 2, "two rows: {r}");
+        // score 9 (a.wav, match) sorts first; classification surfaced verbatim (no thresholding).
+        assert_eq!(rows[0]["audioName"], serde_json::json!("a.wav"), "score desc: {r}");
+        assert_eq!(rows[0]["evidence"]["classification"], serde_json::json!("match"), "verbatim: {r}");
+        assert_eq!(rows[1]["audioName"], serde_json::json!("b.wav"));
+
+        // Error path: malformed JSON ⇒ explicit invalid error, not a fabricated/empty silent value.
+        let bad = CString::new("{not json").unwrap();
+        let r = take(unsafe { cpl_policy_shadow_rows(bad.as_ptr()) }).expect("error envelope");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "malformed ⇒ ok:false: {r}");
+        assert_eq!(v["error"]["kind"], serde_json::json!("invalid"), "malformed ⇒ invalid: {r}");
+    }
+
+    // PLAN §3.2 / Phase F: cpl_policy_activity — value path returns the structured summary decision
+    // (line kind + fraction + phaseKey), `summary:null` means "show nothing"; error path surfaces a
+    // malformed/stale request explicitly (the wrapper maps it to a conservative idle/no-line).
+    #[test]
+    fn policy_activity_envelope() {
+        // Value path (determinate import): file 1 of 1 mid-decode past the debounce ⇒ a determinate
+        // import line with phaseKey "ingest". 0.5 through decode ⇒ 0.80·0.5 = 0.40.
+        let imp = CString::new(
+            r#"{"importing":{"phase":"decoding","fraction":0.5,"index":1,"total":1},"elapsedMs":300}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_activity(imp.as_ptr()) }).expect("envelope json");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "value path ok: {r}");
+        let d = &v["value"]["summary"];
+        assert_eq!(d["line"]["kind"], serde_json::json!("import"), "import kind: {r}");
+        assert!((d["fraction"].as_f64().unwrap() - 0.40).abs() < 1e-9, "import fraction: {r}");
+        assert_eq!(d["phaseKey"], serde_json::json!("ingest"), "import phaseKey: {r}");
+        assert_eq!(d["isError"], serde_json::json!(false));
+
+        // Value path (pairing is indeterminate): counts only, fraction null, no phaseKey.
+        let pair = CString::new(
+            r#"{"pairing":{"videoCount":4,"audioCount":8},"elapsedMs":300}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_activity(pair.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        let d = &v["value"]["summary"];
+        assert_eq!(d["line"]["kind"], serde_json::json!("pairingComparing"), "pairing kind: {r}");
+        assert_eq!(d["line"]["videoCount"], serde_json::json!(4));
+        assert!(d["fraction"].is_null(), "pairing is indeterminate: {r}");
+
+        // Value path (debounce): an active job younger than the debounce ⇒ summary:null (show nothing).
+        let quick = CString::new(
+            r#"{"importing":{"phase":"decoding","fraction":0.5},"elapsedMs":100}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_activity(quick.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "quick ok: {r}");
+        assert!(v["value"]["summary"].is_null(), "debounce ⇒ summary null: {r}");
+
+        // Value path (failure wins immediately, even under the debounce): isError, no fraction.
+        let fail = CString::new(r#"{"failure":"disk full","elapsedMs":0}"#).unwrap();
+        let r = take(unsafe { cpl_policy_activity(fail.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        let d = &v["value"]["summary"];
+        assert_eq!(d["isError"], serde_json::json!(true), "failure ⇒ error: {r}");
+        assert_eq!(d["line"]["kind"], serde_json::json!("failure"));
+        assert_eq!(d["line"]["message"], serde_json::json!("disk full"));
+
+        // Error path (malformed): explicit {ok:false,error:{kind:invalid}}, not null / not a silent value.
+        let bad = CString::new("{not json").unwrap();
+        let r = take(unsafe { cpl_policy_activity(bad.as_ptr()) }).expect("error envelope, not null");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "malformed ⇒ ok:false: {r}");
+        assert_eq!(v["error"]["kind"], serde_json::json!("invalid"), "malformed ⇒ invalid: {r}");
+
+        // Error path (stale shape): a request missing the required `elapsedMs` is invalid.
+        let stale = CString::new(r#"{"pairing":{"videoCount":1,"audioCount":1}}"#).unwrap();
+        let r = take(unsafe { cpl_policy_activity(stale.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "stale DTO ⇒ ok:false: {r}");
+    }
+
     // §6.8.3: an old pairing symbol's output equals the new `*_params` symbol with null
     // params (both use defaults). Exercised on empty pairs so the param plumbing is the SUT,
     // no media/ffmpeg needed.
@@ -1440,6 +2068,71 @@ mod tests {
         let okp = CString::new(r#"{"verifyRmsMaxMs": 7.5}"#).unwrap();
         let r = take(unsafe { cpl_verify_batch_params(ctx, empty.as_ptr(), okp.as_ptr()) });
         assert_eq!(r.as_deref(), Some("[]"), "valid override accepted");
+
+        cpl_ctx_free(ctx);
+    }
+
+    // ---- PLAN-CORE-SHELL-BOUNDARY §3.1 cpl_resolve* ----
+
+    // §3.1: the default ResolveParams JSON is the single source of the row-resolver defaults
+    // and round-trips back to `ResolveParams::default()` (what CLI/Swift decode instead of
+    // hardcoding copies). matcher defaults to fingerprint and the resolver z-gate to 8.5; the
+    // embedded `pairing` object is the default PairingParams (fingerprintPrimary + profile 2).
+    #[test]
+    fn resolve_params_default_json_round_trips() {
+        let s = take(cpl_resolve_params_default_json()).expect("default resolve json");
+        let p: couple_core::resolve::ResolveParams = serde_json::from_str(&s).unwrap();
+        assert_eq!(p.matcher, couple_core::MatcherChoice::Fingerprint, "default matcher");
+        assert_eq!(p.z_min, 8.5, "default resolver z gate");
+        assert!(s.contains("\"matcher\":\"fingerprint\""), "wire matcher: {s}");
+        assert!(s.contains("\"zMin\":8.5"), "wire zMin: {s}");
+        // The embedded pairing object is the boundary-13 default (fingerprint-primary + profile 2).
+        assert!(s.contains("\"matcherMode\":\"fingerprintPrimary\""), "embedded pairing mode: {s}");
+        assert!(s.contains("\"thresholdProfileVersion\":2"), "embedded pairing profile: {s}");
+    }
+
+    // §3.1 PLUMBING (no media): an empty V×A resolve returns "[]" (no panic) with null params
+    // (⇒ defaults) and with a VALID partial override; malformed/validate()-failing params ⇒
+    // InvalidArgument (null + last-error); a null id array paired with a positive count ⇒
+    // InvalidArgument. Mirrors match_candidates' parameter handling — the SUT for cpl_resolve's
+    // null/empty/partial/invalid path without needing imported tracks.
+    #[test]
+    fn resolve_param_plumbing() {
+        let ctx = unsafe { cpl_ctx_new(std::ptr::null()) };
+        assert_ne!(ctx, 0);
+
+        // Empty resolve with null params (⇒ ResolveParams::default()) ⇒ "[]".
+        let r = take(unsafe {
+            cpl_resolve(ctx, std::ptr::null(), 0, std::ptr::null(), 0, std::ptr::null())
+        });
+        assert_eq!(r.as_deref(), Some("[]"), "empty resolve ⇒ []");
+
+        // A VALID partial override (only `matcher`, the rest default via serde(default)) ⇒ "[]".
+        let legacy = CString::new(r#"{"matcher":"legacy"}"#).unwrap();
+        let r = take(unsafe {
+            cpl_resolve(ctx, std::ptr::null(), 0, std::ptr::null(), 0, legacy.as_ptr())
+        });
+        assert_eq!(r.as_deref(), Some("[]"), "valid partial override accepted");
+
+        // Malformed JSON ⇒ InvalidArgument (null + last-error).
+        let bad = CString::new("{not json").unwrap();
+        let r =
+            unsafe { cpl_resolve(ctx, std::ptr::null(), 0, std::ptr::null(), 0, bad.as_ptr()) };
+        assert!(r.is_null(), "malformed params ⇒ null");
+        assert!(take(cpl_take_error_json(ctx)).is_some(), "last-error set on malformed");
+
+        // A value whose embedded pairing thresholds fail validate() ⇒ InvalidArgument.
+        let invalid = CString::new(r#"{"pairing":{"minOverlapS":-1}}"#).unwrap();
+        let r =
+            unsafe { cpl_resolve(ctx, std::ptr::null(), 0, std::ptr::null(), 0, invalid.as_ptr()) };
+        assert!(r.is_null(), "validate()-failing params ⇒ null");
+        assert!(take(cpl_take_error_json(ctx)).is_some(), "last-error set on invalid");
+
+        // A null id array with a positive count ⇒ InvalidArgument (the same guard as the matrix
+        // symbols), before any param parse.
+        let r = unsafe { cpl_resolve(ctx, std::ptr::null(), 3, std::ptr::null(), 0, std::ptr::null()) };
+        assert!(r.is_null(), "null id array + positive count ⇒ null");
+        assert!(take(cpl_take_error_json(ctx)).is_some(), "last-error set on null-array+count");
 
         cpl_ctx_free(ctx);
     }
