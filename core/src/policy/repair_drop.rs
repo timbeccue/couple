@@ -89,6 +89,38 @@ fn decide_outcome(req: &Request) -> RepairDropOutcome {
     RepairDropOutcome::NeedsConfirmation
 }
 
+/// The forced-verdict inputs (SPEC-V2 §V2.6 / §3.6): whether a KEPT manual pairing is `forced`
+/// (below the correlation floor). Decided at two moments with the same rule — right after the
+/// pick (`sync_failed = false`; a fresh pool drag carries `candidate_z = 0`, unknown until the
+/// sync correlates) and again when the sync completes (a failed lock surfaces the below-floor
+/// drag). `forced` feeds `policy::match_quality` (a forced pairing is always Questionable); the
+/// shell owns the chip string.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForcedRequest {
+    /// The picked candidate's correlation z, or 0 when unknown (fresh pool drag).
+    pub candidate_z: f64,
+    /// The resolver's row-gate floor (`z_min`).
+    pub z_min: f64,
+    /// The manual pairing's sync failed to lock (false before the sync completes).
+    pub sync_failed: bool,
+}
+
+/// The forced-verdict output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForcedResponse {
+    pub forced: bool,
+}
+
+/// Decide whether a kept manual pairing is `forced` (TODO-009/-013). A KNOWN below-floor z
+/// (`0 < z < z_min`) or a failed sync lock forces; an unknown z (0) alone does not — the pairing
+/// stays honest-until-measured. PURE (no ctx).
+pub fn forced(req: &ForcedRequest) -> ForcedResponse {
+    let below_floor = req.candidate_z > 0.0 && req.candidate_z < req.z_min;
+    ForcedResponse { forced: below_floor || req.sync_failed }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,5 +205,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(decide(&req).outcome, RepairDropOutcome::NeedsConfirmation);
+    }
+
+    fn f(candidate_z: f64, z_min: f64, sync_failed: bool) -> bool {
+        forced(&ForcedRequest { candidate_z, z_min, sync_failed }).forced
+    }
+
+    // A KNOWN below-floor z forces; at/above the floor does not.
+    #[test]
+    fn forced_below_floor_z() {
+        assert!(f(3.0, 8.0, false));
+        assert!(!f(8.0, 8.0, false), "at the floor is not below it");
+        assert!(!f(12.0, 8.0, false));
+    }
+
+    // An UNKNOWN z (fresh pool drag, 0) alone does not force — honest-until-measured.
+    #[test]
+    fn forced_unknown_z_waits_for_sync() {
+        assert!(!f(0.0, 8.0, false));
+        assert!(f(0.0, 8.0, true), "the failed lock surfaces the below-floor drag");
+    }
+
+    // A failed sync forces regardless of z (and never un-forces a below-floor pick).
+    #[test]
+    fn forced_sync_failure_dominates() {
+        assert!(f(12.0, 8.0, true));
+        assert!(f(3.0, 8.0, true));
+    }
+
+    #[test]
+    fn forced_request_deserializes_camel_case() {
+        let req: ForcedRequest =
+            serde_json::from_str(r#"{"candidateZ":3.0,"zMin":8.0,"syncFailed":false}"#).unwrap();
+        assert!(forced(&req).forced);
     }
 }

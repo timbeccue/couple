@@ -1387,6 +1387,30 @@ struct CoupleKitTests {
         // Sanity: a well-formed value still decodes.
         #expect(RepairDropPolicy.outcome(fromEnvelopeValue: ["outcome": "needsConfirmation"]) == .needsConfirmation)
     }
+
+    // (11) FORCED VERDICT (SPEC-V2 §3.6) — the below-floor rule for a kept manual pairing,
+    //      relocated from the inline check in `AppModel.repair` to
+    //      `couple_core::policy::repair_drop::forced` over `cpl_policy_repair_forced`. A KNOWN
+    //      below-floor z forces; an unknown z (fresh pool drag, 0) waits for the sync; a failed
+    //      lock forces and never un-forces a below-floor pick.
+    @Test func forcedBelowFloorRule() {
+        #expect(RepairDropPolicy.forced(candidateZ: 3, zMin: 8, syncFailed: false))
+        #expect(!RepairDropPolicy.forced(candidateZ: 8, zMin: 8, syncFailed: false))
+        #expect(!RepairDropPolicy.forced(candidateZ: 12, zMin: 8, syncFailed: false))
+        #expect(!RepairDropPolicy.forced(candidateZ: 0, zMin: 8, syncFailed: false))
+        #expect(RepairDropPolicy.forced(candidateZ: 0, zMin: 8, syncFailed: true))
+        #expect(RepairDropPolicy.forced(candidateZ: 12, zMin: 8, syncFailed: true))
+        #expect(RepairDropPolicy.forced(candidateZ: 3, zMin: 8, syncFailed: true))
+    }
+
+    // (12) FORCED ERROR PATH IS CONSERVATIVE — a nil/malformed envelope value stays questionable
+    //      (`true`), never a silent green (mirrors MatchQualityPolicy's fallback direction).
+    @Test func forcedErrorEnvelopeStaysQuestionable() {
+        #expect(RepairDropPolicy.forced(fromEnvelopeValue: nil))
+        #expect(RepairDropPolicy.forced(fromEnvelopeValue: [:]))
+        // Sanity: a well-formed value still decodes.
+        #expect(!RepairDropPolicy.forced(fromEnvelopeValue: ["forced": false]))
+    }
 }
 
 // TODO-001: the PURE removal/clear decisions (`MediaRemovalPolicy`) behind

@@ -519,6 +519,18 @@ uint64_t cpl_resolve_start(uint64_t ctx,
  char *cpl_policy_repair_drop(const char *json);
 
 /*
+ PURE forced-verdict decision (TODO-009/-013, SPEC-V2 §3.6) — whether a KEPT manual pairing is
+ `forced` (below the correlation floor), lifted from the inline rule in the shell's `repair`.
+ Called at pick time (`syncFailed:false`; a fresh pool drag carries `candidateZ:0`) and again
+ when the sync completes. `json` is the request `{"candidateZ":f64,"zMin":f64,
+ "syncFailed":bool}`. Returns the uniform envelope: on success `{"ok":true,"value":
+ {"forced":bool}}`; on malformed JSON the error envelope (the wrapper maps it to the
+ conservative `forced=true` — Questionable, never a silent green). ADDITIVE —
+ `cpl_abi_version` stays 1. PURE (no ctx). Free with cpl_string_free.
+ */
+ char *cpl_policy_repair_forced(const char *json);
+
+/*
  PURE re-resolution merge decision (TODO-007 / PLAN §3.2) — how to fold a fresh `ResolvedRow`
  into an existing queue row, lifted from Swift `RowMergePolicy.plan`. `json` is the request
  `{"protected":bool,"currentSelectedKey":str|null,"currentCandidateKeys":[str],

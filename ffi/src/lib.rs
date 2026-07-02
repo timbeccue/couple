@@ -1537,6 +1537,23 @@ pub unsafe extern "C" fn cpl_policy_repair_drop(json: *const c_char) -> *mut c_c
     }
 }
 
+/// PURE forced-verdict decision (TODO-009/-013, SPEC-V2 §3.6) — whether a KEPT manual pairing is
+/// `forced` (below the correlation floor), lifted from the inline rule in the shell's `repair`.
+/// Called at pick time (`syncFailed:false`; a fresh pool drag carries `candidateZ:0`) and again
+/// when the sync completes. `json` is the request `{"candidateZ":f64,"zMin":f64,
+/// "syncFailed":bool}`. Returns the uniform envelope: on success `{"ok":true,"value":
+/// {"forced":bool}}`; on malformed JSON the error envelope (the wrapper maps it to the
+/// conservative `forced=true` — Questionable, never a silent green). ADDITIVE —
+/// `cpl_abi_version` stays 1. PURE (no ctx). Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_policy_repair_forced(json: *const c_char) -> *mut c_char {
+    use couple_core::policy::repair_drop::{forced, ForcedRequest};
+    match policy_request::<ForcedRequest>(json) {
+        Ok(req) => policy_ok(&forced(&req)),
+        Err(envelope) => envelope,
+    }
+}
+
 /// PURE re-resolution merge decision (TODO-007 / PLAN §3.2) — how to fold a fresh `ResolvedRow`
 /// into an existing queue row, lifted from Swift `RowMergePolicy.plan`. `json` is the request
 /// `{"protected":bool,"currentSelectedKey":str|null,"currentCandidateKeys":[str],
@@ -1795,6 +1812,32 @@ mod tests {
         // Error path: malformed JSON ⇒ explicit invalid error, not null, not a silent outcome.
         let bad = CString::new("{nope").unwrap();
         let r = take(unsafe { cpl_policy_repair_drop(bad.as_ptr()) }).expect("error envelope");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "malformed ⇒ ok:false: {r}");
+        assert_eq!(v["error"]["kind"], serde_json::json!("invalid"), "malformed ⇒ invalid: {r}");
+    }
+
+    // cpl_policy_repair_forced — value path decides the kept-manual-pairing forced verdict; error
+    // path surfaces a malformed request explicitly (the wrapper maps it to the conservative
+    // forced=true, never a silent green).
+    #[test]
+    fn policy_repair_forced_envelope() {
+        // Value path: a known below-floor z ⇒ forced.
+        let below = CString::new(r#"{"candidateZ":3.0,"zMin":8.0,"syncFailed":false}"#).unwrap();
+        let r = take(unsafe { cpl_policy_repair_forced(below.as_ptr()) }).expect("envelope json");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "value path ok: {r}");
+        assert_eq!(v["value"]["forced"], serde_json::json!(true), "below floor ⇒ forced: {r}");
+
+        // Value path: an unknown z (fresh pool drag) with a clean sync ⇒ not forced.
+        let unknown = CString::new(r#"{"candidateZ":0.0,"zMin":8.0,"syncFailed":false}"#).unwrap();
+        let r = take(unsafe { cpl_policy_repair_forced(unknown.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["value"]["forced"], serde_json::json!(false), "unknown z waits: {r}");
+
+        // Error path: malformed JSON ⇒ explicit invalid error.
+        let bad = CString::new("{nope").unwrap();
+        let r = take(unsafe { cpl_policy_repair_forced(bad.as_ptr()) }).expect("error envelope");
         let v: serde_json::Value = serde_json::from_str(&r).unwrap();
         assert_eq!(v["ok"], serde_json::json!(false), "malformed ⇒ ok:false: {r}");
         assert_eq!(v["error"]["kind"], serde_json::json!("invalid"), "malformed ⇒ invalid: {r}");

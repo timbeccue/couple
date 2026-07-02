@@ -123,6 +123,32 @@ public enum RepairDropPolicy {
         }
         return outcome
     }
+
+    /// Whether a KEPT manual pairing is `forced` — below the correlation floor (SPEC-V2 §3.6).
+    /// Decided in `couple_core::policy::repair_drop::forced` over `cpl_policy_repair_forced`;
+    /// called at pick time (`syncFailed: false`; a fresh pool drag carries `candidateZ: 0`,
+    /// unknown until the sync correlates) and again when the sync completes. `forced` feeds
+    /// `MatchQualityPolicy` (a forced pairing is always questionable); the app owns the chip.
+    public static func forced(candidateZ: Double, zMin: Double, syncFailed: Bool) -> Bool {
+        let req: [String: Any] = ["candidateZ": candidateZ, "zMin": zMin, "syncFailed": syncFailed]
+        let value: [String: Any]?
+        if let data = try? JSONSerialization.data(withJSONObject: req),
+           let json = String(data: data, encoding: .utf8) {
+            value = PolicyEnvelope.decodeValue(cpl_policy_repair_forced(json))
+        } else {
+            value = nil
+        }
+        return forced(fromEnvelopeValue: value)
+    }
+
+    /// Map a decoded envelope `value` to the forced verdict. The CONSERVATIVE fallback for a nil
+    /// value (error envelope / failed call — unreachable in-process) is `true`: a pairing we could
+    /// not judge stays questionable, never silently green (mirrors MatchQualityPolicy's fallback).
+    /// Internal so a test can drive the error path without reaching the C ABI.
+    @inline(never)
+    static func forced(fromEnvelopeValue value: [String: Any]?) -> Bool {
+        (value?["forced"] as? Bool) ?? true
+    }
 }
 
 extension RepairDropOutcome {

@@ -809,8 +809,10 @@ final class AppModel {
         if couple.id == selectedID { attachAudition(couple) }
         // Forced verdict if this pairing is below the floor (a candidate carries
         // its z; a fresh pool drag correlates on sync — checked on completion).
+        // Decided by the core policy (SPEC-V2 §3.6); the app owns only the chip.
         let z = couple.candidates.first { $0.audioKey == audioKey }?.z ?? 0
-        couple.forced = z > 0 && z < params.zMin
+        couple.forced = RepairDropPolicy.forced(candidateZ: z, zMin: params.zMin,
+                                                syncFailed: false)
         couple.chip = couple.forced ? "forced — below floor" : couple.state.chip
         let engine = self.engine
         let params = self.params
@@ -828,8 +830,12 @@ final class AppModel {
             couple.pair.runAutoSync(announce: false) // ambient; the dot/chip carry it
             await couple.pair.awaitSync()
             // A below-floor pool drag (z unknown until now) surfaces as forced
-            // when the sync can't lock.
-            if case .failed = couple.pair.syncActivity { couple.forced = true }
+            // when the sync can't lock — the same core decision, re-run with the
+            // sync outcome (never un-forces a below-floor pick).
+            var syncFailed = false
+            if case .failed = couple.pair.syncActivity { syncFailed = true }
+            couple.forced = RepairDropPolicy.forced(candidateZ: z, zMin: params.zMin,
+                                                    syncFailed: syncFailed)
             couple.chip = couple.forced ? "forced — below floor" : couple.state.chip
             saveQueue()
         }

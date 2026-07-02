@@ -215,3 +215,24 @@ controller (debounce timer + per-phase floor carried across `refresh()` + failur
 error→auto-clear + idle-clear) is covered by the env-gated `COUPLE_ACTIVITY_TEST`
 DebugDrive hook (media-free; drives the real controller via a `debugSignalsOverride`
 seam — 11 passed). `git diff --check` clean. No Rust/core change.
+
+## 2026-07-01 — Boundary polish: forced verdict → core policy; dev harness fenced; log archived
+
+Follow-through on the adopt-and-refactor decision (architecture assessment,
+2026-07-01, owner sign-off) after fast-forwarding `main` to `core-shell-refactor`.
+
+- **`forced` verdict relocated** (PLAN-CORE-SHELL-BOUNDARY boundary rule): the
+  below-floor rule for a kept manual pairing (`0 < z < z_min`, plus the failed-lock
+  promotion after sync) moves from an inline check in `AppModel.repair` to
+  `couple_core::policy::repair_drop::forced` over the ADDITIVE
+  `cpl_policy_repair_forced` (`cpl_abi_version` stays 1). Swift wrapper on
+  `RepairDropPolicy`; the conservative error fallback is `forced=true`
+  (questionable, never a silent green — mirrors MatchQualityPolicy). Behavior
+  identical: the post-sync recompute with the same candidate z reduces to the old
+  "set on failure, never clear". Core 11 / FFI 2 / Swift 109 tests green.
+- **Dev harness fenced**: DebugDrive/DisplayDriver/FrameStats compile only under
+  `COUPLE_DEVHARNESS` (dev.sh/build.sh pass it; make-app.sh does not — the shipped
+  .app carries stubs). `#if DEBUG` was rejected: the §15 fps criterion is measured
+  on `-c release`.
+- **PROGRESS.md archived**: 2026-06-11..14 entries moved verbatim to
+  `docs/archive/PROGRESS-2026-06-11-to-14.md`; SPEC-CHANGE ledger spans both files.
