@@ -53,7 +53,7 @@ struct VideoHero: View {
                 Spacer()
                 ForEach(pair.anchors.indices, id: \.self) { i in
                     Button {
-                        audition.jump(toAnchorAt: pair.anchors[i], index: i)
+                        audition.jump(toAnchorAt: pair.anchors[i].t, index: i)
                     } label: {
                         Circle()
                             .fill(Theme.anchorColors[i % 4]

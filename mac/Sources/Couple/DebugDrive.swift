@@ -215,10 +215,10 @@ final class DebugDrive {
 
         // Deep zoom exercises the raw-sample loupe paths (§14 6.5): per-pixel
         // min/max bars at 60 ms, connected sample line at 10 ms.
-        pair.manualZoom(loupe: 0, factor: 60.0 / (pair.frames.first?.winMs ?? 240))
+        pair.manualZoom(loupe: 0, factor: 60.0 / (pair.anchors.first?.frame.winMs ?? 240))
         await settle()
         capture(to: "\(dir)/07-deep-zoom-raw-60ms.png")
-        pair.manualZoom(loupe: 0, factor: 10.0 / (pair.frames.first?.winMs ?? 60))
+        pair.manualZoom(loupe: 0, factor: 10.0 / (pair.anchors.first?.frame.winMs ?? 60))
         await settle()
         capture(to: "\(dir)/08-deep-zoom-line-10ms.png")
         pair.armAuto(loupe: 0)
@@ -651,7 +651,7 @@ final class DebugDrive {
         }
         func anchorsInOverlap() -> Bool {
             guard let ov = pair.overlap else { return pair.anchors.isEmpty }
-            return pair.anchors.allSatisfy { $0 >= ov.lowerBound && $0 <= ov.upperBound }
+            return pair.anchors.allSatisfy { $0.t >= ov.lowerBound && $0.t <= ov.upperBound }
         }
 
         // --- (A) Natural overlap (the owner corpus is long) ⇒ proposal in-overlap. ---
@@ -765,17 +765,17 @@ final class DebugDrive {
         // background session, so the routing function is exercised directly;
         // the raw scroll/drag wiring is on the owner's manual walkthrough).
         if let rect = model.loupeRects[0] {
-            let before = pair.frames.map(\.winMs)
+            let before = pair.anchors.map(\.frame.winMs)
             let routed = model.zoom(at: CGPoint(x: rect.midX, y: rect.midY), deltaY: 120, precise: true)
-            let after = pair.frames.map(\.winMs)
+            let after = pair.anchors.map(\.frame.winMs)
             check("zoom routes to loupe under cursor, zooms all (locked), exits auto",
                   routed && after != before && Set(after).count == 1
-                  && pair.frames.allSatisfy { !$0.auto })
+                  && pair.anchors.allSatisfy { !$0.frame.auto })
             check("zoom outside any loupe is ignored",
                   !model.zoom(at: CGPoint(x: -10, y: -10), deltaY: 120, precise: true))
             pair.armAuto(loupe: 0)
             check("auto chip re-arms all loupes under lock",
-                  pair.frames.allSatisfy(\.auto))
+                  pair.anchors.allSatisfy(\.frame.auto))
         }
         print("EVENT-TEST summary: \(pass) passed, \(fail) failed")
     }

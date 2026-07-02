@@ -304,7 +304,7 @@ struct OverviewStrip: View {
         let pair = model.pair
         let domain = pair.stageDomain
         return ForEach(pair.anchors.indices, id: \.self) { i in
-            let x = OverviewTimeline.x(forTime: pair.anchors[i], width: size.width, visible: domain)
+            let x = OverviewTimeline.x(forTime: pair.anchors[i].t, width: size.width, visible: domain)
             AnchorPin(index: i,
                       color: Theme.anchorColors[i % 4],
                       height: size.height,
@@ -522,7 +522,7 @@ struct ConnectorLayer: View {
             // Pin x lives in the lane area, which stops short of the volume column.
             let laneW = size.width - laneControlsW - laneControlsGap
             for i in 0..<n {
-                let xPin = OverviewTimeline.x(forTime: pair.anchors[i], width: laneW, visible: domain)
+                let xPin = OverviewTimeline.x(forTime: pair.anchors[i].t, width: laneW, visible: domain)
                 let xLoupe = CGFloat(i) * (loupeW + spacing) + loupeW / 2
                 var path = Path()
                 path.move(to: CGPoint(x: xPin, y: 0))

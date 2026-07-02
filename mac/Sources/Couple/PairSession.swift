@@ -38,6 +38,20 @@ enum SyncActivity: Equatable {
     case failed(message: String)                 // Failed status or job error
 }
 
+/// One anchor and everything measured at it (time, loupe frame, last local
+/// measurement + the L(tᵢ) it was taken at). Held as a single element so the
+/// insert/remove/reorder sites can't drift the four facts out of lockstep;
+/// anchors stay in chronological order by `t` (UX §2.2). Persistence keeps the
+/// core's parallel-array wire shape (AlignmentState) — this struct is the shell
+/// render shadow, mapped to/from that shape at the push/restore boundary.
+struct AnchorPoint {
+    var t: Double
+    var frame: Frame
+    var measurement: LocalMeasurement?
+    /// L(tᵢ) at the time of the measurement attempt (drives the >30 ms staleness rule).
+    var measurementCenter: Double?
+}
+
 @MainActor
 @Observable
 final class PairSession {
@@ -58,11 +72,7 @@ final class PairSession {
     var verified = false
     var lockZoom = true
     var loupeLayout: LoupeLayout = .grid
-    var anchors: [Double] = []
-    var frames: [Frame] = []
-    var measurements: [LocalMeasurement?] = []
-    /// L(tᵢ) at the time of each measurement attempt (drives the >30 ms staleness rule).
-    var measurementCenters: [Double?] = []
+    var anchors: [AnchorPoint] = []
     var driftWindows: [DriftWindowState] = []
 
     // Export options (consumed by the Phase-6 export job)
@@ -164,8 +174,8 @@ final class PairSession {
     /// Displayed residual Δᵢ = λ(tᵢ) − L(tᵢ) (UX §2.1), recomputed against the
     /// *current* mapping every frame.
     func displayedDelta(_ i: Int) -> Double? {
-        guard i < measurements.count, let m = measurements[i], i < anchors.count else { return nil }
-        return m.lagMs - mapping.localLagMs(anchors[i])
+        guard anchors.indices.contains(i), let m = anchors[i].measurement else { return nil }
+        return m.lagMs - mapping.localLagMs(anchors[i].t)
     }
 
     /// Global fit status vs the current mapping (UX §2.4: one global RMS).
@@ -212,9 +222,6 @@ final class PairSession {
         savedDriftPpm = 0
         verified = false
         anchors = []
-        frames = []
-        measurements = []
-        measurementCenters = []
         driftWindows = []
         lastSync = nil
         syncActivity = .none
@@ -336,9 +343,11 @@ final class PairSession {
     private func pushColdState() {
         guard let session else { return }
         try? session.updateState { s in
-            s.anchors = self.anchors
-            s.frames = self.frames
-            s.perAnchorMeasurements = self.measurements
+            // Core's persisted shape stays parallel arrays (AlignmentState); the
+            // shell holds them as one struct per anchor and splits them here.
+            s.anchors = self.anchors.map(\.t)
+            s.frames = self.anchors.map(\.frame)
+            s.perAnchorMeasurements = self.anchors.map(\.measurement)
             s.lockZoom = self.lockZoom
             s.loupeLayout = self.loupeLayout
         }
@@ -357,10 +366,10 @@ final class PairSession {
     func proposeAnchors() {
         let picks = AnchorProposal.propose(overlap: overlap,
                                            candidates: anchorCandidates())
-        anchors = picks
-        frames = picks.map { _ in Frame(winMs: Self.defaultWinMs, auto: true) }
-        measurements = picks.map { _ in nil }
-        measurementCenters = picks.map { _ in nil }
+        anchors = picks.map { t in
+            AnchorPoint(t: t, frame: Frame(winMs: Self.defaultWinMs, auto: true),
+                        measurement: nil, measurementCenter: nil)
+        }
     }
 
     /// `true` when automatic proposal could not place any anchor inside the
@@ -374,7 +383,7 @@ final class PairSession {
     func addAnchor() {
         guard anchors.count < 4 else { return }
         guard let t = AnchorProposal.addAnchorCandidate(overlap: overlap,
-                                                        existing: anchors,
+                                                        existing: anchors.map(\.t),
                                                         candidates: anchorCandidates())
         else { return }
         insertAnchor(at: t)
@@ -414,11 +423,10 @@ final class PairSession {
     static let anchorSilenceFloorDb = -55.0
 
     private func insertAnchor(at t: Double) {
-        let idx = anchors.firstIndex(where: { $0 > t }) ?? anchors.count
-        anchors.insert(t, at: idx)
-        frames.insert(Frame(winMs: currentLockedWindow ?? Self.defaultWinMs, auto: true), at: idx)
-        measurements.insert(nil, at: idx)
-        measurementCenters.insert(nil, at: idx)
+        let idx = anchors.firstIndex(where: { $0.t > t }) ?? anchors.count
+        anchors.insert(AnchorPoint(t: t,
+                                   frame: Frame(winMs: currentLockedWindow ?? Self.defaultWinMs, auto: true),
+                                   measurement: nil, measurementCenter: nil), at: idx)
         measureAnchor(idx)
         autoFrame()
         pushColdState()
@@ -427,16 +435,13 @@ final class PairSession {
     func removeAnchor(_ i: Int) {
         guard anchors.count > 2, anchors.indices.contains(i) else { return }
         anchors.remove(at: i)
-        frames.remove(at: i)
-        measurements.remove(at: i)
-        measurementCenters.remove(at: i)
         pushColdState()
     }
 
     /// Live drag: move without snapping (loupes update live).
     func moveAnchor(_ i: Int, to t: Double) {
         guard anchors.indices.contains(i), let cam = camera.track else { return }
-        anchors[i] = min(max(t, 0), cam.durationS)
+        anchors[i].t = min(max(t, 0), cam.durationS)
     }
 
     /// Explicit ⌖ snap: jump to the strongest transient within ±4 s. Drag
@@ -444,8 +449,8 @@ final class PairSession {
     /// (owner decision 2026-06-12, overriding UX §2.2 snap-on-release).
     func snapAnchor(_ i: Int) {
         guard anchors.indices.contains(i), let cam = camera.track else { return }
-        if let onset = cam.bestOnset(near: anchors[i], halfSpan: 4) {
-            anchors[i] = onset.t
+        if let onset = cam.bestOnset(near: anchors[i].t, halfSpan: 4) {
+            anchors[i].t = onset.t
         }
         releaseAnchor(i)
     }
@@ -455,21 +460,17 @@ final class PairSession {
     func releaseAnchor(_ i: Int) {
         guard anchors.indices.contains(i) else { return }
         // Keep chronological order (UX §2.2).
-        let t = anchors[i]
-        let sortedIndex = anchors.sorted().firstIndex(of: t)!
+        let t = anchors[i].t
+        let sortedIndex = anchors.map(\.t).sorted().firstIndex(of: t)!
         if sortedIndex != i {
-            let frame = frames[i]
-            anchors.remove(at: i)
-            frames.remove(at: i)
-            measurements.remove(at: i)
-            measurementCenters.remove(at: i)
-            anchors.insert(t, at: sortedIndex)
-            frames.insert(frame, at: sortedIndex)
-            measurements.insert(nil, at: sortedIndex)
-            measurementCenters.insert(nil, at: sortedIndex)
+            // The move invalidates the measurement; the loupe frame is kept.
+            var moved = anchors.remove(at: i)
+            moved.measurement = nil
+            moved.measurementCenter = nil
+            anchors.insert(moved, at: sortedIndex)
             measureAnchor(sortedIndex)
         } else {
-            measurements[i] = nil
+            anchors[i].measurement = nil
             measureAnchor(i)
         }
         autoFrame()
@@ -480,10 +481,10 @@ final class PairSession {
 
     func measureAnchor(_ i: Int) {
         guard let session, anchors.indices.contains(i) else { return }
-        let center = mapping.localLagMs(anchors[i])
-        let m = session.measureLocal(tc: anchors[i], centerMs: center, spanMs: 80)
-        measurements[i] = m
-        measurementCenters[i] = center
+        let center = mapping.localLagMs(anchors[i].t)
+        let m = session.measureLocal(tc: anchors[i].t, centerMs: center, spanMs: 80)
+        anchors[i].measurement = m
+        anchors[i].measurementCenter = center
     }
 
     func measureAllAnchors() {
@@ -500,8 +501,8 @@ final class PairSession {
         let work = { @MainActor in
             var any = false
             for i in self.anchors.indices {
-                let center = self.measurementCenters.indices.contains(i) ? self.measurementCenters[i] : nil
-                let lNow = self.mapping.localLagMs(self.anchors[i])
+                let center = self.anchors[i].measurementCenter
+                let lNow = self.mapping.localLagMs(self.anchors[i].t)
                 if center == nil || abs(lNow - center!) > 30 {
                     self.measureAnchor(i)
                     any = true
@@ -593,12 +594,12 @@ final class PairSession {
     func pivotDrag(anchorIndex i: Int, deltaLMs delta: Double) {
         guard inputsEnabled, anchors.indices.contains(i) else { return }
         let r = pivotReference(dragging: i)
-        let dt = anchors[i] - anchors[r]
+        let dt = anchors[i].t - anchors[r].t
         guard abs(dt) >= 5 else { return } // guard |tᵢ−t_r| < 5 s
         let slope = delta / dt                 // ms per second
         if driftMode == .none { driftMode = .resample }
         driftPpm += slope * 1000
-        offsetMs -= anchors[r] * slope
+        offsetMs -= anchors[r].t * slope
         session?.setDriftPpmLive(driftPpm)
         session?.setOffsetMs(offsetMs)
         mappingChanged()
@@ -609,7 +610,7 @@ final class PairSession {
     func alignAnchor(_ i: Int) {
         guard inputsEnabled, let delta = displayedDelta(i) else { return }
         let r = pivotReference(dragging: i)
-        if i == r || anchors.count < 2 || abs(anchors[i] - anchors[r]) < 5 {
+        if i == r || anchors.count < 2 || abs(anchors[i].t - anchors[r].t) < 5 {
             setOffsetLive(offsetMs + delta)
         } else {
             pivotDrag(anchorIndex: i, deltaLMs: delta)
@@ -627,66 +628,66 @@ final class PairSession {
     static let defaultWinMs = 500.0
 
     var currentLockedWindow: Double? {
-        lockZoom ? frames.map(\.winMs).max() : nil
+        lockZoom ? anchors.map(\.frame.winMs).max() : nil
     }
 
     /// Auto-frame: winᵢ = max(default, 5·|Δᵢ|) rounded to 10 ms, cap 2 s.
     /// Applied on load, auto-sync, anchor move, ⇥ align — never on plain nudges.
     func autoFrame() {
-        guard !frames.isEmpty else { return }
+        guard !anchors.isEmpty else { return }
         func desired(_ i: Int) -> Double {
             let d = displayedDelta(i).map(abs) ?? 0
             let w = max(Self.defaultWinMs, 5 * d)
             return min((w / 10).rounded() * 10, 2000)
         }
         if lockZoom {
-            let autos = frames.indices.filter { frames[$0].auto }
+            let autos = anchors.indices.filter { anchors[$0].frame.auto }
             guard !autos.isEmpty else { return }
             let w = autos.map(desired).max()!
-            for i in frames.indices {
-                frames[i].winMs = w
+            for i in anchors.indices {
+                anchors[i].frame.winMs = w
             }
         } else {
-            for i in frames.indices where frames[i].auto {
-                frames[i].winMs = desired(i)
+            for i in anchors.indices where anchors[i].frame.auto {
+                anchors[i].frame.winMs = desired(i)
             }
         }
     }
 
     /// Manual scroll-zoom: exits auto mode (all loupes under lock; one when unlocked).
     func manualZoom(loupe i: Int, factor: Double) {
-        guard frames.indices.contains(i) else { return }
+        guard anchors.indices.contains(i) else { return }
         let clamp = { (w: Double) in min(max(w, 1.0), 8000.0) }
         if lockZoom {
-            let w = clamp((frames[i].winMs) * factor)
-            for j in frames.indices {
-                frames[j].winMs = w
-                frames[j].auto = false
+            let w = clamp(anchors[i].frame.winMs * factor)
+            for j in anchors.indices {
+                anchors[j].frame.winMs = w
+                anchors[j].frame.auto = false
             }
         } else {
-            frames[i].winMs = clamp(frames[i].winMs * factor)
-            frames[i].auto = false
+            anchors[i].frame.winMs = clamp(anchors[i].frame.winMs * factor)
+            anchors[i].frame.auto = false
         }
     }
 
     /// Clicking the auto chip re-arms (all loupes under lock).
     func armAuto(loupe i: Int) {
-        guard frames.indices.contains(i) else { return }
+        guard anchors.indices.contains(i) else { return }
         if lockZoom {
-            for j in frames.indices {
-                frames[j].auto = true
+            for j in anchors.indices {
+                anchors[j].frame.auto = true
             }
         } else {
-            frames[i].auto = true
+            anchors[i].frame.auto = true
         }
         autoFrame()
     }
 
     func toggleLockZoom() {
         lockZoom.toggle()
-        if lockZoom, let w = frames.map(\.winMs).max() {
-            for i in frames.indices {
-                frames[i].winMs = w // unify to current maximum (UX §2.3)
+        if lockZoom, let w = anchors.map(\.frame.winMs).max() {
+            for i in anchors.indices {
+                anchors[i].frame.winMs = w // unify to current maximum (UX §2.3)
             }
         }
         pushColdState()
@@ -866,10 +867,14 @@ final class PairSession {
         verified = a.verified
         lockZoom = a.lockZoom
         loupeLayout = a.loupeLayout
-        anchors = a.anchors
-        frames = a.frames
-        measurements = a.perAnchorMeasurements
-        measurementCenters = a.anchors.map { mapping.localLagMs($0) }
+        // Reassemble the shell's per-anchor struct from core's parallel arrays;
+        // measurement centers are recomputed against the just-restored mapping.
+        anchors = a.anchors.enumerated().map { i, t in
+            AnchorPoint(t: t,
+                        frame: i < a.frames.count ? a.frames[i] : Frame(winMs: Self.defaultWinMs, auto: true),
+                        measurement: i < a.perAnchorMeasurements.count ? a.perAnchorMeasurements[i] : nil,
+                        measurementCenter: mapping.localLagMs(t))
+        }
         driftWindows = a.driftWindows
         syncActivity = driftWindows.isEmpty ? .none : .succeeded
         if announce { toasts.show(Toast(style: .success, title: "Session restored")) }

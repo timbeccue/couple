@@ -60,7 +60,7 @@ struct LoupeView: View {
 
     private var header: some View {
         let pair = model.pair
-        let winMs = pair.frames.indices.contains(index) ? pair.frames[index].winMs : PairSession.defaultWinMs
+        let winMs = pair.anchors.indices.contains(index) ? pair.anchors[index].frame.winMs : PairSession.defaultWinMs
         let delta = pair.displayedDelta(index)
         return HStack(spacing: 6) {
             Text("\(index + 1)")
@@ -68,7 +68,7 @@ struct LoupeView: View {
                 .foregroundStyle(.black.opacity(0.8))
                 .frame(width: 12, height: 12)
                 .background(accent, in: RoundedRectangle(cornerRadius: 3))
-            Text(Fmt.hmmss(pair.anchors.indices.contains(index) ? pair.anchors[index] : 0))
+            Text(Fmt.hmmss(pair.anchors.indices.contains(index) ? pair.anchors[index].t : 0))
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(Theme.textSecondary)
             if let delta {
@@ -115,7 +115,7 @@ struct LoupeView: View {
 
     private var isAuto: Bool {
         let pair = model.pair
-        return pair.frames.indices.contains(index) && pair.frames[index].auto
+        return pair.anchors.indices.contains(index) && pair.anchors[index].frame.auto
     }
 
     private func headerButton(_ label: String, help: String, action: @escaping () -> Void) -> some View {
@@ -163,12 +163,12 @@ struct LoupeView: View {
         return DragGesture(minimumDistance: 1)
             .onChanged { g in
                 guard pair.inputsEnabled,
-                      pair.frames.indices.contains(index),
+                      pair.anchors.indices.contains(index),
                       let rect = model.loupeRects[index], rect.width > 0 else { return }
                 didDrag = true // a moved drag must not also fire the tap seek
                 let dx = g.translation.width - lastDragX
                 lastDragX = g.translation.width
-                let msPerPx = pair.frames[index].winMs / rect.width
+                let msPerPx = pair.anchors[index].frame.winMs / rect.width
                 let deltaL = -dx * msPerPx // content follows pointer (§2.1 sign)
                 if NSEvent.modifierFlags.contains(.shift) {
                     pair.pivotDrag(anchorIndex: index, deltaLMs: deltaL)
@@ -197,11 +197,10 @@ struct LoupeView: View {
                 let pair = model.pair
                 guard pair.session != nil,
                       pair.anchors.indices.contains(index),
-                      pair.frames.indices.contains(index),
                       let rect = model.loupeRects[index], rect.width > 0 else { return }
                 let t = Self.cameraTime(forLocalX: value.location.x, width: rect.width,
-                                        anchor: pair.anchors[index],
-                                        winMs: pair.frames[index].winMs)
+                                        anchor: pair.anchors[index].t,
+                                        winMs: pair.anchors[index].frame.winMs)
                 pair.audition.seek(to: t, focusAnchor: index)
             }
     }
@@ -209,10 +208,9 @@ struct LoupeView: View {
     private func draw(ctx: GraphicsContext, size: CGSize) {
         let pair = model.pair
         guard let cam = pair.camera.track, let ext = pair.external.track,
-              pair.anchors.indices.contains(index),
-              pair.frames.indices.contains(index) else { return }
-        let anchor = pair.anchors[index]
-        let winS = pair.frames[index].winMs / 1000
+              pair.anchors.indices.contains(index) else { return }
+        let anchor = pair.anchors[index].t
+        let winS = pair.anchors[index].frame.winMs / 1000
         let t0 = anchor - winS / 2
         let t1 = anchor + winS / 2
         let mapping = pair.mapping
@@ -345,8 +343,8 @@ struct LoupeView: View {
     private func drawGuidanceArrow(_ ctx: GraphicsContext, size: CGSize) {
         let pair = model.pair
         guard let delta = pair.displayedDelta(index),
-              pair.frames.indices.contains(index) else { return }
-        let winMs = pair.frames[index].winMs
+              pair.anchors.indices.contains(index) else { return }
+        let winMs = pair.anchors[index].frame.winMs
         guard abs(delta) > 0.12 * winMs else { return }
         let y: CGFloat = 16
         let cx = size.width / 2
