@@ -11,8 +11,8 @@
 #
 # Real-media suites (example_data/, matcher-corpus real splits) are inherently
 # local-only: the media is gitignored (SPEC §10.1) and absent here. Those cases
-# count as "unscannable", never as failures. scripts/check-real-media.sh audits
-# a working machine.
+# count as "unscannable" (and realdata_sync is COUPLE_REALDATA_DIR-gated),
+# never failures — the media is owner convenience material, not a dependency.
 
 name: CI
 

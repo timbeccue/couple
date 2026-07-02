@@ -291,3 +291,12 @@ Owner-approved improvement pass (items 3/4/6/7/8 of the 2026-07-01 review).
 
 Gates: swift build ship+devharness, swift test 109, core lib 255 + properties 37,
 ffi 18 — all green.
+
+## 2026-07-01 — Retract the real-media audit script (owner decision)
+
+`scripts/check-real-media.sh` removed same-day: the gitignored recordings are owner
+convenience material for playing with the app, not a dependency — no test requires
+them (the corpus scorer counts absent media as "unscannable"; `realdata_sync` is
+`COUPLE_REALDATA_DIR`-gated and SKIPs). An audit that exits 1 over optional files
+demanded a state the repo never promised. Restoring media stays optional and
+re-arms the extra real-data validation when present.
