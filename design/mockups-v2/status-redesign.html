@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Couple — match-status indicator redesign (5 directions)</title>
+<style>
+  :root{
+    --bg:#13161b; --bg2:#181c22; --panel:#1d222a; --panel2:#222834;
+    --line:#2b323d; --line2:#39424f;
+    --ink:#d8dee6; --ink2:#8b95a3; --ink3:#5d6673;
+    --teal:#56cfc1; --amber:#e8a64a; --green:#5fd08a; --red:#e0635f; --blue:#6aa6e8;
+    --good:#36e27e; --bad:#ff5d5d; --none:#6a7280;
+    --chipbg:#242b35;
+    --mono:"SF Mono",ui-monospace,Menlo,monospace;
+    --sans:-apple-system,"Helvetica Neue",sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font:13px/1.45 var(--sans);
+    padding:30px 26px 80px;-webkit-font-smoothing:antialiased}
+  .mono{font-family:var(--mono)}
+  a{color:var(--teal)}
+
+  /* ---- page header ---- */
+  header{max-width:1180px;margin:0 auto 26px}
+  h1{font-size:19px;font-weight:700;letter-spacing:.01em}
+  h1 em{font-style:normal;color:var(--teal)}
+  .sub{color:var(--ink2);margin-top:6px;max-width:760px;font-size:13px}
+  .legend{display:flex;gap:18px;margin-top:14px;flex-wrap:wrap;font-size:12px;color:var(--ink2)}
+  .legend b{color:var(--ink)}
+  .lg{display:inline-flex;align-items:center;gap:7px}
+  .lg .d{width:9px;height:9px;border-radius:5px}
+  .lg .d.good{background:var(--good)} .lg .d.bad{background:var(--bad)}
+  .lg .d.none{background:transparent;border:1.5px solid var(--none)}
+
+  /* ---- grid of design cards ---- */
+  .grid{max-width:1180px;margin:0 auto;display:grid;gap:18px;
+    grid-template-columns:repeat(auto-fill,minmax(345px,1fr))}
+  .card{background:#10131a;border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    display:flex;flex-direction:column}
+  .card.current{border-color:#3a3030;background:#15110f}
+  .chead{padding:13px 15px 11px;border-bottom:1px solid var(--line)}
+  .ctag{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--ink3);
+    margin-bottom:5px}
+  .card.current .ctag{color:#c08a6a}
+  .ctitle{font-size:14.5px;font-weight:700}
+  .crat{color:var(--ink2);font-size:12px;margin-top:4px;line-height:1.4}
+  .ckeep{color:var(--ink3);font-size:11px;margin-top:7px}
+  .ckeep b{color:var(--ink2);font-weight:600}
+
+  /* ---- mini queue rail (shared) ---- */
+  .rail{background:var(--bg2);padding:6px 9px 10px}
+  .rsec{font-size:9px;letter-spacing:.13em;color:var(--ink3);font-weight:700;
+    display:flex;align-items:center;gap:7px;margin:9px 6px 4px}
+  .rsec .cnt{color:var(--ink2);font-family:var(--mono);font-weight:400}
+  .rsec::after{content:"";flex:1;height:1px;background:var(--line)}
+  .rsec:first-child{margin-top:3px}
+
+  .row{display:flex;gap:9px;padding:8px;border-radius:8px;border:1px solid transparent;
+    position:relative;margin-bottom:2px}
+  .row.sel{background:#222a36;border-color:#36507a}
+  .tcol{display:flex;flex-direction:column;gap:3px;flex:none;width:58px}
+  .thumb{width:58px;height:34px;border-radius:4px;background:#000;overflow:hidden;flex:none;
+    position:relative}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .thumb.empty{background:linear-gradient(150deg,#1a1d24,#0d0f13)}
+  .thumb .dur{position:absolute;right:2px;bottom:2px;background:rgba(0,0,0,.65);
+    font-family:var(--mono);font-size:9px;padding:0 3px;border-radius:2px;color:#cfd6df}
+  .cover{height:3px;border-radius:2px;background:rgba(255,255,255,.08);position:relative;overflow:hidden}
+  .cover i{position:absolute;top:0;bottom:0;background:var(--amber);opacity:.55}
+  .mid{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:2px}
+  .vname{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+  .aname{font-size:11px;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    display:flex;align-items:center;gap:5px}
+  .aname .adot{width:6px;height:6px;border-radius:3px;background:var(--amber);flex:none}
+  .aname.muted{color:var(--ink3)}
+  .right{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none;justify-content:center}
+  .abox{width:17px;height:17px;border:1.5px solid var(--line2);border-radius:4px;display:flex;
+    align-items:center;justify-content:center;font-size:11px;color:transparent;flex:none}
+  .abox.on{background:var(--good);border-color:var(--good);color:#10241a;font-weight:800}
+
+  /* =======================================================
+     CURRENT — the bare dot, for reference
+     ======================================================= */
+  .v-current .qdot{width:9px;height:9px;border-radius:5px}
+  .v-current .qdot.good{background:var(--good)}
+  .v-current .qdot.bad{background:var(--bad)}
+  .v-current .qdot.none{background:transparent;border:1.5px solid var(--none)}
+
+  /* =======================================================
+     1 — STATUS SPINE (left-edge rail)
+     ======================================================= */
+  .v-spine .row{padding-left:14px}
+  .v-spine .spine{position:absolute;left:4px;top:9px;bottom:9px;width:3px;border-radius:2px}
+  .v-spine .spine.good{background:var(--good)}
+  .v-spine .spine.bad{background:var(--bad)}
+  .v-spine .spine.none{background:repeating-linear-gradient(180deg,var(--none) 0 2px,transparent 2px 5px)}
+  .v-spine .row.good{background:linear-gradient(90deg,rgba(54,226,126,.05),transparent 40%)}
+  .v-spine .row.bad{background:linear-gradient(90deg,rgba(255,93,93,.06),transparent 40%)}
+
+  /* =======================================================
+     2 — THUMBNAIL RING + SEAL
+     ======================================================= */
+  .v-ring .thumb{outline-offset:0}
+  .v-ring .thumb.good{box-shadow:0 0 0 1.5px var(--good)}
+  .v-ring .thumb.bad{box-shadow:0 0 0 1.5px var(--bad)}
+  .v-ring .thumb.none{box-shadow:0 0 0 1.5px var(--none)}
+  .v-ring .seal{position:absolute;left:-5px;top:-5px;width:16px;height:16px;border-radius:8px;
+    display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;
+    border:2px solid var(--bg2);box-shadow:0 1px 3px rgba(0,0,0,.5)}
+  .v-ring .seal.good{background:var(--good);color:#0d2316}
+  .v-ring .seal.bad{background:var(--bad);color:#2a0c0c}
+  .v-ring .seal.none{background:#2a3038;color:var(--none)}
+
+  /* =======================================================
+     3 — INLINE MATCH TAG (on the audio line)
+     ======================================================= */
+  .v-tag .aname .adot{display:none}
+  .v-tag .mtag{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;
+    letter-spacing:.02em;flex:none}
+  .v-tag .mtag .g{font-size:11px;line-height:1}
+  .v-tag .mtag.good{color:#7fe6a6}
+  .v-tag .mtag.bad{color:#ff9b9b}
+  .v-tag .mtag.none{color:var(--ink3)}
+  .v-tag .afile{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--amber);opacity:.92}
+  .v-tag .aname{gap:7px}
+
+  /* =======================================================
+     4 — CONFIDENCE METER (segmented strength)
+     ======================================================= */
+  .v-meter .meter{display:flex;gap:2px;align-items:flex-end;height:13px}
+  .v-meter .meter b{width:3px;border-radius:1px;background:#2c333d;display:block}
+  .v-meter .meter b:nth-child(1){height:6px}
+  .v-meter .meter b:nth-child(2){height:9px}
+  .v-meter .meter b:nth-child(3){height:13px}
+  .v-meter .meter.good b{background:var(--good)}
+  .v-meter .meter.bad b.on{background:var(--bad)}
+  .v-meter .meter.bad b{background:#3a2a2e}
+  .v-meter .meter.none b{background:#2c333d}
+  .v-meter .mcap{font-size:9px;color:var(--ink3);letter-spacing:.04em;margin-top:3px;text-align:right}
+
+  /* =======================================================
+     5 — SHAPE-CODED GLYPH CHIP
+     ======================================================= */
+  .v-glyph .gchip{width:18px;height:18px;border-radius:6px;display:flex;align-items:center;
+    justify-content:center;font-size:11px;font-weight:800;flex:none}
+  .v-glyph .gchip.good{background:rgba(54,226,126,.16);color:var(--good);
+    box-shadow:inset 0 0 0 1px rgba(54,226,126,.4)}
+  .v-glyph .gchip.bad{background:rgba(255,93,93,.16);color:var(--bad);
+    box-shadow:inset 0 0 0 1px rgba(255,93,93,.45)}
+  .v-glyph .gchip.none{background:transparent;color:var(--none);
+    box-shadow:inset 0 0 0 1px var(--line2)}
+
+  footer{max-width:1180px;margin:30px auto 0;color:var(--ink3);font-size:11.5px;line-height:1.6}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>C<em>O</em>UPLE — match-status indicator, 5 redesigns</h1>
+  <div class="sub">
+    Replacing the bare green/red/grey dot in the left couple rail. Each card shows the
+    same five couples (3&nbsp;matched · 1&nbsp;needs-attention · 1&nbsp;no-audio) so the status
+    treatment can be compared in real context. The approve checkbox is unchanged in every
+    variant.
+  </div>
+  <div class="legend">
+    <span class="lg"><span class="d good"></span><b>good</b> — confident match</span>
+    <span class="lg"><span class="d none"></span><b>none</b> — no audio paired</span>
+    <span class="lg"><span class="d bad"></span><b>check</b> — ambiguous / forced (rare)</span>
+  </div>
+</header>
+
+<div class="grid" id="grid"></div>
+
+<footer>
+  Self-contained mockup · real session thumbnails from <span class="mono">assets/</span> ·
+  palette matches <span class="mono">index.html</span>. Production indicator lives in
+  <span class="mono">QueueRail.swift → VerdictDot</span>.
+</footer>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+
+/* the five sample couples (verdict-representative; green/grey dominant) */
+const ROWS=[
+  {v:"bach 169.mov", a:"Gigue Recording.WAV", dur:"2:10", thumb:"assets/thumb-bach-169.jpg",
+   verdict:"good", cover:[0,100], approved:true, sel:false, section:0},
+  {v:"bach 171.mov", a:"Prelude Recording.WAV", dur:"4:38", thumb:"assets/thumb-bach-171.jpg",
+   verdict:"good", cover:[0,100], approved:false, sel:true, section:1},
+  {v:"bach 172.mov", a:"ZOOM0033.WAV", dur:"4:15", thumb:"assets/thumb-bach-172.jpg",
+   verdict:"good", cover:[0,96], approved:false, sel:false, section:1},
+  {v:"bach 170.mov", a:"2 candidates — pick one", dur:"1:57", thumb:"assets/thumb-bach-170.jpg",
+   verdict:"bad", cover:[6,100], approved:false, sel:false, section:2, word:true},
+  {v:"stray clip.mov", a:"no audio paired", dur:"0:42", thumb:null,
+   verdict:"none", cover:null, approved:false, sel:false, section:2, word:true},
+];
+const SECTIONS=["QUEUED FOR EXPORT","TO APPROVE","TO FIX"];
+const GLYPH={good:"✓",bad:"!",none:"–"};
+
+const VARIANTS=[
+  {id:"current", tag:"CURRENT", title:"Bare dot (today)", cls:"v-current",
+   rat:"A 9px color-only dot floating in the corner above the checkbox. No shape, no anchor — reads as decoration.",
+   keep:"The problem: isolated, color-only, crowds the checkbox."},
+  {id:"spine", tag:"DIRECTION 1", title:"Status spine", cls:"v-spine",
+   rat:"A colored bar on the row's left edge. The row itself carries status; the corner is freed for just the checkbox. Calm and structural.",
+   keep:"Best for: a quiet rail where green fades into the background and only red/grey draw the eye."},
+  {id:"ring", tag:"DIRECTION 2", title:"Thumbnail ring + seal", cls:"v-ring",
+   rat:"The footage gets a status-colored ring and a small corner seal (✓ / – / !). Quality reads as a property of the clip itself.",
+   keep:"Best for: making the status feel tied to the media, not bolted onto the row."},
+  {id:"tag", tag:"DIRECTION 3", title:"Inline match tag", cls:"v-tag",
+   rat:"Status moves onto the audio line — where the judgment actually lives — as a glyph + word. \"✓ matched\", \"no audio\", \"check\".",
+   keep:"Best for: self-explaining rows; status and the file it judges sit together."},
+  {id:"meter", tag:"DIRECTION 4", title:"Confidence meter", cls:"v-meter",
+   rat:"A 3-bar strength meter in the verdict color. Full = confident, empty = none. Makes \"quality\" feel measured, not asserted.",
+   keep:"Best for: when you want the strength of a match visible at a glance, not just pass/fail."},
+  {id:"glyph", tag:"DIRECTION 5", title:"Shape-coded chip", cls:"v-glyph",
+   rat:"The dot done right: a rounded chip with a shape-coded glyph (✓ / – / !), sized to harmonize with the checkbox below it. Colorblind-safe.",
+   keep:"Best for: keeping the compact corner placement but making it deliberate and legible."},
+];
+
+function coverHTML(c){
+  if(!c) return `<div class="cover"></div>`;
+  return `<div class="cover"><i style="left:${c[0]}%;width:${c[1]-c[0]}%"></i></div>`;
+}
+
+/* right-column status block, per variant */
+function statusHTML(id,r){
+  const v=r.verdict;
+  switch(id){
+    case "current":
+      return `<span class="qdot ${v}"></span>`;
+    case "spine":   // spine is drawn on the row; nothing in the corner
+    case "tag":     // status is on the audio line; nothing in the corner
+      return ``;
+    case "ring":    // seal is drawn on the thumb; nothing in the corner
+      return ``;
+    case "meter":{
+      const on = v==="good"?3 : v==="bad"?1 : 0;
+      const bars=[0,1,2].map(i=>`<b class="${i<on?"on":""}"></b>`).join("");
+      const cap = v==="good"?"strong" : v==="bad"?"weak" : "—";
+      return `<div style="display:flex;flex-direction:column;align-items:flex-end">
+        <div class="meter ${v}">${bars}</div><div class="mcap">${cap}</div></div>`;
+    }
+    case "glyph":
+      return `<span class="gchip ${v}">${GLYPH[v]}</span>`;
+  }
+  return ``;
+}
+
+/* thumbnail, with the ring/seal treatment for variant 2 */
+function thumbHTML(id,r){
+  const ringCls = id==="ring" ? " "+r.verdict : "";
+  const inner = r.thumb ? `<img src="${r.thumb}">` : ``;
+  const seal = id==="ring"
+    ? `<span class="seal ${r.verdict}">${GLYPH[r.verdict]}</span>` : ``;
+  const empty = r.thumb ? "" : " empty";
+  return `<div class="thumb${empty}${ringCls}">${inner}${seal}<span class="dur">${r.dur}</span></div>`;
+}
+
+/* audio line, with the inline tag for variant 3 */
+function audioHTML(id,r){
+  if(id==="tag"){
+    const lbl = r.verdict==="good" ? "matched"
+              : r.verdict==="bad"  ? "check"
+              : "no audio";
+    const file = r.verdict==="none" ? "" : `<span class="afile">${r.a}</span>`;
+    return `<div class="aname">
+      <span class="mtag ${r.verdict}"><span class="g">${GLYPH[r.verdict]}</span>${lbl}</span>${file}</div>`;
+  }
+  const muted = r.word ? " muted" : "";
+  const dot = r.verdict==="none" ? "" : `<span class="adot"></span>`;
+  return `<div class="aname${muted}">${dot}${r.a}</div>`;
+}
+
+function rowHTML(id,r){
+  const spine = id==="spine" ? `<span class="spine ${r.verdict}"></span>` : ``;
+  const rowCls = id==="spine" ? " "+r.verdict : "";
+  const box = r.approved ? `<span class="abox on">✓</span>` : `<span class="abox"></span>`;
+  return `<div class="row${r.sel?" sel":""}${rowCls}">
+    ${spine}
+    <div class="tcol">${thumbHTML(id,r)}${coverHTML(r.cover)}</div>
+    <div class="mid">
+      <div class="vname">${r.v}</div>
+      ${audioHTML(id,r)}
+    </div>
+    <div class="right">${statusHTML(id,r)}${box}</div>
+  </div>`;
+}
+
+function railHTML(v){
+  let html="", lastSec=-1;
+  for(const r of ROWS){
+    if(r.section!==lastSec){
+      const cnt=ROWS.filter(x=>x.section===r.section).length;
+      html+=`<div class="rsec">${SECTIONS[r.section]} <span class="cnt">${cnt}</span></div>`;
+      lastSec=r.section;
+    }
+    html+=rowHTML(v.id,r);
+  }
+  return `<div class="rail ${v.cls}">${html}</div>`;
+}
+
+function cardHTML(v){
+  return `<div class="card ${v.id==='current'?'current':''}">
+    <div class="chead">
+      <div class="ctag">${v.tag}</div>
+      <div class="ctitle">${v.title}</div>
+      <div class="crat">${v.rat}</div>
+      <div class="ckeep">${v.keep}</div>
+    </div>
+    ${railHTML(v)}
+  </div>`;
+}
+
+$("#grid").innerHTML = VARIANTS.map(cardHTML).join("");
+</script>
+</body>
+</html>

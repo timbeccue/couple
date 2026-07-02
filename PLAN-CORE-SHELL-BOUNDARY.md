@@ -11,7 +11,9 @@ portable, but a second layer — *pairing resolution and several interaction pol
 either duplicated across the Rust CLI and the Swift app or implemented Swift-only. Each new
 platform would re-derive that layer in a new language. This plan moves that layer down across
 the FFI line **before** the port, so a new shell is "bind the FFI + draw UI + open an audio
-device" with **zero** decision logic.
+device" with **zero domain resolution/policy logic**. Shells still make presentation decisions
+(selection behavior, prompts, toasts, layout, platform affordances); they do not decide what a
+pairing row *means*.
 
 This is a **relocation**, not a behavior change. Every step is gated on byte-identical output
 against the existing corpus (the repo's established discipline: parity gates, additive ABI).
@@ -43,7 +45,7 @@ All additions are **additive**: `cpl_abi_version` stays `1`.
 |---|---|---|---|
 | decode/import, pyramid, fingerprint, matching, sync, export, audition DSP, measure, onsets, cache | `couple-core` | **stays** | already correct; the portable nucleus |
 | **§3.3 pairing resolver** (coverage clustering, disjoint/overlap, simultaneity triangle, margin rule, row states, candidate-overflow, RMS escalation) | duplicated: `cli/src/pair.rs` **and** `mac/.../Resolver.swift` | **→ core** `couple_core::resolve` | the headline item; ~600 lines on each side collapse to one |
-| **resolver constants** (`zMargin`, `triangleTolMs`, `coverageFull`, `disjointTolS`, RMS tiebreaker) | duplicated `PairParams` in both shells | **→ core** `ResolveParams` | mirrors how `PairingParams` is already core-owned |
+| **resolver constants** (`zMin`, `zMargin`, `triangleTolMs`, `coverageFull`, `disjointTolS`, RMS tiebreaker) | duplicated `PairParams` in both shells | **→ core** `ResolveParams` | mirrors how `PairingParams` is already core-owned |
 | `MatchQualityPolicy` | Swift-only (CoupleKit) | **→ core** `policy::match_quality` | pure; thin map over `classification` |
 | `RepairDropPolicy` | Swift-only | **→ core** `policy::repair_drop` | pure |
 | `RowMergePolicy` | Swift-only | **→ core** `policy::row_merge` | pure |
@@ -74,6 +76,7 @@ resolution on top of it is the only missing piece. Move it in:
 pub struct ResolveParams {
     pub pairing: PairingParams,    // already core-owned: verifier thresholds + graph tolerances
     pub matcher: MatcherChoice,    // Fingerprint (default) | Legacy | Shadow  (== CLI --matcher)
+    pub z_min: f64,                // legacy resolver gate + raw-z triangle/margin threshold
     pub z_margin: f64,             // §3.5 decisive-best margin
     pub triangle_tol_ms: f64,      // §3.4 legacy closure tolerance
     pub coverage_full: f64,        // single-match confident floor
@@ -101,9 +104,19 @@ impl Ctx {
 }
 ```
 
-Core has each track's file name (`meta.info.path`) and content key (`meta.content_key`), so it
-produces fully-formed rows (keys, names, deterministic name tiebreaks) — the shell threads no
-metadata. Both shells already hold the imported track-ids, so the call site is trivial.
+`z_min` is deliberately separate from `PairingParams::legacy_z_min`. Today the CLI and Swift
+resolvers both carry a resolver-level `z_min` used for the legacy row gate, raw-z audio↔audio
+triangle, and margin rule; preserving `--params z-min` / Swift defaults byte-identically requires
+moving that value too, not silently folding it into `PairingParams`.
+
+Core has each imported track's file name (`meta.info.path`) and content key (`meta.content_key`),
+so it produces fully-formed rows (keys, names, deterministic name tiebreaks) — the shell threads
+no metadata for imported tracks. The first implementation is intentionally **imported-track only**:
+`videos: &[TrackId]` means "videos with analyzable/imported audio." If a platform wants to surface
+a video that cannot be imported (for example a stripped/no-audio video kept in the queue as
+`no match`), the shell wraps the core result with that inert row, or a later additive
+`cpl_resolve_pool` accepts explicit video descriptors. The phase gates below must state which mode
+is under test so non-importable rows do not drift by accident.
 
 FFI (additive):
 
@@ -119,6 +132,11 @@ char*    cpl_resolve_params_default_json(void);
 `cpl_resolve_start` replaces today's two-step dance (`cpl_match_candidates_graph_start` →
 `Resolver.resolve(prebuiltMatrix:)`) with one job that returns rows directly. The existing
 `cpl_match_candidates*` symbols stay for shadow/debug and the ≥1-release legacy override.
+Progress uses the existing match phases for the expensive work (`MatchFingerprint`,
+`MatchCorrelate`, `MatchGraph`) and adds a cheap terminal resolve tick. If RMS escalation or
+legacy verification is folded into the job, add explicit `Verify` / `Resolve` phases to
+`job::Phase` rather than hiding substantial work under `MatchGraph`; shells should render an honest
+activity line without re-deriving phase weights.
 
 ### 3.2 `couple_core::policy` (pure decisions)
 
@@ -138,6 +156,18 @@ char* cpl_policy_anchor_propose(const char* json);
 char* cpl_policy_activity(const char* json);   // returns a structured decision; shell formats strings
 ```
 
+Policy FFI functions return a uniform envelope rather than silent defaults:
+
+```json
+{ "ok": true, "value": { ... } }
+{ "ok": false, "error": { "kind": "invalid", "message": "..." } }
+```
+
+Swift wrappers may map an error to a conservative UI fallback, but tests must assert the error path
+so malformed JSON or a stale shell DTO cannot silently change behavior. `cpl_triangle_closes` can
+keep its existing null-on-malformed contract for compatibility; new policy functions should not
+copy that ambiguity.
+
 These run on UI gestures (clicks, drops, imports) — never per frame — so a JSON round-trip is
 free. The `CoupleKitTests` invariants (1818 lines) become Rust unit tests; a slim Swift test
 keeps verifying the wrapper plumbs through.
@@ -146,9 +176,12 @@ keeps verifying the wrapper plumbs through.
 
 **Phase A — Stand up `couple_core::resolve` as a proven superset.** Port the §3.3 logic
 (both the fingerprint and legacy paths + clustering + triangle + margin + overflow + RMS
-escalation) into core. No shell change yet. Gate: a new core test asserts `ctx.resolve` is
-**byte-identical** to today's `cli/src/pair.rs` rows over the fixtures (bach 169→Gigue,
-170 ambiguous, 171→Prelude, 172→ZOOM0033; the `multifile-session`; the matcher-corpus).
+escalation) into core. No shell change yet. Gate: freeze today's CLI `couple pair --json` row
+output as golden fixtures, then assert `ctx.resolve` is **byte-identical** to those golden rows
+(bach 169→Gigue, 170 ambiguous, 171→Prelude, 172→ZOOM0033; the `multifile-session`; the
+matcher-corpus). Do not try to call the CLI-private resolver from core tests; the golden JSON is
+the cross-language contract. If stripped/non-importable video rows are included in a fixture, mark
+whether they are shell-wrapped inert rows or covered by a new descriptor API.
 
 **Phase B — CLI consumes core.** `run_pair` calls `ctx.resolve(...)` and keeps only its own
 report wrapper (matrix/evidence/timings/debug dumps stay CLI presentation). Delete
@@ -225,6 +258,11 @@ and label it as a deliberate mirror so it isn't mistaken for stray logic.
   user state.
 - **Matrix size over JSON.** `[[PairEvidence]]` is produced once per resolve, not per frame —
   JSON is fine (and `cpl_resolve` keeps the matrix internal anyway, returning only rows).
+- **Non-importable video rows.** The first `cpl_resolve` is imported-track only; shells that keep
+  stripped/no-audio videos visible must wrap those rows explicitly as inert `no match` rows, or the
+  project must add a descriptor-based resolver API before testing those cases.
+- **Silent policy fallback.** New policy FFI functions return explicit `{ok,value|error}` envelopes;
+  wrapper tests cover malformed/stale DTOs so a shell cannot accidentally hide a policy failure.
 - **ffmpeg discovery on Windows/Linux.** Already parameterized via `CtxConfig`
   (`ffmpegPath`/`ffprobePath`); verify bundling/lookup per platform in Phase G.
 
