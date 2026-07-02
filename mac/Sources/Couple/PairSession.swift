@@ -73,6 +73,11 @@ final class PairSession {
     var lockZoom = true
     var loupeLayout: LoupeLayout = .grid
     var anchors: [AnchorPoint] = []
+    /// Overview strip visible range (TODO-010): independent of loupe window sizes
+    /// and of `lockZoom`, and NOT persisted (a fresh fitted view per launch /
+    /// couple-switch is the spec'd behavior). `nil` ⇒ fitted to the full union
+    /// (`stageDomain`); the viewport helpers in WaveformStage.swift read/mutate this.
+    var overviewRange: ClosedRange<Double>?
     var driftWindows: [DriftWindowState] = []
 
     // Export options (consumed by the Phase-6 export job)
@@ -223,6 +228,7 @@ final class PairSession {
         verified = false
         anchors = []
         driftWindows = []
+        overviewRange = nil // fresh fitted overview per load (TODO-010)
         lastSync = nil
         syncActivity = .none
     }

@@ -52,6 +52,15 @@ final class InputRouter {
         let mods = event.modifierFlags
         let chars = event.charactersIgnoringModifiers ?? ""
 
+        // ⌘0 (TODO-010): fit the overview back to the full union. Guarded by the
+        // text-edit check above so it never fires mid-rename; only meaningful with a
+        // session (else pass through).
+        if mods.contains(.command), chars == "0" {
+            guard pair.session != nil else { return false }
+            pair.overviewFit()
+            return true
+        }
+
         // Delete / forward-delete: remove the selected media from the open session
         // (TODO-001) — only when the media pool has a selection, so Delete never fights
         // another context (and never deletes source files). Routes through the SAME
@@ -131,7 +140,37 @@ final class InputRouter {
         guard let window = event.window, let contentView = window.contentView else { return false }
         let p = contentView.convert(event.locationInWindow, from: nil)
         let point = contentView.isFlipped ? p : CGPoint(x: p.x, y: contentView.bounds.height - p.y)
-        return zoom(at: point, deltaY: event.scrollingDeltaY, precise: event.hasPreciseScrollingDeltas)
+        let precise = event.hasPreciseScrollingDeltas
+        // Route by pointer location (UX §2.9): over the overview strip, scroll zooms/pans
+        // the OVERVIEW; over a loupe it zooms that loupe — the two never cross (TODO-010).
+        if model.overviewRect.contains(point) {
+            return scrollOverview(at: point, deltaX: event.scrollingDeltaX,
+                                  deltaY: event.scrollingDeltaY, precise: precise)
+        }
+        return zoom(at: point, deltaY: event.scrollingDeltaY, precise: precise)
+    }
+
+    /// Overview scroll (TODO-010): vertical scroll zooms about the pointer with the
+    /// SAME exp() sensitivity and direction as loupe zoom; horizontal scroll pans. Pure
+    /// presentation — allowed whenever a session exists (independent of `lockZoom` and
+    /// of the sync-disabled `inputsEnabled` gate, which only guards alignment edits).
+    @discardableResult
+    func scrollOverview(at point: CGPoint, deltaX: CGFloat, deltaY: CGFloat, precise: Bool) -> Bool {
+        let pair = model.pair
+        let rect = model.overviewRect
+        guard pair.session != nil, rect.width > 0 else { return false }
+        let visible = pair.overviewVisible
+        let span = visible.upperBound - visible.lowerBound
+        if abs(deltaX) > abs(deltaY) {
+            // Content follows the fingers (same sign convention as the coarse-offset
+            // and loupe drags): a rightward scroll reveals earlier time.
+            pair.overviewPan(by: -Double(deltaX / rect.width) * span)
+        } else if deltaY != 0 {
+            let factor = exp(deltaY * (precise ? 0.004 : 0.06))
+            let t = OverviewTimeline.time(atX: point.x - rect.minX, width: rect.width, visible: visible)
+            pair.overviewZoom(factor: 1 / factor, around: t) // 1/factor mirrors loupe manualZoom
+        }
+        return true
     }
 
     @discardableResult

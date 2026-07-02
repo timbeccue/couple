@@ -119,6 +119,9 @@ final class AppModel {
 
     /// Loupe canvas frames in window coordinates, for scroll-wheel routing.
     @ObservationIgnored var loupeRects: [Int: CGRect] = [:]
+    /// Overview wave-area frame in window coordinates (TODO-010): pointer-over-overview
+    /// scrolls route to overview zoom/pan, pointer-over-loupe scrolls to the loupes.
+    @ObservationIgnored var overviewRect: CGRect = .zero
 
     init() {
         var engine: Engine?
@@ -227,6 +230,7 @@ final class AppModel {
     func select(_ id: CoupleRow.ID?) {
         selectedID = id
         loupeRects = [:]
+        overviewRect = .zero
         guard let couple = selectedCouple else {
             audition.teardown()
             return

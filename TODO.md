@@ -59,7 +59,7 @@ Resolve the questions first, then record the resulting decision.
 
 ## TODO-010: Zoom and pan the overview waveforms
 
-**Status:** Ready  
+**Status:** Done  
 **Type:** Feature  
 **Area:** Overview waveform
 
@@ -103,6 +103,57 @@ existing behavior.
 - The visible time range is obvious from tick labels.
 - Loupe zoom and overview zoom do not unexpectedly change each other.
 - Changing couples initializes a sensible fitted view.
+
+### Implementation notes (Done, verified)
+
+The overview strip now has its own visible time range, stored per couple as
+`PairSession.overviewRange: ClosedRange<Double>?` (`nil` ⇒ fitted to the full
+`stageDomain` union). It is deliberately NOT part of the persisted queue or core
+`AlignmentState` — a fresh fitted view per launch/couple-switch, as specified, and
+no wire change. `resetAlignment()` clears it; each couple owns its own `PairSession`,
+so switching couples shows that couple's view and a brand-new couple starts fitted.
+
+Decision logic is a pure, headless-testable helper `OverviewViewport`
+(WaveformStage.swift) with `clamp` / `zoom` / `pan`: it clamps a candidate range to
+the live track union and enforces a `minSpanS = 0.5 s` floor so the view cannot
+collapse, returning `nil` when the range covers the whole union (the fitted state,
+so a live domain change — the external lane sliding under a coarse-offset drag —
+re-fits for free). Thin `PairSession` accessors (`overviewVisible`, `overviewZoomed`,
+`overviewFit`, `overviewZoom(factor:around:)`, `overviewPan(by:)`) hold only
+presentation state. Every renderer and gesture that previously read `stageDomain`
+now maps through `overviewVisible`: the `cpl_band` lane fetch (so zoom = higher
+resolution — no core/FFI change, `cpl_band` already takes arbitrary t0/t1), tick
+labels (visible range obvious), playhead, anchor pins, overlap shading, the connector
+layer, the playhead scrub, and the ⌥ coarse-offset drag.
+
+Scroll routing (InputRouter): `OverviewStrip` registers its wave-area frame in window
+coords (`AppModel.overviewRect`, mirroring `loupeRects`); `handleScroll` routes by
+pointer location — pointer-over-overview ⇒ overview, pointer-over-loupe ⇒ loupe, no
+crossing. `scrollOverview` zooms on vertical scroll about the pointer time using the
+SAME `exp(deltaY · {0.004 precise | 0.06})` sensitivity and direction as loupe zoom
+(passed as `1/factor`, mirroring `manualZoom`), and pans on horizontal scroll
+(content-follows-fingers sign). It is pure presentation: gated only on a live session,
+independent of `lockZoom` and of the alignment-editing `inputsEnabled` gate. A `Fit`
+chip (overview chips row, matching the lock-zoom chip chrome; dimmed+disabled while
+already fitted) and ⌘0 (InputRouter.handleKey, after the `isEditingText` guard so it
+never fires mid-rename) restore the full union.
+
+Loupe zoom (per-anchor `frame.winMs`) and overview zoom (`overviewRange`) are wholly
+separate state and never touch each other. TODO-014 Part 1's direct 1:1 anchor drag
+keeps working while zoomed because its pointer→time mapping already reads the displayed
+`visible` range.
+
+Verified: `swift build -c release` clean, `swift build -c release
+-Xswiftc -DCOUPLE_DEVHARNESS` clean, `swift test` 109 passed, no new warnings
+introduced (only the pre-existing NSImage-Sendable + libcouple.a macOS-version
+warnings remain). Extended the headless `COUPLE_OVERVIEW_TEST` DebugDrive hook with
+`OverviewViewport` coverage (pointer-centered zoom stays centered / pins the edge,
+domain clamping shifts inside + preserves span, the min-span floor, fit ⇒ nil,
+edge-clamped pan); the pure math was additionally cross-checked standalone (7/7).
+The SwiftUI binary can't render headlessly in CI, so the interactive feel (scroll
+zoom/pan direction, pointer-centering, seeking/anchor accuracy while zoomed) is left
+for an owner click-through. Touched: PairSession.swift, WaveformStage.swift,
+AppModel.swift, InputRouter.swift, DebugDrive.swift, TODO.md.
 
 ---
 

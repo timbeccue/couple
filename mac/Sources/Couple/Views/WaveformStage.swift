@@ -44,6 +44,80 @@ enum OverviewTimeline {
     }
 }
 
+/// Pure viewport math for the overview strip (TODO-010): clamp / zoom / pan the
+/// visible time range within the track union, enforcing a minimum span so the view
+/// can never collapse to an unusable range. Kept out of PairSession so it is
+/// unit-testable headless (COUPLE_OVERVIEW_TEST) and so the shell holds only
+/// presentation state, not the decision logic. A range covering the whole domain is
+/// represented as `nil` (the fitted state), which lets a live domain change — the
+/// external lane sliding under a coarse-offset drag — re-fit for free.
+enum OverviewViewport {
+    /// Minimum visible span (s). Below this nearby events, the playhead, and anchors
+    /// are no longer separable, which is exactly what zoom exists to avoid (UX §1.6).
+    static let minSpanS = 0.5
+
+    /// Clamp `range` into `domain`, enforcing `minSpanS`. Returns `nil` when the range
+    /// covers (or exceeds) the whole domain — callers store that as "no viewport".
+    static func clamp(_ range: ClosedRange<Double>, domain: ClosedRange<Double>) -> ClosedRange<Double>? {
+        let dSpan = domain.upperBound - domain.lowerBound
+        guard dSpan > 0 else { return nil }
+        let span = min(max(range.upperBound - range.lowerBound, minSpanS), dSpan)
+        if span >= dSpan { return nil }
+        var lo = max(range.lowerBound, domain.lowerBound)
+        if lo + span > domain.upperBound { lo = domain.upperBound - span }
+        return lo...(lo + span)
+    }
+
+    /// Zoom `visible` (span *= `factor`) about time `t`, keeping `t` at the same
+    /// fractional x, then clamp into `domain`. `factor` < 1 zooms in.
+    static func zoom(_ visible: ClosedRange<Double>, factor: Double, around t: Double,
+                     domain: ClosedRange<Double>) -> ClosedRange<Double>? {
+        let span = visible.upperBound - visible.lowerBound
+        guard span > 0, factor > 0 else { return clamp(visible, domain: domain) }
+        let dSpan = domain.upperBound - domain.lowerBound
+        let newSpan = min(max(span * factor, minSpanS), dSpan)
+        let frac = max(0, min(1, (t - visible.lowerBound) / span))
+        let lo = t - frac * newSpan
+        return clamp(lo...(lo + newSpan), domain: domain)
+    }
+
+    /// Pan `visible` by `dt` seconds, then clamp into `domain`.
+    static func pan(_ visible: ClosedRange<Double>, by dt: Double,
+                    domain: ClosedRange<Double>) -> ClosedRange<Double>? {
+        clamp((visible.lowerBound + dt)...(visible.upperBound + dt), domain: domain)
+    }
+}
+
+extension PairSession {
+    /// The overview strip's displayed time range (TODO-010): the stored viewport
+    /// clamped to the live union, or the full union when fitted. Every renderer and
+    /// gesture maps through THIS range (not `stageDomain`), so zoom/pan reach the
+    /// bands, ticks, playhead, anchors, overlap shading, seeking, and coarse-offset
+    /// drag uniformly.
+    var overviewVisible: ClosedRange<Double> {
+        guard let r = overviewRange else { return stageDomain }
+        return OverviewViewport.clamp(r, domain: stageDomain) ?? stageDomain
+    }
+
+    /// True when the overview is zoomed/panned in from the full union (drives the
+    /// Fit affordance's enabled state).
+    var overviewZoomed: Bool { overviewRange != nil }
+
+    /// Restore the full-union fit (the `Fit` action / ⌘0).
+    func overviewFit() { overviewRange = nil }
+
+    /// Scroll-zoom the overview about a pointer time (`factor` < 1 zooms in).
+    func overviewZoom(factor: Double, around t: Double) {
+        overviewRange = OverviewViewport.zoom(overviewVisible, factor: factor,
+                                              around: t, domain: stageDomain)
+    }
+
+    /// Scroll-pan the overview by `dt` seconds.
+    func overviewPan(by dt: Double) {
+        overviewRange = OverviewViewport.pan(overviewVisible, by: dt, domain: stageDomain)
+    }
+}
+
 private let stagePad: CGFloat = 14
 
 // Overview strip vertical metrics: a badge gutter above the lanes keeps the
@@ -108,6 +182,14 @@ struct OverviewStrip: View {
                 }
                 .coordinateSpace(name: "overview")
                 .frame(width: waveSize.width)
+                // Register the wave-area frame (window coords) so scroll-wheel routing
+                // sends pointer-over-overview scrolls to overview zoom/pan and leaves
+                // pointer-over-loupe scrolls to the loupes (TODO-010; UX §2.9).
+                .background(GeometryReader { g in
+                    Color.clear
+                        .onAppear { model.overviewRect = g.frame(in: .global) }
+                        .onChange(of: g.frame(in: .global)) { _, f in model.overviewRect = f }
+                })
                 laneControlsColumn(height: geo.size.height)
                     .frame(width: laneControlsW)
             }
@@ -124,7 +206,8 @@ struct OverviewStrip: View {
 
             ctx.fill(Path(CGRect(origin: .zero, size: sz)), with: .color(Theme.canvasBg))
             guard let cam = pair.camera.track, let ext = pair.external.track else { return }
-            let domain = pair.stageDomain
+            // The displayed range (TODO-010): the zoom/pan viewport, or the full union.
+            let domain = pair.overviewVisible
             let d0 = domain.lowerBound
             let d1 = domain.upperBound
             let waveH = sz.height - tickRowH - badgeGutterH
@@ -249,7 +332,7 @@ struct OverviewStrip: View {
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("overview"))
                     .onChanged { g in
-                        let domain = pair.stageDomain
+                        let domain = pair.overviewVisible
                         let span = domain.upperBound - domain.lowerBound
                         if dragMode == nil {
                             let waveH = size.height - tickRowH - badgeGutterH
@@ -302,7 +385,7 @@ struct OverviewStrip: View {
 
     private func pins(size: CGSize) -> some View {
         let pair = model.pair
-        let domain = pair.stageDomain
+        let domain = pair.overviewVisible
         return ForEach(pair.anchors.indices, id: \.self) { i in
             let x = OverviewTimeline.x(forTime: pair.anchors[i].t, width: size.width, visible: domain)
             AnchorPin(index: i,
@@ -341,6 +424,21 @@ struct OverviewStrip: View {
             .pickerStyle(.segmented)
             .controlSize(.mini)
             .frame(width: 150)
+            Button {
+                pair.overviewFit()
+            } label: {
+                // TODO-010: restore the full-union overview (also ⌘0). Dim + disabled
+                // while already fitted so the chip doubles as a zoomed-in indicator.
+                Label("Fit", systemImage: "arrow.left.and.right")
+                    .font(.system(size: 9))
+                    .foregroundStyle(pair.overviewZoomed ? Theme.textSecondary : Theme.textTertiary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Theme.chipBg, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(!pair.overviewZoomed)
+            .help("Fit the overview to the full recording (⌘0)")
             Button {
                 pair.toggleLockZoom()
             } label: {
@@ -515,7 +613,7 @@ struct ConnectorLayer: View {
         let pair = model.pair
         Canvas { ctx, size in
             guard pair.loupeLayout == .grid, !pair.anchors.isEmpty else { return }
-            let domain = pair.stageDomain
+            let domain = pair.overviewVisible
             let n = pair.anchors.count
             let spacing: CGFloat = 8
             let loupeW = (size.width - CGFloat(n - 1) * spacing) / CGFloat(n)

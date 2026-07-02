@@ -870,8 +870,9 @@ final class DebugDrive {
     /// headless via COUPLE_OVERVIEW_TEST=1. Covers: endpoints + midpoint, monotonic
     /// in x, clamp outside the lane, x→time→x round-trip, the SAME x yields the SAME
     /// time regardless of the path/speed that reached it (no velocity gain remains),
-    /// a non-zero/zoomed visible lower bound (TODO-010 forward-compat), and degenerate
-    /// width/range pinning to the lower bound.
+    /// a non-zero/zoomed visible lower bound, and degenerate width/range pinning to the
+    /// lower bound — plus TODO-010's `OverviewViewport` zoom/pan/clamp math (pointer-
+    /// centered zoom, min-span floor, domain clamping, and fit ⇒ nil).
     private func overviewTest() async {
         var pass = 0, fail = 0
         func check(_ name: String, _ ok: Bool) {
@@ -953,6 +954,35 @@ final class DebugDrive {
               abs(OverviewTimeline.time(atX: 123, width: 0, visible: vis) - 0) < eps)
         check("(g) empty range ⇒ lower bound",
               abs(OverviewTimeline.time(atX: 123, width: w, visible: 50.0...50.0) - 50) < eps)
+
+        // (h) TODO-010 viewport math (`OverviewViewport`): zoom keeps the pointer time
+        // at the same fractional x, clamps to the domain + min span, pans, and fits
+        // (nil) when zoomed fully out. Pure — no view or media.
+        let domain = 0.0...100.0
+        if let z = OverviewViewport.zoom(domain, factor: 0.5, around: 50, domain: domain) {
+            check("(h) zoom-in about midpoint halves span, stays centered",
+                  abs((z.upperBound - z.lowerBound) - 50) < 1e-6
+                  && abs(z.lowerBound - 25) < 1e-6 && abs(z.upperBound - 75) < 1e-6)
+        } else { check("(h) zoom-in produced a viewport", false) }
+        if let z = OverviewViewport.zoom(domain, factor: 0.5, around: 0, domain: domain) {
+            check("(h) zoom about the left edge pins the lower bound", abs(z.lowerBound - 0) < 1e-6)
+        } else { check("(h) edge zoom produced a viewport", false) }
+        if let c = OverviewViewport.clamp(80.0...130.0, domain: domain) {
+            check("(h) clamp keeps span, shifts inside the domain",
+                  abs((c.upperBound - c.lowerBound) - 50) < 1e-6 && abs(c.upperBound - 100) < 1e-6)
+        } else { check("(h) over-range clamp produced a viewport", false) }
+        if let c = OverviewViewport.clamp(50.0...50.1, domain: domain) {
+            check("(h) an over-tight range widens to the min span",
+                  abs((c.upperBound - c.lowerBound) - OverviewViewport.minSpanS) < 1e-6)
+        } else { check("(h) min-span clamp produced a viewport", false) }
+        check("(h) zoom out past the full span ⇒ fitted (nil)",
+              OverviewViewport.zoom(20.0...40.0, factor: 100, around: 30, domain: domain) == nil)
+        check("(h) a fitted-width clamp ⇒ nil",
+              OverviewViewport.clamp(0.0...100.0, domain: domain) == nil)
+        if let p = OverviewViewport.pan(10.0...30.0, by: -50, domain: domain) {
+            check("(h) pan clamps at the start edge, preserving span",
+                  abs(p.lowerBound - 0) < 1e-6 && abs((p.upperBound - p.lowerBound) - 20) < 1e-6)
+        } else { check("(h) pan produced a viewport", false) }
 
         print("OVERVIEW-TEST summary: \(pass) passed, \(fail) failed")
     }
