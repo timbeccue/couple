@@ -236,3 +236,31 @@ Follow-through on the adopt-and-refactor decision (architecture assessment,
   on `-c release`.
 - **PROGRESS.md archived**: 2026-06-11..14 entries moved verbatim to
   `docs/archive/PROGRESS-2026-06-11-to-14.md`; SPEC-CHANGE ledger spans both files.
+
+## 2026-07-01 — Shell refactors: AnchorPoint struct, AppModel façade split; corpus gate enforced
+
+Remaining items from the adopt-and-refactor pass (same owner sign-off as above).
+
+- **PairSession anchor state** → one `AnchorPoint` struct (`t`, `frame`, `measurement`,
+  `measurementCenter`) instead of four hand-synchronized parallel arrays; every
+  insert/remove/reorder site now moves one element (UX §2.2 chronological order kept).
+  Core's persisted AlignmentState keeps its parallel-array wire shape — mapped at the
+  pushColdState/restore boundary. Behavior-preserving.
+- **AppModel decomposed** (1145 → 503 lines): three owned sub-controllers —
+  `IngestController` (import→resolve orchestration, serialized sync queue, the
+  activity-strip signal cluster with its synchronous-clear invariants verbatim),
+  `PoolController` (Finder-style pool selection, drag state, removal / Clear Session),
+  `InputRouter` (NSEvent key/scroll monitors + routing). AppModel stays the façade
+  (couples/selection, approve/repair verbs, export settings, persistence) with thin
+  forwarding accessors, so views / ActivityStrip / DebugDrive are unchanged.
+- **Synthetic-corpus ROC gate enforced in-repo**: a new `#[ignore]`d release test
+  scores the committed 33-case synthetic corpus under production defaults
+  (FingerprintPrimary, frozen profile 2) and asserts the CALIBRATION.md §6 baseline —
+  `confident_false_matches == 0` (§10.5 hard gate), 0 FP, recall ≥ 31/32. Verified:
+  passes in 197 s. Run: `cargo test --release -p couple-core --test matching_evidence -- --ignored`.
+- `policy/activity.rs` reviewed for decomposition (assessment follow-up): production
+  code is ~558 lines of small per-line functions; the 1159-line count was mostly its
+  test module. No change needed.
+
+Gates: swift build (ship + COUPLE_DEVHARNESS variants), swift test 109, cargo ffi 18,
+corpus gate 1 — all green.
