@@ -1,0 +1,85 @@
+# CI for couple — enforces the repo's own gates on every push/PR:
+# cargo tests (release; the integration suites say "Run with --release"),
+# both Swift build variants (ship = DebugDrive stubs, dev = COUPLE_DEVHARNESS
+# harness), and swift test. Everything runs on macOS because the Swift shell
+# requires it and the Rust suites shell out to ffmpeg; if runner cost matters
+# later, the core/cli/ffi cargo tests are POSIX-portable and can move to an
+# ubuntu job (apt-get install ffmpeg) — the mac job then keeps only swift.
+#
+# The 33-case synthetic-corpus ROC gate (#[ignore]d, ~3.5 min locally) runs on
+# a weekly schedule + on demand, not per push — see the corpus-gate job.
+#
+# Real-media suites (example_data/, matcher-corpus real splits) are inherently
+# local-only: the media is gitignored (SPEC §10.1) and absent here. Those cases
+# count as "unscannable", never as failures. scripts/check-real-media.sh audits
+# a working machine.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * 1' # weekly corpus gate (Mondays 06:17 UTC)
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg (fixture generation + decode path)
+        run: brew install ffmpeg
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Cache SPM build
+        uses: actions/cache@v4
+        with:
+          path: mac/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('mac/Package.swift') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: cargo test (workspace, release)
+        run: cargo test --release --workspace
+
+      - name: Build FFI staticlib for the Swift package
+        run: cargo build --release -p couple-ffi
+
+      - name: swift build (ship variant — DebugDrive stubs)
+        working-directory: mac
+        run: swift build -c release
+
+      - name: swift build (dev variant — COUPLE_DEVHARNESS harness)
+        working-directory: mac
+        run: swift build -c release -Xswiftc -DCOUPLE_DEVHARNESS
+
+      - name: swift test
+        working-directory: mac
+        run: swift test
+
+  # The §10.5/§15.2 synthetic-corpus ROC gate: scores the committed 33-case
+  # corpus under production defaults and asserts the frozen CALIBRATION.md §6
+  # baseline (0 confident-false, 0 FP, recall >= 31/32). Weekly + on demand.
+  corpus-gate:
+    runs-on: macos-15
+    timeout-minutes: 45
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Synthetic-corpus ROC gate
+        run: >
+          cargo test --release -p couple-core --test matching_evidence
+          -- --ignored synthetic_corpus_roc_gates_hold
