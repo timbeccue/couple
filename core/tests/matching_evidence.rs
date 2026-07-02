@@ -607,3 +607,45 @@ fn fingerprint_corpus_metrics_are_byte_reproducible() {
         assert!(!j1.contains(bad), "no {bad} in metrics JSON");
     }
 }
+
+// ---- §15.2 / §10.5 synthetic-corpus gate: the frozen ROC separation is ENFORCED, not narrated ----
+// Scores the COMMITTED §10.2 synthetic corpus (`synthetic_manifest()` is the generator the
+// checked-in `fixtures/matcher-corpus/synthetic/cases.json` was produced from — no media on disk
+// needed) under the PRODUCTION defaults (`PairingParams::default()` = FingerprintPrimary, frozen
+// profile 2) and asserts the CALIBRATION.md §6 baseline: ZERO confident false matches (the §10.5
+// hard gate), zero false positives, and recall no worse than 31/32 true pairs (the lone allowed
+// miss is the documented −600 ppm extreme-drift case). Until now that separation lived only in
+// CALIBRATION.md narration; a profile re-tune or matcher change that erodes it now fails here.
+// Heavy (regenerates ~29 min of synthetic audio + full fingerprint matching), so it is #[ignore]d
+// out of the default run: `cargo test --release -p couple-core --test matching_evidence -- --ignored`.
+#[test]
+#[ignore = "minutes-long full-corpus scoring; run explicitly with --ignored (release)"]
+fn synthetic_corpus_roc_gates_hold() {
+    use couple_core::matcher_corpus::{score_manifest_with, synthetic_manifest, Matcher};
+
+    let manifest = synthetic_manifest();
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = common::test_ctx(&dir.path().join("cache"));
+    let work = tempfile::tempdir().unwrap();
+    let params = PairingParams::default();
+    assert_eq!(params.fingerprint_match.threshold_profile_version, 2, "production default is the frozen profile 2");
+
+    let (m, _runtime_ms) = score_manifest_with(
+        &ctx,
+        &manifest,
+        dir.path(),
+        work.path(),
+        &params,
+        Matcher::FingerprintPrimary,
+        8.5,
+    )
+    .unwrap();
+
+    assert_eq!(m.cases, 33, "the committed corpus is 33 cases: {m:?}");
+    assert_eq!(m.confident_false_matches, 0, "§10.5 HARD GATE — a confident false match shipped: {m:?}");
+    assert_eq!(m.false_positives, 0, "no false positives on the synthetic split: {m:?}");
+    assert!(
+        m.true_positives >= 31,
+        "recall regressed below the frozen profile-2 baseline (31/32 true pairs): {m:?}"
+    );
+}
