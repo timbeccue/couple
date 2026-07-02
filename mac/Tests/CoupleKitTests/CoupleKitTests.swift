@@ -2113,4 +2113,33 @@ struct CoupleKitTests {
                                               "phaseKey": NSNull()]]
         #expect(ActivitySummaryPolicy.render(fromEnvelopeValue: ok)?.text == "Resolving matches…")
     }
+
+    // MARK: - Pool rail layout (SPEC-CHANGE 2026-07-01: pool grows into spare rail space)
+
+    @Test func poolRailLayoutHoldsFloorWhenCouplesNeedTheRoom() {
+        // Couples overflow their region ⇒ the pool sees exactly the old fixed cap.
+        #expect(PoolRailLayout.listHeight(available: 500, couplesContent: 600, poolContent: 400)
+                == PoolRailLayout.minListHeight)
+        // Spare exists but is under the floor ⇒ still the floor (couples then scroll
+        // a little, same as before the change).
+        #expect(PoolRailLayout.listHeight(available: 500, couplesContent: 400, poolContent: 400)
+                == PoolRailLayout.minListHeight)
+    }
+
+    @Test func poolRailLayoutGrowsIntoSpareSpaceBoundedByContent() {
+        // Plenty of spare, long pool ⇒ take the spare, not more.
+        #expect(PoolRailLayout.listHeight(available: 800, couplesContent: 200, poolContent: 900) == 600)
+        // Plenty of spare, modest pool ⇒ hug the pool's own content (no blank box).
+        #expect(PoolRailLayout.listHeight(available: 800, couplesContent: 200, poolContent: 300) == 300)
+        // Short pool ⇒ never below the floor, so the box height matches the old
+        // constant-height design when there is little to show.
+        #expect(PoolRailLayout.listHeight(available: 800, couplesContent: 200, poolContent: 80)
+                == PoolRailLayout.minListHeight)
+    }
+
+    @Test func poolRailLayoutUnmeasuredStartupDefaultsToFloor() {
+        // First frame (nothing measured yet) ⇒ the pre-change fixed cap.
+        #expect(PoolRailLayout.listHeight(available: 0, couplesContent: 0, poolContent: 0)
+                == PoolRailLayout.minListHeight)
+    }
 }

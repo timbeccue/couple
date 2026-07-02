@@ -24,6 +24,8 @@ final class PoolController {
     var poolPrimary: String?
     @ObservationIgnored private var poolAnchor: String?
     /// The primary entry as a pool Entry (sticky bar reads name/url/duration off it).
+    /// Space falls back to this when no audition is available (SPEC-CHANGE
+    /// 2026-07-02): the main transport always wins the key when it exists.
     var poolPrimaryEntry: MediaPool.Entry? { poolPrimary.flatMap { model.pool.entry(key: $0) } }
 
     /// The pool AUDIO key currently being dragged (TODO-013), recorded when a pool

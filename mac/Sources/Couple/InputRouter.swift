@@ -89,9 +89,25 @@ final class InputRouter {
             guard model.selectedCouple != nil else { return true }
             model.syncToolsExpanded.toggle()
             return true
-        case 49: // space: play/pause audition from the visible playhead (TODO-004)
-            guard pair.session != nil else { return true }
-            model.audition.toggle()
+        case 49: // space (SPEC-CHANGE 2026-07-02, revising §V2.7 "pool is button-
+            // only"): the MAIN audition transport always wins Space when it is
+            // available (owner: the two transports must not compete on recency) —
+            // play/pause from the visible playhead (TODO-004). Only when no
+            // audition exists (nothing synced / no couple open) does Space fall
+            // back to the sticky pool player's loaded primary.
+            if pair.session != nil {
+                // Starting the audition pauses a still-playing pool preview, so
+                // the keyboard path never sounds two transports at once.
+                if model.preview.state.isPlaying, let active = model.preview.state.activeKey,
+                   let pooled = model.pool.entry(key: active) {
+                    model.preview.toggle(key: pooled.id, url: pooled.url)
+                }
+                model.audition.toggle()
+                return true
+            }
+            if let entry = model.poolPrimaryEntry {
+                model.preview.toggle(key: entry.id, url: entry.url)
+            }
             return true
         default:
             break

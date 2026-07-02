@@ -300,3 +300,61 @@ them (the corpus scorer counts absent media as "unscannable"; `realdata_sync` is
 `COUPLE_REALDATA_DIR`-gated and SKIPs). An audit that exits 1 over optional files
 demanded a state the repo never promised. Restoring media stays optional and
 re-arms the extra real-data validation when present.
+
+## 2026-07-01 — Media pool: rail-space growth, waveform seek strip, Space follows focus
+
+Three owner-requested improvements to the queue rail's media pool (revising the
+2026-06-15 sticky-player design; UX-DECISIONS §V2.7 updated in place):
+
+- **UX-CHANGE (owner): the pool's bounded list may GROW.** The inner scroll was a
+  fixed 168 pt cap even when the couples list left the rail half-empty. The cap is
+  now the FLOOR: the list grows into rail height the couples are not using, bounded
+  by the pool's own content (no blank inflation), and the couples keep first claim —
+  a long couples list sees exactly the old layout. Pure clamp in
+  `CoupleKit.PoolRailLayout.listHeight` (+3 tests); `QueueRail` feeds it live
+  height measurements (viewport sum is invariant under redistribution, so the
+  computation cannot oscillate).
+- **UX-CHANGE (owner): the sticky bar's seek slider is now a waveform seek strip**
+  (bar 26 → 34 pt). `PoolSeekStrip` draws the primary's whole-file min/max envelope
+  via the same core `band()` query + active-P95 normalization as the overview
+  lanes, role-colored (amber audio / camera video), played span bright, playhead
+  bright-while-playing. The whole strip is a timeline surface — click or drag
+  anywhere seeks through the retired slider's exact scrub transitions
+  (scrubBegin/scrubTo/scrubEnd). A file whose handle/envelope is not ready shows an
+  honest flat baseline, never a fabricated wave.
+- **SPEC-CHANGE (owner): Space follows the pool's focus** — supersedes the §V2.7
+  2026-06-15 note "pool play/pause is button-only; Space is unchanged". Rationale:
+  with the sticky player in daily use, reaching for the mouse to pause a preview
+  broke the keyboard triage flow; content-relative keys should drive the transport
+  the user's eye is on. Rule: `PoolController.poolFocused` is set by a pool click
+  (row select / sticky-bar transport) with a live primary, cleared by a USER couple
+  selection (queue tap, export-list tap/rename, j/k, v-advance), the video
+  transport button, collapsing the pool, or the primary vanishing. Automated
+  selection (post-resolve auto-pick, DebugDrive) never steals a user-placed focus
+  (`AppModel.select(_:byUser:)` distinguishes the two). InputRouter routes Space:
+  pool-focused ⇒ toggle the sticky player; otherwise the audition — and starting
+  the audition from Space pauses a still-playing pool preview, so the keyboard
+  path never sounds two transports at once.
+
+Gates: swift build + swift test (CoupleKit suite incl. 3 new PoolRailLayout tests)
+green; core untouched.
+
+## 2026-07-02 — SPEC-CHANGE: Space priority reworked after live use (owner)
+
+The 2026-07-01 "Space follows the pool's focus" rule shipped and was immediately
+revised from the owner's live testing: with focus-follows-last-click, the media
+pool and the main view **compete for the spacebar on recency**, which reads as
+flaky ("it will apply to the most recently used section only").
+
+SPEC-CHANGE (owner): **Space always applies to the main view when it is
+available.** If the selected couple has a session, Space drives the main audition
+transport unconditionally; the sticky pool player gets Space only as a fallback
+when no audition exists (nothing synced yet / no couple open). Starting the
+audition from Space still pauses a still-playing pool preview first.
+
+Implementation consequence: the whole `poolFocused` focus-tracking layer from
+2026-07-01 (PoolController flag, `AppModel.select(_:byUser:)`, per-view focus
+clears) is REMOVED — the new rule is a pure condition on existing state
+(`pair.session != nil`, `poolPrimaryEntry`), so no focus state is needed. The
+waveform seek strip and the pool rail-growth rule are unchanged. Gates: swift
+build + swift test green.

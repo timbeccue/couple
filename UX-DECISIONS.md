@@ -514,6 +514,30 @@ Demotion specifics (SPEC-V2 §1/V2-F6, ratified):
     single shared rail scroll is gone.)
   - **`Space` is unchanged**: it drives the main audition transport, **not** the
     pool — pool play/pause is **button-only** in this version (no pool key binding).
+- **REVISED (owner 2026-07-01) — pool growth, waveform seek strip, Space follows
+  focus.** Three changes to the 2026-06-15 design (PROGRESS 2026-07-01):
+  - **The pool's bounded list may GROW** into rail height the couples list is not
+    using — bounded by the pool's own content (no blank inflation), never below
+    the original fixed cap, and the couples keep first claim, so a long couples
+    list sees the 2026-06-15 layout exactly. Pure clamp:
+    `CoupleKit.PoolRailLayout.listHeight`.
+  - **The sticky bar's seek slider is now a waveform seek strip** (bar 26 → 34 pt):
+    the primary's whole-file min/max envelope via the same core band query +
+    active-P95 normalization as the overview lanes, role-colored (amber external
+    audio / camera video), played span bright, playhead bright-while-playing. The
+    whole strip is a timeline surface — click or drag anywhere seeks, with the
+    slider's exact scrub transitions. A file with no envelope yet (mid-import)
+    shows an honest flat baseline, never a fabricated wave.
+  - **Space: the main audition always wins; the pool is the fallback** (supersedes
+    the "button-only" note above; owner 2026-07-02). First built as
+    focus-follows-last-click (Space drove whichever transport was clicked last);
+    live use showed the two transports **competing on recency** — REVISED same
+    session: when the selected couple has a session, Space ALWAYS drives the main
+    audition; only when no audition is available (nothing synced / no couple open)
+    does Space toggle the sticky pool player's loaded primary. When Space starts
+    the audition it first pauses a still-playing pool preview, so the keyboard
+    path never sounds both transports at once. Pool play/pause remains
+    click-reachable at all times via the sticky bar.
 
 ## V2.8 Export rail (DECIDED — realizes SPEC-V2 §6)
 
