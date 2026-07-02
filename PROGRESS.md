@@ -264,3 +264,30 @@ Remaining items from the adopt-and-refactor pass (same owner sign-off as above).
 
 Gates: swift build (ship + COUPLE_DEVHARNESS variants), swift test 109, cargo ffi 18,
 corpus gate 1 — all green.
+
+## 2026-07-01 — Feature/hardening pass: TODO-010, TODO-015 undo, CI, media audit, policy properties
+
+Owner-approved improvement pass (items 3/4/6/7/8 of the 2026-07-01 review).
+
+- **TODO-010 done** — the overview strip gets its own visible range: scroll-to-zoom
+  around the pointer, horizontal pan, Fit chip + ⌘0; every renderer/gesture maps
+  through the visible range; independent of loupe zoom and `lockZoom`; not
+  persisted (fresh fit per launch/couple-switch). Interactive feel still wants an
+  owner click-through (headless coverage is the viewport math + COUPLE_OVERVIEW_TEST).
+- **TODO-015 done (undo)** — ⌘Z/⇧⌘Z for approve, manual re-pair / candidate switch
+  (an undone approved-replacement drop restores its approval), and export renames.
+  Media removal / Clear Session keep confirmations by design (their inverse is a
+  re-import). See TODO-015 for scope + acceptance.
+- **CI** — .github/workflows/ci.yml: cargo test --release + both swift build
+  variants + swift test on push/PR; the synthetic-corpus ROC gate weekly + on
+  dispatch. Dormant until the repo gets a GitHub remote.
+- **Real-media audit** — scripts/check-real-media.sh enumerates every gitignored
+  recording the local-only suites need (example pair + all non-synthetic corpus
+  cases). Currently: all 29 files missing on this machine — restore to re-arm the
+  real-data gates.
+- **Policy properties** — core/tests/policy_properties.rs: 37 proptest properties
+  enforcing the policy modules' documented CONTRACT clauses + wire fixed-point
+  stability for every camelCase envelope type.
+
+Gates: swift build ship+devharness, swift test 109, core lib 255 + properties 37,
+ffi 18 — all green.
