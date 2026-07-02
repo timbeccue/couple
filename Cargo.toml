@@ -24,6 +24,7 @@ libc = "0.2"
 clap = { version = "4", features = ["derive"] }
 indicatif = "0.17"
 hound = "3"
+proptest = "1"
 
 [profile.release]
 debug = true
