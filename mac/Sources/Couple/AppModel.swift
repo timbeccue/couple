@@ -119,6 +119,14 @@ final class AppModel {
 
     /// Loupe canvas frames in window coordinates, for scroll-wheel routing.
     @ObservationIgnored var loupeRects: [Int: CGRect] = [:]
+
+    /// The focused window's UndoManager (⌘Z / Edit ▸ Undo), pushed in by RootView
+    /// from the SwiftUI environment. Registration is limited to the CHEAPLY
+    /// INVERTIBLE queue mutations — approve/unapprove, manual re-pair / candidate
+    /// switch, export-name edits. Media removal and Clear Session stay
+    /// confirmation-gated instead: they free imported handles and sessions, so
+    /// their inverse is a re-import, not a state restore.
+    @ObservationIgnored weak var undoManager: UndoManager?
     /// Overview wave-area frame in window coordinates (TODO-010): pointer-over-overview
     /// scrolls route to overview zoom/pan, pointer-over-loupe scrolls to the loupes.
     @ObservationIgnored var overviewRect: CGRect = .zero
@@ -253,10 +261,96 @@ final class AppModel {
     // MARK: - Approve (§V2.5) + manual re-pair (§V2.6)
 
     /// Approve ≡ queue for export. No audition gate (§11.4). Only a couple with a
-    /// session can be approved.
+    /// session can be approved. Symmetric, so undo re-toggles (and redo comes free
+    /// from the re-registration on undo).
     func toggleApprove(_ couple: CoupleRow) {
         guard couple.pair.session != nil else { return }
         couple.pair.toggleVerified()
+        let id = couple.id
+        undoManager?.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated {
+                guard let c = model.couples.first(where: { $0.id == id }) else { return }
+                model.toggleApprove(c)
+            }
+        }
+        undoManager?.setActionName(couple.approved ? "Approve" : "Unapprove")
+        saveQueue()
+    }
+
+    /// Everything a manual re-pair mutates on a row, captured BEFORE the mutation so
+    /// ⌘Z can put the row back (including approval — `pair.load` resets `verified`,
+    /// and an accepted replacement un-queues first). Restoring re-registers the
+    /// pre-restore state, so redo is the same mechanism. Candidates are copied whole:
+    /// a repair may append a fresh pool-drag candidate that undo must remove.
+    struct RepairSnapshot {
+        let selectedAudioKey: String?
+        let pinned: Bool
+        let forced: Bool
+        let chip: String
+        let provenance: SelectionProvenance
+        let manualMatchConfident: Bool?
+        let approved: Bool
+        let exportStatus: CoupleRow.ExportStatus
+        let candidates: [RowCandidate]
+
+        @MainActor
+        init(of couple: CoupleRow) {
+            selectedAudioKey = couple.selectedAudioKey
+            pinned = couple.pinned
+            forced = couple.forced
+            chip = couple.chip
+            provenance = couple.selectionProvenance
+            manualMatchConfident = couple.manualMatchConfident
+            approved = couple.approved
+            exportStatus = couple.exportStatus
+            candidates = couple.candidates
+        }
+    }
+
+    /// Register ⌘Z for a repair about to happen on `couple`, restoring `snapshot`.
+    private func registerRepairUndo(_ couple: CoupleRow, restoring snapshot: RepairSnapshot) {
+        let id = couple.id
+        undoManager?.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated {
+                guard let c = model.couples.first(where: { $0.id == id }) else { return }
+                model.applyRepairSnapshot(snapshot, to: c)
+            }
+        }
+        undoManager?.setActionName("Change Audio")
+    }
+
+    /// Put a row back to a pre-repair snapshot (undo), registering the pre-restore
+    /// state as redo. The session is rebuilt through the same guarded path a repair
+    /// uses; if the snapshot's audio has since been removed from the session, the
+    /// undo declines with a toast instead of leaving a half-restored row.
+    private func applyRepairSnapshot(_ snapshot: RepairSnapshot, to couple: CoupleRow) {
+        guard let cam = couple.video.handle else { return }
+        // Restoring a selection needs its audio handle back; a removed source
+        // cannot be re-selected (same guard as `repair`).
+        let audioHandle = snapshot.selectedAudioKey.flatMap { pool.entry(key: $0)?.handle }
+        if snapshot.selectedAudioKey != nil && audioHandle == nil {
+            toasts.show(Toast(style: .warning, title: "Can't undo",
+                              detail: "That audio is no longer in the session."))
+            return
+        }
+        registerRepairUndo(couple, restoring: RepairSnapshot(of: couple)) // redo
+        couple.selectedAudioKey = snapshot.selectedAudioKey
+        couple.pinned = snapshot.pinned
+        couple.forced = snapshot.forced
+        couple.chip = snapshot.chip
+        couple.selectionProvenance = snapshot.provenance
+        couple.manualMatchConfident = snapshot.manualMatchConfident
+        couple.exportStatus = snapshot.exportStatus
+        couple.candidates = snapshot.candidates
+        if couple.id == selectedID { audition.teardown() } // close stream before freeing old session
+        if let audioHandle {
+            couple.pair.load(cameraTrack: cam, externalTrack: audioHandle)
+            couple.pair.runAutoSync(announce: false) // ambient re-derivation, like repair's
+            if snapshot.approved { couple.pair.toggleVerified() } // load() reset it
+        } else {
+            couple.pair.teardown() // back to no-selection (ambiguous/no-match row)
+        }
+        if couple.id == selectedID { attachAudition(couple) }
         saveQueue()
     }
 
@@ -264,9 +358,12 @@ final class AppModel {
     /// pool drag). Pins the couple; runs a full sync; below-floor keeps the
     /// pairing but marks it `forced` (honest). Candidates are never destroyed —
     /// a brand-new audio is appended to the list.
-    func repair(_ couple: CoupleRow, audioKey: String) {
+    /// `undoSnapshot` lets `performRepairReplace` supply the state from BEFORE its
+    /// own un-queue mutation; a direct call captures the row as it stands.
+    func repair(_ couple: CoupleRow, audioKey: String, undoSnapshot: RepairSnapshot? = nil) {
         guard let audioEntry = pool.entry(key: audioKey), let audioHandle = audioEntry.handle,
               let cam = couple.video.handle else { return }
+        registerRepairUndo(couple, restoring: undoSnapshot ?? RepairSnapshot(of: couple))
         couple.pinned = true
         couple.selectedAudioKey = audioKey
         // TODO-009: a deliberate pick is a MANUAL selection. Its match quality is NOT
@@ -315,6 +412,25 @@ final class AppModel {
             couple.chip = couple.forced ? "forced — below floor" : couple.state.chip
             saveQueue()
         }
+        saveQueue()
+    }
+
+    /// Set (or clear) a couple's in-place export-name override (§V2.8), undoably.
+    /// The single write path for both the in-place edit commit and its reset
+    /// button, so ⌘Z restores the previous name either way. Symmetric via the old
+    /// value, so redo is the re-registration on undo.
+    func setStemOverride(_ newValue: String?, for couple: CoupleRow) {
+        let old = couple.stemOverride
+        guard old != newValue else { return }
+        couple.stemOverride = newValue
+        let id = couple.id
+        undoManager?.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated {
+                guard let c = model.couples.first(where: { $0.id == id }) else { return }
+                model.setStemOverride(old, for: c)
+            }
+        }
+        undoManager?.setActionName("Rename Export")
         saveQueue()
     }
 
@@ -371,9 +487,10 @@ final class AppModel {
     /// re-run classifier can. Centralized so the queue-row and center drops are
     /// byte-identical.
     private func performRepairReplace(_ couple: CoupleRow, audioKey: String) {
+        let snapshot = RepairSnapshot(of: couple) // BEFORE the un-queue, so ⌘Z restores approval
         if couple.approved { couple.pair.toggleVerified() } // un-queue: clears export approval
         couple.exportStatus = .idle                          // drop any stale per-couple export result
-        repair(couple, audioKey: audioKey)
+        repair(couple, audioKey: audioKey, undoSnapshot: snapshot)
     }
 
     /// Confirm the pending approved-replacement (TODO-013): replace the source. The

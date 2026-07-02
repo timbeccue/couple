@@ -290,3 +290,53 @@ it needs an owner design pass (lens width, zoom span, edge/recenter behavior, la
 labels, time readout, accent/border treatment, and overview-chip/monitor-control
 avoidance) per the item's design notes before implementation. Part 1 stands on its own
 and does not depend on it.
+
+---
+
+## TODO-015: Undo for cheaply-invertible queue mutations
+
+**Status:** Done  
+**Type:** Feature  
+**Area:** Queue, export rail
+
+### Motivation
+
+The queue's protective pattern was confirmation dialogs, which cost a click every
+time and only guard the *destructive* actions. The routine reversible actions —
+approving, switching a couple's audio, renaming an export — had no way back except
+manually redoing them. Standard ⌘Z is cheaper than confirmation and matches user
+expectation on macOS (owner-approved 2026-07-01).
+
+### Scope decision
+
+Undo covers ONLY the cheaply invertible mutations: approve/unapprove, manual
+re-pair / candidate switch (including an accepted approved-replacement drop, which
+restores the approval it cleared), and export-name edit/reset. Media removal and
+Clear Session deliberately KEEP their confirmation dialogs instead of gaining undo:
+they free imported track handles and pair sessions, so their true inverse is a
+re-import, not a state restore — offering "undo" there would either lie or block.
+
+### Implementation notes (2026-07-01)
+
+- RootView pushes the window's `@Environment(\.undoManager)` into AppModel.
+- `toggleApprove` and `setStemOverride(_:for:)` are symmetric — undo re-calls the
+  method, which re-registers, so redo is free. All undo closures capture the couple
+  *id* and re-look-up (a couple removed since simply no-ops).
+- Re-pair registers a `RepairSnapshot` (selection, pin, forced, chip, provenance,
+  manual evidence, approval, export status, full candidates list) captured BEFORE
+  mutation — in `performRepairReplace` before its un-queue, so ⌘Z restores approval
+  too. Restore rebuilds the session through the same guarded path as `repair`; if
+  the snapshot's audio has since been removed the undo declines with a toast rather
+  than half-restoring. `pair.load` resets `verified`, so restore re-toggles it.
+- ExportRail's in-place rename/reset now routes through the model (single undoable
+  write path); QueueStore restore still writes `stemOverride` directly (correct —
+  session restore is not a user action).
+
+### Acceptance criteria
+
+- ⌘Z / Edit ▸ Undo reverses approve, candidate switch / drag re-pair, and export
+  rename; ⇧⌘Z redoes each. Menu items carry action names.
+- Undoing an approved-replacement drop restores the prior source AND its approval.
+- Undo of a re-pair whose prior audio was since removed shows a toast and changes
+  nothing.
+- Media removal and Clear Session behavior unchanged (confirmations, no undo).

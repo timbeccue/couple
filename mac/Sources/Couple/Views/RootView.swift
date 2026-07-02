@@ -10,6 +10,9 @@ import UniformTypeIdentifiers
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    /// The window's UndoManager (Edit ▸ Undo / ⌘Z), handed to the model so queue
+    /// mutations (approve, re-pair, export rename) can register their inverses.
+    @Environment(\.undoManager) private var undoManager
 
     var body: some View {
         @Bindable var model = model
@@ -33,6 +36,9 @@ struct RootView: View {
         }
         .background(Theme.windowBg)
         .overlay(ToastOverlay(center: model.toasts))
+        // Keep the model's UndoManager current (it is per-window and can be
+        // replaced by the scene; `initial: true` covers first appearance).
+        .onChange(of: undoManager, initial: true) { _, new in model.undoManager = new }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             Task { await ingest(providers) }
             return true

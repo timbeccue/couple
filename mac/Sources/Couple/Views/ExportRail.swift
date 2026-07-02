@@ -187,10 +187,11 @@ private struct ExportRowView: View {
                         // Empty edit = no-op: keep the last saved name (custom or
                         // default) rather than silently resetting to the original.
                         guard !trimmed.isEmpty else { return }
-                        couple.stemOverride = (trimmed == couple.defaultStem) ? nil : trimmed
-                        model.saveQueue()
+                        // Through the model so the edit is undoable (⌘Z).
+                        model.setStemOverride((trimmed == couple.defaultStem) ? nil : trimmed,
+                                              for: couple)
                     },
-                    onReset: { couple.stemOverride = nil; model.saveQueue() })
+                    onReset: { model.setStemOverride(nil, for: couple) })
                 Spacer(minLength: 0)
             }
             if case .failed(let msg) = couple.exportStatus {
