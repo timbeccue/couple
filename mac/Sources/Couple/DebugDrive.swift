@@ -4,11 +4,17 @@
 //   COUPLE_PROFILE=1                           — synthetic 6 s drag, print FPS-REPORT
 //   COUPLE_AUTOQUIT=1                          — terminate after the script
 // Supports the §15 Phase-5 verification (screenshots + 60 fps criterion).
+//
+// Compiled only under COUPLE_DEVHARNESS (dev.sh/build.sh pass it; make-app.sh
+// does not, so the distributed .app carries none of this). #if DEBUG is the
+// wrong fence here: the §15 fps criterion must be measured on -c release.
 
 import AppKit
 import CoupleKit
 import Foundation
 import QuartzCore
+
+#if COUPLE_DEVHARNESS
 
 /// Per-surface draw counters, recorded from Canvas draw closures.
 final class FrameStats: @unchecked Sendable {
@@ -1813,3 +1819,21 @@ final class DebugDrive {
         pair.setOffsetLive(base)
     }
 }
+
+#else
+
+// Stubs so call sites (Canvas draw closures, AppModel launch) compile
+// unchanged in distribution builds.
+final class FrameStats: @unchecked Sendable {
+    static let shared = FrameStats()
+    @inline(__always)
+    func record(_ surface: String, seconds: CFTimeInterval) {}
+}
+
+@MainActor
+final class DebugDrive {
+    static let shared = DebugDrive()
+    func configure(model: AppModel) {}
+}
+
+#endif

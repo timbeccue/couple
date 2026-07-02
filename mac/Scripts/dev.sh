@@ -8,7 +8,7 @@ set -e
 cd "$(dirname "$0")/.."
 PATH="$HOME/.cargo/bin:$PATH" # rustup install; sh doesn't read the zsh profile
 (cd .. && cargo build --release -p couple-ffi)
-swift build -c release
+swift build -c release -Xswiftc -DCOUPLE_DEVHARNESS # dev harness in; make-app.sh ships without it
 if [ "$1" = "example" ]; then
   export COUPLE_OPEN_CAMERA="$PWD/../example_data/schumann-video.mp4"
   export COUPLE_OPEN_EXTERNAL="$PWD/../example_data/schumann-audio.wav"

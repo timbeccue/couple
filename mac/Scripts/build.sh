@@ -5,5 +5,5 @@ set -e
 cd "$(dirname "$0")/.."
 CONFIG="${1:-release}"
 (cd .. && cargo build --release -p couple-ffi)
-swift build -c "$CONFIG"
+swift build -c "$CONFIG" -Xswiftc -DCOUPLE_DEVHARNESS # dev harness in; make-app.sh ships without it
 echo "Run: COUPLE_OPEN_CAMERA=... COUPLE_OPEN_EXTERNAL=... .build/$CONFIG/Couple"
