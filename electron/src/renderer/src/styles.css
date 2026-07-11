@@ -33,7 +33,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 13px;
+  font-size: 12px;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -101,8 +101,9 @@ body {
   align-items: center;
   padding: 0 12px;
   gap: 16px;
-  color: var(--text-dim);
-  font-size: 11px;
+  color: var(--none);
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
   flex: none;
 }
 
@@ -142,100 +143,113 @@ body {
 /* ---------- queue rail ---------- */
 
 .section-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--text-dim);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--none);
   padding: 12px 12px 4px;
+}
+
+.section-count {
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
 }
 
 .section-empty {
   opacity: 0.45;
 }
 
+/* Couple card (QueueRail.swift CoupleRowView): a 54x32 thumbnail with an amber
+   coverage strip, camera-over-pairing lines, a trailing approve checkbox, and a
+   left verdict spine + faint verdict wash. */
 .couple-item {
+  position: relative;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 12px;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 12px 6px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.03);
   cursor: default;
 }
 
-/* Couple rows: thumbnail + video-over-audio pairing lines (§V2.2 rail). */
-.couple-thumb {
-  width: 40px;
-  height: 24px;
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--bg-raised);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
+/* Content rides above the faint verdict wash (::before). */
+.couple-item > * {
+  position: relative;
+  z-index: 1;
 }
 
-.couple-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+/* Faint left-anchored verdict wash, fading out by 45% width (Swift verdictTint). */
+.couple-item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 7px;
+  pointer-events: none;
 }
 
-.couple-thumb-glyph {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--camera);
+.couple-item.good::before {
+  background: linear-gradient(to right, rgba(62, 207, 110, 0.05), transparent 45%);
 }
 
-.couple-lines {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  line-height: 1.25;
-}
-
-.couple-lines .couple-name {
-  flex: none;
-}
-
-.couple-audio {
-  font-size: 11px;
-  color: var(--external);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.couple-audio .pair-x {
-  color: var(--text-dim);
-}
-
-.couple-audio.needs-action {
-  color: var(--text-dim);
-  font-style: italic;
-}
-
-.couple-duration {
-  font-size: 10px;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-  flex: none;
-}
-
-.couple-item:hover {
-  background: var(--bg-hover);
+.couple-item.questionable::before {
+  background: linear-gradient(to right, rgba(224, 166, 60, 0.06), transparent 45%);
 }
 
 .couple-item.selected {
-  background: var(--bg-raised);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: rgba(74, 158, 218, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(74, 158, 218, 0.6);
 }
 
 .couple-item.drop-hover {
-  background: var(--bg-hover);
   box-shadow: inset 0 0 0 1px var(--external);
 }
 
+/* Left verdict spine (Swift VerdictSpine): solid bar for good/questionable,
+   dashed/segmented for none, pulsing while a sync runs. */
+.couple-spine {
+  position: absolute;
+  left: 5px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 1.5px;
+  z-index: 2;
+}
+
+.couple-spine.good {
+  background: var(--good);
+}
+
+.couple-spine.questionable {
+  background: var(--questionable);
+}
+
+.couple-spine.none {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--none) 0 2px,
+    transparent 2px 5px
+  );
+}
+
+.couple-spine.syncing {
+  background: var(--accent);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* Verdict dot (CenterColumn editor title): the round twin of the rail spine. */
 .verdict-dot {
   width: 8px;
   height: 8px;
@@ -261,23 +275,112 @@ body {
   animation: pulse 1s ease-in-out infinite;
 }
 
-@keyframes pulse {
-  50% {
-    opacity: 0.35;
-  }
+.couple-media {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: none;
+}
+
+.couple-thumb {
+  width: 54px;
+  height: 32px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-raised);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.couple-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.couple-thumb-glyph {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--camera);
+}
+
+.coverage-strip {
+  position: relative;
+  width: 54px;
+  height: 2.5px;
+}
+
+.coverage-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  background: rgba(224, 166, 60, 0.12);
+}
+
+.coverage-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
+  background: rgba(224, 166, 60, 0.75);
+}
+
+.couple-lines {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .couple-name {
-  flex: 1;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.action-word {
-  font-size: 11px;
-  color: var(--questionable);
+.couple-audio {
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.couple-spacer {
   flex: none;
+  width: 4px;
+}
+
+.couple-approve {
+  flex: none;
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.couple-approve:hover {
+  background: none;
+}
+
+.couple-approve.on {
+  color: var(--good);
+}
+
+.couple-pin {
+  flex: none;
+  align-self: flex-start;
+  font-size: 9px;
+  filter: grayscale(1);
+  opacity: 0.6;
 }
 
 .pool-entry {
@@ -473,7 +576,7 @@ button {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 5px 12px;
-  font-size: 12px;
+  font-size: 11px;
   cursor: default;
 }
 

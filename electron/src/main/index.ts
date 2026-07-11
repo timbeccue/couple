@@ -113,7 +113,10 @@ protocol.registerSchemesAsPrivileged([
     scheme: 'couple-media',
     // `standard` + `stream` are what let <video>/<audio> consume the scheme;
     // without `standard` the media stack rejects it (readyState stays 0).
-    privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true },
+    // `corsEnabled` + the handler's ACAO header let a <video crossorigin>
+    // load succeed (thumbnail frame grabs need an untainted canvas; without
+    // corsEnabled a CORS-mode request to the scheme dies as a format error).
+    privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true },
   },
 ]);
 
@@ -170,6 +173,11 @@ app.whenReady().then(() => {
         'Accept-Ranges': 'bytes',
         'Content-Length': String(end - start + 1),
         'Content-Type': type,
+        // The renderer page origin (dev http://localhost, packaged file://) is
+        // cross-origin to this scheme, so a <video crossorigin> frame grab
+        // (thumbnails) taints its canvas without this — playback doesn't care,
+        // toDataURL does.
+        'Access-Control-Allow-Origin': '*',
       },
     });
   });

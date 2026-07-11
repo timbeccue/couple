@@ -19,10 +19,20 @@ import './pool.css';
 
 import { mediaUrl as fileURL } from '../app/mediaUrl';
 
+const { ipcRenderer } = (window as unknown as { require: NodeRequire }).require(
+  'electron'
+) as typeof import('electron');
+
 const POOL_DRAG_MIME = 'application/x-couple-pool-key';
 const CAMERA = '#2ec8c2';
 const EXTERNAL = '#e0a63c';
 const MAX_SEEK_COLS = 1024;
+
+/** Verdict → the CSS color var the spine and action-word line use (Swift
+ * Theme.verdictColor twin). */
+function verdictColorVar(verdict: CoupleRow['verdict']): string {
+  return verdict === 'good' ? 'var(--good)' : verdict === 'questionable' ? 'var(--questionable)' : 'var(--none)';
+}
 
 function fmtDuration(s: number): string {
   const m = Math.floor(s / 60);
@@ -37,23 +47,27 @@ function fmtClock(s: number): string {
 
 // ---------- couples sections ----------
 
-function VerdictDot({ couple }: { couple: CoupleRow }): React.JSX.Element {
-  useModel(couple);
-  const cls = couple.pair.syncStatus === 'syncing' ? 'syncing' : couple.verdict;
-  return <span className={`verdict-dot ${cls}`} />;
-}
-
 function CoupleItem({ couple }: { couple: CoupleRow }): React.JSX.Element {
   const model = useModel(appModel);
   useModel(couple);
   const [dropHover, setDropHover] = React.useState(false);
   const thumb = useThumbnail(couple.video);
-  // Second line = the PAIRING (the row's whole meaning): selected audio name,
-  // or the action word / chip when nothing is selected yet.
+  const selected = model.selectedID === couple.id;
+  const verdict = couple.verdict;
+  const syncing = couple.pair.syncStatus === 'syncing';
+  // Second line = the PAIRING (the row's whole meaning): the action word when
+  // action is needed, else the selected audio name, with NO "×" prefix. It reads
+  // in the verdict color only when it's an action word.
   const audioName = couple.selectedCandidate?.audioName ?? null;
+  const secondLine = couple.actionWord ?? audioName ?? '—';
+  const secondLineColor = couple.actionWord != null ? verdictColorVar(verdict) : 'var(--text-dim)';
+  // Amber coverage strip under the thumbnail (§V2.2): the span the audio covers.
+  // Wire's Coverage carries start/end seconds (the Swift t0/seconds twin).
+  const cov = couple.selectedCandidate?.coverage ?? null;
+  const dur = couple.video.durationS;
   return (
     <div
-      className={`couple-item${model.selectedID === couple.id ? ' selected' : ''}${dropHover ? ' drop-hover' : ''}`}
+      className={`couple-item ${verdict}${selected ? ' selected' : ''}${dropHover ? ' drop-hover' : ''}`}
       onClick={() => appModel.select(couple.id)}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes(POOL_DRAG_MIME)) {
@@ -73,26 +87,53 @@ function CoupleItem({ couple }: { couple: CoupleRow }): React.JSX.Element {
         appModel.repairDrop(couple, key);
       }}
     >
-      <span className="couple-thumb">
-        {thumb ? <img src={thumb} alt="" draggable={false} /> : <span className="couple-thumb-glyph">V</span>}
+      <span
+        className={`couple-spine ${verdict}${syncing ? ' syncing' : ''}`}
+      />
+      <span className="couple-media">
+        <span className="couple-thumb">
+          {thumb ? <img src={thumb} alt="" draggable={false} /> : <span className="couple-thumb-glyph">V</span>}
+        </span>
+        <span className="coverage-strip">
+          {cov && dur > 0 && (
+            <>
+              <span className="coverage-track" />
+              <span
+                className="coverage-fill"
+                style={{
+                  left: `${(cov.start / dur) * 100}%`,
+                  width: `${Math.max(((cov.end - cov.start) / dur) * 100, 3.7)}%`,
+                }}
+              />
+            </>
+          )}
+        </span>
       </span>
       <span className="couple-lines">
         <span className="couple-name" title={couple.video.name}>
           {couple.video.name}
         </span>
-        <span className={`couple-audio${audioName ? '' : ' needs-action'}`}>
-          {audioName ? (
-            <>
-              <span className="pair-x">×</span> {audioName}
-            </>
-          ) : (
-            (couple.actionWord ?? couple.chip)
-          )}
+        <span className="couple-audio" style={{ color: secondLineColor }}>
+          {secondLine}
         </span>
       </span>
-      {couple.actionWord && audioName && <span className="action-word">{couple.actionWord}</span>}
-      <span className="couple-duration">{fmtDuration(couple.video.durationS)}</span>
-      <VerdictDot couple={couple} />
+      <span className="couple-spacer" />
+      {couple.hasSession ? (
+        <button
+          className={`couple-approve${couple.approved ? ' on' : ''}`}
+          title="Approve — queue this couple for export (v)"
+          onClick={(e) => {
+            e.stopPropagation();
+            appModel.toggleApprove(couple);
+          }}
+        >
+          {couple.approved ? '☑' : '☐'}
+        </button>
+      ) : couple.pinned ? (
+        <span className="couple-pin" title="Pinned">
+          📌
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -101,13 +142,43 @@ function Section({ title, couples }: { title: string; couples: CoupleRow[] }): R
   return (
     <div className={couples.length === 0 ? 'section-empty' : undefined}>
       <div className="section-label">
-        {title} · {couples.length}
+        <span>{title}</span>
+        <span className="section-count">{couples.length}</span>
       </div>
       {couples.length === 0 ? (
         <div className="section-dash">—</div>
       ) : (
         couples.map((c) => <CoupleItem key={c.id} couple={c} />)
       )}
+    </div>
+  );
+}
+
+// ---------- rail header (session title + counts, QueueRail.swift:64-96) ----------
+
+function RailHeader(): React.JSX.Element {
+  const model = useModel(appModel);
+  useModel(model.pool);
+  useModel(model.batch);
+  return (
+    <div className="rail-header">
+      <div className="rail-header-top">
+        <span className="rail-title">COUPLE</span>
+        <button
+          className="clear-session"
+          disabled={model.batch.isRunning}
+          title="Discard this session and start over (does not delete source or exported files)"
+          onClick={() => appModel.requestClearSession()}
+        >
+          Clear Session…
+        </button>
+      </div>
+      <div className="rail-counts">
+        {model.pool.videos.length} video · {model.pool.audios.length} audio
+      </div>
+      <div className="rail-approved">
+        Approve to queue · {model.approvedCount}/{model.couples.length} approved
+      </div>
     </div>
   );
 }
@@ -126,6 +197,9 @@ function captureThumbnail(path: string): Promise<string | null> {
     const v = document.createElement('video');
     v.muted = true;
     v.preload = 'auto';
+    // CORS-clean load (couple-media:// sends ACAO *): without it the frame
+    // grab taints the canvas and toDataURL throws — glyph fallback forever.
+    v.crossOrigin = 'anonymous';
     let settled = false;
     const finish = (url: string | null): void => {
       if (settled) return;
@@ -174,10 +248,18 @@ function useThumbnail(entry: PoolEntry): string | null {
       return;
     }
     let cancelled = false;
-    void captureThumbnail(entry.path).then((u) => {
-      thumbCache.set(entry.id, u);
-      if (!cancelled) setUrl(u);
-    });
+    void captureThumbnail(entry.path)
+      .then(async (u) => {
+        // The first grab can lose its <video> decode slot to import/sync load
+        // and time out; one retry after the rush is nearly always enough. Only
+        // successes are cached — a cached null would pin the glyph forever.
+        if (u === null && !cancelled) u = await captureThumbnail(entry.path);
+        return u;
+      })
+      .then((u) => {
+        if (u !== null) thumbCache.set(entry.id, u);
+        if (!cancelled) setUrl(u);
+      });
     return () => {
       cancelled = true;
     };
@@ -491,6 +573,17 @@ function PoolBox({
             🗑
           </button>
         )}
+        <button
+          className="pool-import"
+          title="Add media to this session"
+          onClick={async (e) => {
+            e.stopPropagation();
+            const paths = (await ipcRenderer.invoke('couple:pick-media')) as string[];
+            if (paths.length > 0) appModel.ingest.importDropped(paths);
+          }}
+        >
+          + import
+        </button>
       </div>
       {!collapsed && (
         <>
@@ -621,6 +714,7 @@ export function QueueRail(): React.JSX.Element {
 
   return (
     <div className="queue-rail">
+      <RailHeader />
       <div className="rail-couples" ref={couplesRef}>
         <Section title="QUEUED FOR EXPORT" couples={model.queued} />
         <Section title="TO APPROVE" couples={model.toApprove} />

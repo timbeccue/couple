@@ -24,6 +24,9 @@ const CANVAS_BG = '#0f1113';
 const TICK_COLOR = 'rgba(216, 218, 222, 0.32)';
 
 const TICK_ROW_H = 14;
+// A badge gutter above the lanes keeps the anchor pin heads and the playhead knob
+// off the waveform pixels; the tick row sits below (WaveformStage.swift badgeGutterH).
+const BADGE_GUTTER_H = 16;
 const MAX_COLS = 2048;
 
 interface BandBuffers {
@@ -138,7 +141,8 @@ function paintStage(
   d1: number,
   buf: BandBuffers,
   viewport: [number, number] | null,
-  laneAudio: LaneAudio
+  laneAudio: LaneAudio,
+  playing: boolean
 ): void {
   ctx.fillStyle = CANVAS_BG;
   ctx.fillRect(0, 0, cssW, cssH);
@@ -148,7 +152,8 @@ function paintStage(
   const span = d1 - d0;
   if (!cam || !ext || span <= 0) return;
 
-  const waveH = cssH - TICK_ROW_H;
+  // A badge gutter above the lanes, the tick row below (WaveformStage.swift).
+  const waveH = cssH - TICK_ROW_H - BADGE_GUTTER_H;
   const laneH = waveH / 2;
   const cols = Math.min(Math.max(Math.floor(cssW), 1), MAX_COLS);
   const colW = cssW / cols;
@@ -160,44 +165,53 @@ function paintStage(
     const x0 = ((ov[0] - d0) / span) * cssW;
     const x1 = ((ov[1] - d0) / span) * cssW;
     ctx.fillStyle = 'rgba(255, 255, 255, 0.045)';
-    ctx.fillRect(x0, 0, x1 - x0, waveH);
+    ctx.fillRect(x0, BADGE_GUTTER_H, x1 - x0, waveH);
   }
 
   // Camera lane (top); external lane (bottom) drawn through the live mapping.
   // Each scaled by its monitor gain, dimmed when muted.
-  drawLane(ctx, cam, buf, d0, d1, cols, colW, laneH / 2, laneH / 2 - 3, CAMERA, laneAudio.camGain, laneAudio.camMuted);
-  drawLane(ctx, ext, buf, m.u(d0), m.u(d1), cols, colW, laneH + laneH / 2, laneH / 2 - 3, EXTERNAL, laneAudio.extGain, laneAudio.extMuted);
+  drawLane(ctx, cam, buf, d0, d1, cols, colW, BADGE_GUTTER_H + laneH / 2, laneH / 2 - 3, CAMERA, laneAudio.camGain, laneAudio.camMuted);
+  drawLane(ctx, ext, buf, m.u(d0), m.u(d1), cols, colW, BADGE_GUTTER_H + laneH + laneH / 2, laneH / 2 - 3, EXTERNAL, laneAudio.extGain, laneAudio.extMuted);
 
-  drawTicks(ctx, cssW, d0, d1, waveH);
+  drawTicks(ctx, cssW, d0, d1, BADGE_GUTTER_H + waveH);
 
   // Lane labels.
   ctx.font = '8px ui-monospace, monospace';
   ctx.textBaseline = 'top';
   ctx.fillStyle = 'rgba(46, 200, 194, 0.7)';
-  ctx.fillText('V · CAMERA', 4, 4);
+  ctx.fillText('V · CAMERA', 4, BADGE_GUTTER_H + 4);
   ctx.fillStyle = 'rgba(224, 166, 60, 0.7)';
-  ctx.fillText('A · EXTERNAL', 4, laneH + 4);
+  ctx.fillText('A · EXTERNAL', 4, BADGE_GUTTER_H + laneH + 4);
 
   // Main-window rectangle on the overview (only when zoomed in).
   if (viewport) {
     const rx0 = ((viewport[0] - d0) / span) * cssW;
     const rx1 = ((viewport[1] - d0) / span) * cssW;
     ctx.fillStyle = 'rgba(74, 158, 218, 0.12)';
-    ctx.fillRect(rx0, 0, rx1 - rx0, waveH);
+    ctx.fillRect(rx0, BADGE_GUTTER_H, rx1 - rx0, waveH);
     ctx.strokeStyle = 'rgba(74, 158, 218, 0.6)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(rx0 + 0.5, 0.5, rx1 - rx0 - 1, waveH - 1);
+    ctx.strokeRect(rx0 + 0.5, BADGE_GUTTER_H + 0.5, rx1 - rx0 - 1, waveH - 1);
   }
 
-  // Playhead (UX §1.6): always visible once a session exists.
+  // Playhead (UX §1.6): always visible once a session exists — bright while
+  // playing, grey when parked — with a grab-handle triangle at the gutter edge
+  // (WaveformStage.swift playhead + knob).
   const px = ((pair.playheadT - d0) / span) * cssW;
   if (px >= 0 && px <= cssW) {
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = `rgba(255, 255, 255, ${playing ? 0.85 : 0.5})`;
+    ctx.lineWidth = playing ? 1 : 1.5;
     ctx.beginPath();
-    ctx.moveTo(px, 0);
-    ctx.lineTo(px, waveH);
+    ctx.moveTo(px, BADGE_GUTTER_H);
+    ctx.lineTo(px, BADGE_GUTTER_H + waveH);
     ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(px - 4, BADGE_GUTTER_H - 6);
+    ctx.lineTo(px + 4, BADGE_GUTTER_H - 6);
+    ctx.lineTo(px, BADGE_GUTTER_H + 2);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(255, 255, 255, ${playing ? 0.85 : 0.55})`;
+    ctx.fill();
   }
 }
 
@@ -256,12 +270,23 @@ function Stage({
   const pinDrag = useRef<{ i: number; moved: number } | null>(null);
   const canvasRef = useCanvas((ctx, w, h) => {
     const [d0, d1] = pair.view();
-    paintStage(ctx, w, h, pair, d0, d1, buf, null, {
-      camGain: audition.camGain,
-      extGain: audition.extGain,
-      camMuted: audition.camMuted,
-      extMuted: audition.extMuted,
-    });
+    paintStage(
+      ctx,
+      w,
+      h,
+      pair,
+      d0,
+      d1,
+      buf,
+      null,
+      {
+        camGain: audition.camGain,
+        extGain: audition.extGain,
+        camMuted: audition.camMuted,
+        extMuted: audition.extMuted,
+      },
+      audition.playing
+    );
   });
 
   const endDrag = (): void => {
@@ -287,7 +312,8 @@ function Stage({
   const span = d1 - d0 || 1;
 
   return (
-    <div className="wave-main" ref={containerRef}>
+    <div className="wave-main">
+      <div className="wave-lanes" ref={containerRef}>
       <canvas
         ref={canvasRef}
         onWheel={(e) => {
@@ -303,8 +329,8 @@ function Stage({
           e.currentTarget.setPointerCapture(e.pointerId);
           const rect = e.currentTarget.getBoundingClientRect();
           const y = e.clientY - rect.top;
-          const waveH = rect.height - TICK_ROW_H;
-          const onExternal = y > waveH / 2 && y <= waveH;
+          const waveH = rect.height - TICK_ROW_H - BADGE_GUTTER_H;
+          const onExternal = y > BADGE_GUTTER_H + waveH / 2 && y <= BADGE_GUTTER_H + waveH;
           const [vd0, vd1] = pair.view();
           const m = pair.mapping();
           const ov = pair.overlap();
@@ -399,24 +425,27 @@ function Stage({
           </div>
         );
       })}
-      {/* Per-lane monitor mute + volume, one cluster beside each lane
-          (WaveformStage.swift laneControlsColumn / LaneAudioControls). */}
-      <div className="lane-controls">
-        <LaneAudioControls
-          tint={CAMERA}
-          muted={audition.camMuted}
-          gain={audition.camGain}
-          onMute={() => audition.toggleCamMute()}
-          onGain={(v) => audition.setCamGain(v)}
-        />
-        <LaneAudioControls
-          tint={EXTERNAL}
-          muted={audition.extMuted}
-          gain={audition.extGain}
-          onMute={() => audition.toggleExtMute()}
-          onGain={(v) => audition.setExtGain(v)}
-        />
       </div>
+      {/* Per-lane monitor mute + volume in a static column beside the lanes, one
+          cluster per lane (WaveformStage.swift laneControlsColumn). */}
+      {pair.session && (
+        <div className="lane-controls">
+          <LaneAudioControls
+            tint={CAMERA}
+            muted={audition.camMuted}
+            gain={audition.camGain}
+            onMute={() => audition.toggleCamMute()}
+            onGain={(v) => audition.setCamGain(v)}
+          />
+          <LaneAudioControls
+            tint={EXTERNAL}
+            muted={audition.extMuted}
+            gain={audition.extGain}
+            onMute={() => audition.toggleExtMute()}
+            onGain={(v) => audition.setExtGain(v)}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -473,7 +502,7 @@ function LaneAudioControls({
         step={0.05}
         value={gain}
         disabled={muted}
-        style={{ accentColor: tint }}
+        style={{ '--lane-tint': tint } as React.CSSProperties}
         title="Monitor volume (waveform scales to match)"
         onChange={(e) => onGain(Number(e.target.value))}
       />
@@ -615,13 +644,22 @@ export function WaveformStage({
           </span>
         )}
         <span className="wave-spacer" />
-        <button
-          className="wave-chip"
-          disabled={pair.anchors.length >= 4 || !pair.inputsEnabled}
-          onClick={() => pair.addAnchor()}
-          title="Add an anchor at the strongest onset in the overlap"
-        >
-          + anchor
+        <div className="seg">
+          <button
+            className={pair.loupeLayout === 'grid' ? 'on' : undefined}
+            onClick={() => pair.setLoupeLayout('grid')}
+          >
+            Side-by-side
+          </button>
+          <button
+            className={pair.loupeLayout === 'stack' ? 'on' : undefined}
+            onClick={() => pair.setLoupeLayout('stack')}
+          >
+            Stacked
+          </button>
+        </div>
+        <button className="wave-chip" disabled={!pair.viewZoomed} onClick={() => pair.fitView()}>
+          ⇔ Fit
         </button>
         <button
           className={`wave-chip${pair.lockZoom ? ' on' : ''}`}
@@ -630,22 +668,13 @@ export function WaveformStage({
         >
           lock zoom
         </button>
-        <div className="seg">
-          <button
-            className={pair.loupeLayout === 'grid' ? 'on' : undefined}
-            onClick={() => pair.setLoupeLayout('grid')}
-          >
-            side-by-side
-          </button>
-          <button
-            className={pair.loupeLayout === 'stack' ? 'on' : undefined}
-            onClick={() => pair.setLoupeLayout('stack')}
-          >
-            stacked
-          </button>
-        </div>
-        <button className="wave-chip" disabled={!pair.viewZoomed} onClick={() => pair.fitView()}>
-          Fit
+        <button
+          className="wave-chip"
+          disabled={pair.anchors.length >= 4 || !pair.inputsEnabled}
+          onClick={() => pair.addAnchor()}
+          title="Add an anchor at the strongest onset in the overlap"
+        >
+          + anchor
         </button>
       </div>
       {/* CenterColumn.swift WaveformRow: the strip fills the row, with a narrow
@@ -655,11 +684,15 @@ export function WaveformStage({
         <div className="fit-col">
           <div className={`fit-caption ${fitCaption(pair).tone}`}>{fitCaption(pair).text}</div>
           <SparklineView pair={pair} />
+          <button
+            className="fit-resync"
+            disabled={pair.syncStatus === 'syncing' || !pair.inputsEnabled}
+            onClick={() => pair.runAutoSync()}
+            title="Re-run auto-sync — never re-proposes anchors or re-frames a view you've seen"
+          >
+            ↻ re-sync
+          </button>
         </div>
-      </div>
-      <div className="wave-hint">
-        drag external lane: offset · shift-drag: drift · camera lane: pan · scroll: zoom · ←→ [ ] nudge ·
-        drag a pin to move an anchor
       </div>
     </div>
   );

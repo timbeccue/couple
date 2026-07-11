@@ -10,7 +10,7 @@ import type { CoupleRow } from './CoupleRow';
 export class AuditionController extends Observable {
   private stream: AuditionStream | null = null;
   couple: CoupleRow | null = null;
-  mode: MonitorMode = 'pan';
+  mode: MonitorMode = 'overlay'; // default matches Swift AuditionController.swift monitorMode = .overlay
   playing = false;
   // Per-lane monitor gain (0–2) + mute (WaveformStage.swift LaneAudioControls).
   // Mute is a separate flag so the pre-mute slider level is remembered and

@@ -14,6 +14,9 @@ the matching line here IN THE SAME CHANGE (same rule as CLAUDE.md upkeep).
 Legend: [source] = the reference implementation a port must read.
 
 ## Queue rail (left)
+- Session header: app title, media counts ("N video · M audio"), "Approve to
+  queue · a/b approved" status line, visible "Clear Session…" control (disabled
+  mid-export). [QueueRail.swift header]
 - Three live sections QUEUED FOR EXPORT / TO APPROVE / TO FIX with counts;
   membership = approved / (¬approved ∧ verdict good) / rest. [AppModel.swift
   queued/toApprove/toFix]
@@ -41,7 +44,9 @@ Legend: [source] = the reference implementation a port must read.
 ## Center column (editor)
 - Video hero (preview-greedy layout): muted video slaved to the AUDITION CLOCK
   (audio is master; ≤1 frame skew), transport (play/pause, timecode, anchor
-  jump chips with −0.8 s pre-roll, monitor mode Pan/Overlay/Null, fullscreen).
+  jump chips with −0.8 s pre-roll, monitor mode Pan L/R / Overlay (Null
+  excluded from the UI — CoupleKit MonitorMode.allCases; default Overlay),
+  fullscreen).
   [AuditionController.swift, EditorComponents.swift]
 - Resolve banner when unresolved/alternates: candidate list with evidence (z),
   re-pick = manual pin via forced-verdict policy. [CenterColumn.swift §V2.6]

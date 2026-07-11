@@ -177,12 +177,21 @@ export function App(): React.JSX.Element {
       )}
       <ActivityStrip />
       <div className="footer-bar">
-        <span>j/k select</span>
-        <span>v approve</span>
-        <span>drop files to add</span>
-        <button className="footer-add" onClick={() => void pickAndIngest()}>
-          + Add files…
-        </button>
+        <span
+          style={{
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            fontSize: 10,
+            color: 'rgba(216, 218, 222, 0.32)',
+          }}
+        >
+          j/k move · v approve (=queue) · ⏎/⚙ sync tools · l/◫ loupes · esc collapse
+          <span style={{ marginLeft: 24 }}>
+            ←/→ offset 1 ms · ⇧ 10 · ⌥ 0.1 · [ ] drift · drag loupe = offset · ⇧-drag = pivot
+          </span>
+        </span>
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'rgba(216, 218, 222, 0.32)' }}>
+          waveforms render real peak data
+        </span>
       </div>
       <ToastStack />
     </div>

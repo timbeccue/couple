@@ -20,8 +20,8 @@
 }
 
 .editor-title h2 {
-  font-size: 15px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .editor-title .editor-audio {
@@ -56,14 +56,14 @@
 }
 
 .hero-btn {
-  width: 26px;
-  height: 22px;
+  width: 22px;
+  height: 18px;
   padding: 0;
   font-size: 11px;
 }
 
 .hero-time {
-  font: 11px/1 ui-monospace, monospace;
+  font: 10px/1 ui-monospace, monospace;
   color: var(--text-dim);
 }
 
@@ -98,6 +98,7 @@
   font-size: 10px;
   background: var(--bg-raised);
   color: var(--text-dim);
+  white-space: nowrap;
 }
 
 .seg button + button {
@@ -105,8 +106,8 @@
 }
 
 .seg button.on {
-  background: var(--accent);
-  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text);
 }
 
 /* ---------- waveform stage ---------- */
@@ -139,24 +140,29 @@
   gap: 8px;
 }
 
+/* D9: the loupe-layout segmented control matches the Swift Picker width (150pt),
+   its buttons splitting that width evenly. */
+.wave-toolbar .seg {
+  width: 150px;
+}
+
+.wave-toolbar .seg button {
+  flex: 1;
+}
+
 .wave-spacer {
   flex: 1;
 }
 
-.wave-hint {
-  color: var(--text-dim);
-  font-size: 10px;
-}
-
 .wave-chip {
   padding: 3px 9px;
-  font-size: 10px;
+  font-size: 9px;
 }
 
 .wave-chip.on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: transparent;
+  color: var(--accent);
 }
 
 .overlap-chip {
@@ -185,11 +191,18 @@
 }
 
 .fit-col {
-  width: 160px;
+  width: 158px;
   flex: none;
   display: flex;
   flex-direction: column;
   gap: 5px;
+}
+
+/* D8: re-run auto-sync, tucked under the sparkline (CenterColumn.swift WaveformRow). */
+.fit-resync {
+  align-self: flex-start;
+  padding: 3px 8px;
+  font-size: 9px;
 }
 
 .fit-caption {
@@ -209,12 +222,22 @@
 }
 
 /* The ONE waveform surface (mac WaveformStage.swift has a single zoomable strip,
-   not a stage + minimap). Anchor pins + playhead live on it. */
+   not a stage + minimap). A flex row: the lane area (canvas + anchor pins) plus a
+   static lane-controls column to its right, both on the canvas background. */
 .wave-main {
-  position: relative;
-  height: 240px;
+  display: flex;
+  height: 124px;
   border-radius: 8px;
   overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  background: #0f1113;
+}
+
+/* Just the lane drawing area — the canvas + anchor pins map to THIS width, so the
+   lane-controls column never overlaps the waveforms (WaveformStage.swift lanes). */
+.wave-lanes {
+  position: relative;
   flex: 1;
   min-width: 0;
 }
@@ -231,34 +254,56 @@
   cursor: crosshair;
 }
 
-/* Per-lane monitor controls, a gutter to the right of the lanes (mac
+/* Per-lane monitor controls in their own column beside the lanes (mac
    laneControlsColumn): camera cluster beside the top lane, external beside the
-   bottom. The tick row sits below, so the gutter stops short of it. */
+   bottom. Padded by the badge gutter (top) and tick row (bottom) so the two
+   flex:1 clusters center against their lanes. No background/border — it sits on
+   the shared canvas fill. */
 .lane-controls {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 14px; /* TICK_ROW_H */
-  width: 96px;
+  flex: none;
+  width: 100px;
+  margin-left: 8px;
   display: flex;
   flex-direction: column;
-  background: rgba(15, 17, 19, 0.82);
-  border-left: 1px solid var(--border);
+  padding-top: 16px; /* BADGE_GUTTER_H */
+  padding-bottom: 14px; /* TICK_ROW_H */
 }
 
+/* Mac LaneAudioControls: HStack [24×18 mute chip · 64px mini slider], slider
+   tinted to the lane. The slider is custom-drawn (3px track, 10px white knob)
+   because Chromium's native range at this size reads desktop-toolkit, not mini. */
 .lane-ctl {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 6px;
 }
 
 .lane-ctl input[type='range'] {
-  width: 72px;
-  height: 14px;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 64px;
+  height: 12px;
+  background: transparent;
   cursor: pointer;
+}
+
+.lane-ctl input[type='range']::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 1.5px;
+  background: color-mix(in srgb, var(--lane-tint, #9aa0a6) 55%, transparent);
+}
+
+.lane-ctl input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  margin-top: -3.5px;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
 }
 
 .lane-ctl input[type='range']:disabled {
@@ -267,15 +312,20 @@
 }
 
 .lane-mute {
-  width: 26px;
-  height: 22px;
+  width: 24px;
+  height: 18px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--bg-hover);
   border: 1px solid var(--border);
+}
+
+.lane-mute svg {
+  width: 11px;
+  height: 11px;
 }
 
 .lane-mute svg {
@@ -527,23 +577,29 @@
 .bar-toggle {
   padding: 4px 9px;
   font-size: 11px;
+  color: var(--text-dim);
 }
 
 .bar-toggle.on {
   background: rgba(74, 158, 218, 0.15);
-  border-color: var(--accent);
+  border-color: transparent;
   color: var(--accent);
 }
 
-.bar-status {
-  font: 10px/1 ui-monospace, monospace;
-  color: var(--text-dim);
-}
-
 .approve-btn {
-  padding: 6px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 7px;
   font-size: 12px;
   font-weight: 600;
+}
+
+.approve-btn .approve-key {
+  font: 9px/1 ui-monospace, monospace;
+  font-weight: 400;
+  opacity: 0.6;
 }
 
 .approve-btn.approved {

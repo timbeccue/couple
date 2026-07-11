@@ -167,14 +167,16 @@ export function VideoHero({ couple }: { couple: CoupleRow }): React.JSX.Element 
           </button>
         ))}
         <div className="seg">
-          {(['pan', 'overlay', 'null'] as MonitorMode[]).map((m) => (
+          {/* Null is a test oracle only — excluded from the UI, matching
+              CoupleKit MonitorMode.allCases ([.pan, .overlay]). */}
+          {(['pan', 'overlay'] as MonitorMode[]).map((m) => (
             <button
               key={m}
               className={audition.mode === m ? 'on' : undefined}
               disabled={!couple.hasSession}
               onClick={() => audition.setMode(m)}
             >
-              {m === 'pan' ? 'Pan' : m === 'overlay' ? 'Overlay' : 'Null'}
+              {m === 'pan' ? 'Pan L/R' : 'Overlay'}
             </button>
           ))}
         </div>

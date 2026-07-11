@@ -42,6 +42,20 @@ export function ExportRail(): React.JSX.Element {
           if (dir) model.chooseExportDestination(dir);
         }}
       >
+        <svg
+          className="dest-glyph"
+          width="12"
+          height="12"
+          viewBox="0 0 16 16"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M1.5 4.5a1 1 0 0 1 1-1h3.3a1 1 0 0 1 .7.3l.9.9a1 1 0 0 0 .7.3h4.7a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7.5Z"
+            stroke="currentColor"
+            strokeWidth="1.1"
+          />
+        </svg>
         <span className="dest-name">
           {model.exportDestination ? model.exportDestination.split('/').pop() : 'Choose folder…'}
         </span>
@@ -91,7 +105,7 @@ export function ExportRail(): React.JSX.Element {
         </div>
       ) : (
         <button
-          className="primary export-run"
+          className="export-run"
           disabled={model.approvedCount === 0 || model.exportDestination === null}
           onClick={() => void model.batch.run()}
         >

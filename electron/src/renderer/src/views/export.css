@@ -9,6 +9,17 @@
   width: 100%;
   text-align: left;
   overflow: hidden;
+  font-size: 11px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.export-rail .dest-button .dest-glyph {
+  flex: 0 0 auto;
+  color: var(--text-dim);
 }
 
 .export-rail .dest-button .dest-name {
@@ -45,15 +56,15 @@
 }
 
 .export-rail .format-seg button.on {
-  background: var(--accent);
-  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--text);
 }
 
 .export-rail .keep-audio {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-dim);
   margin-top: 6px;
   cursor: default;
@@ -66,7 +77,17 @@
 .export-rail .export-run {
   width: 100%;
   margin-top: 4px;
+  padding: 8px 0;
+  font-size: 13px;
   font-weight: 600;
+  color: #fff;
+  background: var(--good);
+  border: 1px solid var(--good);
+  border-radius: 6px;
+}
+
+.export-rail .export-run:disabled {
+  opacity: 0.5;
 }
 
 .export-rail .export-progress {

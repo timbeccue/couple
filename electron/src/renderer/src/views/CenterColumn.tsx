@@ -176,13 +176,13 @@ function SyncToolsBar({
           <div className="tool-col">
             <span className="tool-label">MONITOR</span>
             <div className="seg">
-              {(['pan', 'overlay', 'null'] as MonitorMode[]).map((m) => (
+              {(['pan', 'overlay'] as MonitorMode[]).map((m) => (
                 <button
                   key={m}
                   className={audition.mode === m ? 'on' : undefined}
                   onClick={() => audition.setMode(m)}
                 >
-                  {m === 'pan' ? 'Pan' : m === 'overlay' ? 'Overlay' : 'Null'}
+                  {m === 'pan' ? 'Pan L/R' : 'Overlay'}
                 </button>
               ))}
             </div>
@@ -227,10 +227,6 @@ function SyncToolsBar({
         >
           ◫ loupes
         </button>
-        <span className="bar-status">{pair.syncStatus}</span>
-        <button className="bar-toggle" disabled={busy} onClick={() => pair.runAutoSync()}>
-          ↻ re-sync
-        </button>
         <span className="wave-spacer" />
         <button
           className={`approve-btn${couple.approved ? ' approved' : ''}`}
@@ -240,7 +236,9 @@ function SyncToolsBar({
             appModel.invalidate();
           }}
         >
-          {couple.approved ? '✓ Approved' : 'Approve'}
+          <span>{couple.approved ? '✓' : '○'}</span>
+          <span>{couple.approved ? 'Approved' : 'Approve'}</span>
+          <span className="approve-key">v</span>
         </button>
       </div>
     </div>
