@@ -1,6 +1,6 @@
 # Couple — Technical Specification
 
-**Status:** planning complete, no implementation.
+**Status:** implemented — the engine (`couple-core`), the `couple` CLI, and the macOS app shipped from this spec; a cross-platform Electron shell (Phase G) is in progress on the same core. For v2 queue/pairing scope, `SPEC-V2.md` supersedes §12 and the single-pair-editor framing; everything else here stands. Deviations are recorded as `SPEC-CHANGE:` entries in `PROGRESS.md`.
 **Audience:** the implementation sessions (Session C: core + CLI; Session D: SwiftUI shell) and any future Windows/Linux port.
 **Companion documents:** `UX-DECISIONS.md` (authoritative for all UX behavior and validated algorithm parameters), `PROGRESS.md` (running log, append-only).
 

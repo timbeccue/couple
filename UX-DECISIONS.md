@@ -692,3 +692,34 @@ Decision (mac RootView.swift; Electron already ships this in App.tsx):
 - Label bumped to 11 pt (was 9.5 pt, sized for the narrow rail) to match the
   Electron strip now that it has the full width to breathe; a top hairline
   separates it from the columns above, mirroring Electron's `border-top`.
+
+## 2026-07-11 — Anchor drag: no snap-on-release, direct 1:1 pointer mapping (REVISES §1.6 pins, §2.2 "Manual placement", §2.9 table)
+
+Ledger backfill (doc hygiene): two shipped anchor-drag decisions were recorded
+in the PROGRESS ledger but never appended here, so §1.6, §2.2, and the §2.9
+reference table still describe snap-on-drag. The Part-v2 preamble already
+carries "no anchor snap-on-drag" in its Session-D/E SPEC-CHANGE list; this
+entry makes the revision explicit at the ledger level. No new decision is made
+here.
+
+- **No snap-on-release (owner SPEC-CHANGE, 2026-06-12, Session D feedback
+  round 1 — archived in `docs/archive/PROGRESS-2026-06-11-to-14.md`).** A
+  dragged anchor pin stays exactly where it is released; it does not snap to a
+  transient. The **⌖ snap** loupe-header button remains the explicit,
+  user-invoked snap (±4 s onset search per §4.5, unchanged).
+- **Direct 1:1 drag (TODO-014 Part 1, shipped 2026-06-15, commit `af0c1b2`).**
+  The 2026-06-12 round had replaced snap-on-release with a velocity-adaptive
+  precision gain (slow pointer ⇒ finer movement; never documented in this
+  file). That gain is also removed: during a drag the pointer's x-position
+  maps directly through the displayed overview timeline — the same
+  absolute-position principle as playhead dragging — with unrounded time, the
+  pin staying under the pointer, and remaining exactly where released.
+  TODO-014 Part 2 (a precision magnifier for exact placement on long
+  recordings) remains Deferred in TODO.md.
+- Superseded text: §1.6 "on release the pin snaps to the nearest strong
+  transient (±4 s search)"; §2.2 Manual placement "on release it snaps to the
+  strongest transient within ±4 s"; §2.9 row "drag anchor pin — Move anchor;
+  snaps to nearest transient on release". §2.2's rationale (anchors belong on
+  transients — silence and sustained tones are unjudgeable) still stands; it
+  is served by onset-based auto-proposal and the explicit ⌖ re-snap, not by a
+  forced snap on drag release.

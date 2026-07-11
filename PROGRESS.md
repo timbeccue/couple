@@ -764,3 +764,29 @@ now wired into CI. No SPEC-CHANGE (test/CI plumbing only; no engine or policy).
   comment + corpus-gate comment updated to describe the split.
 - **CLAUDE.md**: added the golden-diff bullet to the build/test list and noted the
   ROC gate's new push/PR trigger.
+
+## 2026-07-11 — Doc hygiene: SPEC status header + UX-DECISIONS anchor-drag backfill (F6)
+
+F6 finding, docs only — no code, no engine/policy change, no SPEC-CHANGE
+(status/history markers, not behavior text).
+
+- **SPEC.md status line**: "planning complete, no implementation" replaced
+  with the shipped reality — engine (couple-core), CLI (couple), macOS app
+  shipped; Electron shell (Phase G) in progress on the same core — plus the
+  SPEC-V2 precedence pointer (supersedes §12 and the single-pair-editor
+  framing) and the SPEC-CHANGE ledger pointer. Staleness fix to a status
+  header, not a spec deviation.
+- **UX-DECISIONS.md**: appended a 2026-07-11 entry revising §1.6/§2.2/§2.9 —
+  anchor pins do not snap on drag release (owner SPEC-CHANGE 2026-06-12,
+  Session D feedback round 1, archived ledger) and anchor drag is direct 1:1
+  pointer→time mapping (TODO-014 Part 1, commit af0c1b2). Backfill of
+  already-shipped, owner-ratified decisions; historical sections left
+  verbatim per the append-only convention (no back-markers — matches the
+  2026-07-03/2026-07-11 appended-entry precedent). Note: the stale text lives
+  in §1.6/§2.2/§2.9, not §2.4 as the finding stated.
+- **Checked, no edit needed**: UX-DECISIONS §3's two-slot launch picker was
+  already retired by the existing 2026-07-11 no-splash entry (commit
+  8b3073c); its final bullet explicitly supersedes the two-slot picker and
+  "hidden or inert window" clause. TODO.md and CLAUDE.md unaffected (no
+  flag/command/layout/doc-role change; TODO-014's status line is already
+  accurate).
