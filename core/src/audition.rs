@@ -9,7 +9,6 @@
 //! 32-tap Kaiser windowed sinc [SPEC]. Mapping/mode changes between fills
 //! crossfade over 240 samples (5 ms) to suppress clicks.
 
-use crate::error::{CoupleError, Result};
 use crate::pyramid::SAMPLE_RATE;
 use crate::session::{DriftMode, Session};
 use crate::track::TrackData;
