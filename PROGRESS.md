@@ -614,3 +614,30 @@ followed the same day after owner approval of the Swift version.
   REMOVE-TEST clear-session checks pass (label updated: "center import
   surface"); `swift test` 116 green. Electron: tsc, smoke, §9 parity 5/5 green;
   harness shots confirm the empty shell and an unchanged 2-couple loaded state.
+
+## 2026-07-11 — Electron visual-parity polish, committed retroactively (commit 6e7b6e7)
+
+Housekeeping entry: an earlier session (after the 2026-07-04 real-media fixes)
+left a visual-parity polish round uncommitted in the working tree; it was
+committed 2026-07-11 as `6e7b6e7`, split apart from the same-day no-splash
+work. Logged here so the ledger covers it — the session that wrote it never
+added an entry. What it contains (from the diff):
+
+- **Pool video thumbnails**: the `couple-media://` scheme gains `corsEnabled`
+  + an `Access-Control-Allow-Origin: *` response header so a
+  `<video crossorigin>` frame grab draws to an untainted canvas — playback
+  never cared, `toDataURL` (thumbnails) does.
+- **Monitor modes match CoupleKit `MonitorMode.allCases`**: Null is a test
+  oracle only and is excluded from the UI; default is Overlay (Swift
+  AuditionController parity); label reads "Pan L/R".
+- **Waveform stage badge gutter** (WaveformStage.swift twin): anchor pin heads
+  and the playhead knob render above the lanes, off the waveform pixels.
+- **Export rail / queue rail / footer styling**: destination folder glyph,
+  export-run button style, couple-row redesign (verdict spine, coverage strip,
+  pairing second line), footer keyboard cheat line matching the mac FooterBar;
+  broad restyling across styles.css / editor.css / export.css / pool.css.
+- SHELL-UI-PARITY.md gained the queue-rail session-header line and the
+  corrected monitor-mode line.
+
+Gates at commit time (run 2026-07-11 on the combined tree): tsc, smoke,
+§9 parity 5/5 green.
