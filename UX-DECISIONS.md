@@ -584,3 +584,30 @@ is a rounding error in a video bitrate budget — keep audio high, spend the res
 on video).
 
 *End of v2 part.*
+
+## 2026-07-03 — Seeded auto-sync: evidence placement + a real drag-to-rescue
+
+Owner report (difficult-match test 3, the quiet 21 s excerpt): the queue paired
+the right files, but the editor placed the audio at 0:00 with "no plausible
+correlation peak", and manually dragging it to the right spot didn't help —
+re-sync just repeated the same blind search. Root cause: the editor's auto-sync
+ignored the resolver's accepted fingerprint lag and reran the §5 stage-1 blind
+envelope scan, whose z gate (8.5) rejects exactly the quiet/short clips the
+spectral matcher was built to recover (this pair: z 8.0).
+
+Decision (core `policy::sync_seed`; PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3):
+
+- **A row whose selection carries resolver-accepted evidence (candidate z > 0)
+  auto-syncs FROM that evidence lag** — the seeded path skips only stage-1
+  discovery + its z gate; refinement ladder, drift pass, and §5.6 status gates
+  are unchanged, so a degenerate seed still lands LowConfidence/unmatched
+  honestly, never a fabricated Synced.
+- **An explicit re-sync after a FAILED sync adopts the user's coarse-dragged
+  placement** (non-zero offset) as the seed — the failure toast's "coarse-drag
+  the external lane to rescue, then re-sync" now does what it says. Manual
+  rescue outranks evidence: the user dragged because automatic was wrong.
+- **Ambient queue syncs never read the current offset** — batch re-resolution
+  cannot be steered by a stray drag on a half-inspected row.
+- A manual re-pair placeholder candidate (z 0, lag 0) is NOT evidence; a fresh
+  pool drag still syncs blind.
+

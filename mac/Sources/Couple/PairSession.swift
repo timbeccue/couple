@@ -110,6 +110,14 @@ final class PairSession {
     // Sync
     var syncActivity: SyncActivity = .none
     var lastSync: SyncResult?
+    /// The selected candidate's resolver evidence (lag + acceptance score), captured at
+    /// `load` so auto-sync can be SEEDED from it instead of rerunning the §5 stage-1
+    /// blind scan just to fail its z gate (PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3).
+    /// nil when the selection carries no evidence; whether/what to seed is
+    /// `SyncSeedPolicy.plan`'s call, not this class's.
+    @ObservationIgnored private var evidenceLagMs: Double?
+    @ObservationIgnored private var evidenceZ: Double?
+    @ObservationIgnored private var evidenceDriftPpm: Double?
     private var syncJob: Job<SyncResult>?
     /// The in-flight auto-sync Task, so the per-couple serial queue (§5.2) can
     /// await one couple's sync before starting the next.
@@ -204,9 +212,17 @@ final class PairSession {
     /// auto-run sync — the per-couple serial queue (§5.2) drives that, so N
     /// couples don't fire N concurrent syncs. A single video+audio drop ends up
     /// as one couple whose sync runs immediately, behaving exactly like v1.
-    func load(cameraTrack: TrackHandle, externalTrack: TrackHandle) {
+    ///
+    /// `evidence` is the selected candidate the caller paired on (nil when there is
+    /// none) — its lag/z/ppm seed auto-sync via `SyncSeedPolicy` (§11.3). A manual
+    /// placeholder candidate (z 0) is safe to pass; the policy rejects it as evidence.
+    func load(cameraTrack: TrackHandle, externalTrack: TrackHandle,
+              evidence: RowCandidate? = nil) {
         teardown()
         resetAlignment()
+        evidenceLagMs = evidence?.lagMs
+        evidenceZ = evidence?.z
+        evidenceDriftPpm = evidence?.ppm
         camera = .loaded(cameraTrack)
         external = .loaded(externalTrack)
         do {
@@ -242,7 +258,18 @@ final class PairSession {
     func runAutoSync(announce: Bool = true) {
         guard let session, !isSyncRunning else { return }
         do {
-            let job = try session.autoSyncStart()
+            // §11.3 seeding: core decides whether this run begins from the row's
+            // accepted evidence lag, from the user's coarse-dragged placement (explicit
+            // re-sync after a failure — the rescue the failure toast promises), or from
+            // nothing (the blind stage-1 scan, unchanged). announce ≡ explicit: only a
+            // user-invoked re-sync toasts, and only it may adopt manual placement.
+            var lastFailed = false
+            if let last = lastSync, case .failed = last.status { lastFailed = true }
+            let seed = SyncSeedPolicy.plan(
+                evidenceLagMs: evidenceLagMs, evidenceZ: evidenceZ,
+                evidenceDriftPpm: evidenceDriftPpm,
+                explicit: announce, lastSyncFailed: lastFailed, currentOffsetMs: offsetMs)
+            let job = try session.autoSyncStart(seed: seed)
             syncJob = job
             syncActivity = .running(label: "Searching…", fraction: 0)
             syncTask = Task {

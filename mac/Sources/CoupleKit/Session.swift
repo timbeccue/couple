@@ -66,10 +66,20 @@ public final class SessionHandle: @unchecked Sendable {
 
     /// Full auto-sync job (§4.4). On Synced/LowConfidence core writes the mapping
     /// + driftWindows into the session state; on Failed the state is untouched.
-    public func autoSyncStart() throws -> Job<SyncResult> {
+    ///
+    /// `seed` (PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3): when non-nil the sync begins
+    /// from that accepted offset/drift instead of the stage-1 blind global scan + its z
+    /// gate — pass `SyncSeedPolicy.plan(...)`'s decision, never an invented value. nil
+    /// is the unseeded sync, byte-identical to before the seed existed.
+    public func autoSyncStart(seed: SyncSeedPlan? = nil) throws -> Job<SyncResult> {
         let box = JobBox()
         let user = Unmanaged.passRetained(box).toOpaque()
-        let jobId = cpl_autosync_start(engine.ctx, id, nil, jobTrampoline, user)
+        let jobId = if let seed {
+            cpl_autosync_start_seeded(engine.ctx, id, nil, seed.offsetMs, seed.driftPpm,
+                                      jobTrampoline, user)
+        } else {
+            cpl_autosync_start(engine.ctx, id, nil, jobTrampoline, user)
+        }
         guard jobId != 0 else {
             Unmanaged<JobBox>.fromOpaque(user).release()
             throw engine.takeError()

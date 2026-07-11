@@ -83,6 +83,16 @@ enum Cmd {
         /// Override SyncParams, e.g. --params z-min=25
         #[arg(long = "params", value_name = "K=V")]
         params: Vec<String>,
+        /// Seed the sync from this accepted offset (ms) instead of the stage-1 blind
+        /// global scan + its z gate (PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3) — e.g. a
+        /// resolver-accepted fingerprint lag. Refinement ladder, drift pass and status
+        /// gates are unchanged. Incompatible with --offset-only.
+        #[arg(long, value_name = "MS", conflicts_with = "offset_only")]
+        seed_lag_ms: Option<f64>,
+        /// Seed drift (ppm) recorded alongside --seed-lag-ms; telemetry only — the
+        /// drift pass re-measures regardless
+        #[arg(long, value_name = "PPM", requires = "seed_lag_ms", default_value_t = 0.0)]
+        seed_drift_ppm: f64,
         /// Write a session file consumable by render/export
         #[arg(long)]
         write_state: Option<PathBuf>,
@@ -384,8 +394,16 @@ fn run(cli: &Cli, ctx: &Arc<Ctx>, cancel: &CancelToken) -> couple_core::Result<(
             audio,
             offset_only,
             params,
+            seed_lag_ms,
+            seed_drift_ppm,
             write_state,
-        } => run_sync(cli, ctx, video, audio, *offset_only, params, write_state.as_deref(), cancel),
+        } => {
+            let seed = seed_lag_ms.map(|offset_ms| couple_core::sync::SyncSeed {
+                offset_ms,
+                drift_ppm: *seed_drift_ppm,
+            });
+            run_sync(cli, ctx, video, audio, *offset_only, params, seed, write_state.as_deref(), cancel)
+        }
         Cmd::Measure {
             video,
             audio,
@@ -677,6 +695,7 @@ fn run_sync(
     audio: &PathBuf,
     offset_only: bool,
     params: &[String],
+    seed: Option<couple_core::sync::SyncSeed>,
     write_state: Option<&std::path::Path>,
     cancel: &CancelToken,
 ) -> couple_core::Result<()> {
@@ -697,9 +716,10 @@ fn run_sync(
     let pf = reporter.progress_fn();
     let mut prog = couple_core::job::ProgressEmitter::new(ctx.next_id(), pf);
     let result = if offset_only {
+        // --seed-lag-ms conflicts_with --offset-only at the clap layer, so `seed` is None here.
         couple_core::sync::offset_only_sync(&cam.pyramid, &ext.pyramid, &sp, &mut prog, cancel)?
     } else {
-        couple_core::sync::auto_sync_tracks(&cam.pyramid, &ext.pyramid, &sp, &mut prog, cancel)?
+        couple_core::sync::auto_sync_tracks_seeded(&cam.pyramid, &ext.pyramid, &sp, seed, &mut prog, cancel)?
     };
     reporter.finish();
 

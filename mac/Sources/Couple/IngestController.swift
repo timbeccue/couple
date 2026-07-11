@@ -292,7 +292,8 @@ final class IngestController {
             couple.pair.teardown()
             return
         }
-        couple.pair.load(cameraTrack: cam, externalTrack: audio)
+        couple.pair.load(cameraTrack: cam, externalTrack: audio,
+                         evidence: couple.candidates.first { $0.audioKey == key })
         if !suppressAutoSync { enqueueSync(couple) }
         if couple.id == model.selectedID { model.attachAudition(couple) }
     }

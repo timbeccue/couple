@@ -571,7 +571,49 @@ pub unsafe extern "C" fn cpl_autosync_start(
         }
     };
     spawn_job(ctx, cb, user, move |ctx, progress, cancel| {
-        let r = ctx.auto_sync_blocking(session, &params, progress, cancel, 0)?;
+        let r = ctx.auto_sync_blocking(session, &params, None, progress, cancel, 0)?;
+        Ok(serde_json::to_string(&r).unwrap())
+    })
+}
+
+/// Seeded full auto-sync (PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3 wiring). Identical to
+/// `cpl_autosync_start` except the sync BEGINS from the supplied accepted offset/drift instead of
+/// running the stage-1 blind global scan + its z acceptance gate — for pairs whose offset the
+/// pairing resolver already proved (fingerprint evidence) or the user placed (manual rescue).
+/// Which seed to pass, if any, is `cpl_policy_sync_seed`'s decision; callers with no seed use
+/// `cpl_autosync_start`. Everything downstream (refinement ladder, drift pass, status gates,
+/// session write-on-success) is unchanged. Returns the job id, 0 on error.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_autosync_start_seeded(
+    ctx: u64,
+    session: u64,
+    params_json: *const c_char,
+    seed_offset_ms: f64,
+    seed_drift_ppm: f64,
+    cb: CplProgressCb,
+    user: *mut c_void,
+) -> u64 {
+    let Some(ctx) = ctx_of(ctx) else {
+        invalid_handle();
+        return 0;
+    };
+    let params: couple_core::sync::SyncParams = if params_json.is_null() {
+        Default::default()
+    } else {
+        match serde_json::from_str(&CStr::from_ptr(params_json).to_string_lossy()) {
+            Ok(p) => p,
+            Err(e) => {
+                set_error(&couple_core::CoupleError::invalid(format!("params: {e}")));
+                return 0;
+            }
+        }
+    };
+    let seed = couple_core::sync::SyncSeed {
+        offset_ms: seed_offset_ms,
+        drift_ppm: seed_drift_ppm,
+    };
+    spawn_job(ctx, cb, user, move |ctx, progress, cancel| {
+        let r = ctx.auto_sync_blocking(session, &params, Some(seed), progress, cancel, 0)?;
         Ok(serde_json::to_string(&r).unwrap())
     })
 }
@@ -1650,6 +1692,22 @@ pub unsafe extern "C" fn cpl_policy_activity(json: *const c_char) -> *mut c_char
     use couple_core::policy::activity::{decide, Request};
     match policy_request::<Request>(json) {
         Ok(req) => policy_ok(&decide(&req)),
+        Err(envelope) => envelope,
+    }
+}
+
+/// Auto-sync seed selection (PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3; `policy::sync_seed`).
+/// Request: `{"evidenceLagMs":f64|null,"evidenceZ":f64|null,"evidenceDriftPpm":f64|null,
+/// "explicit":bool,"lastSyncFailed":bool,"currentOffsetMs":f64}` (all fields defaulted). Value:
+/// `{"seed":{"offsetMs":f64,"driftPpm":f64,"source":"evidence"|"manual"}|null}` — `null` seed ⇒
+/// call `cpl_autosync_start` (unseeded, unchanged); an object ⇒ pass its offset/drift to
+/// `cpl_autosync_start_seeded`. On malformed JSON the error envelope (the wrapper's conservative
+/// fallback is the unseeded sync). PURE (no ctx). Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_policy_sync_seed(json: *const c_char) -> *mut c_char {
+    use couple_core::policy::sync_seed::{dispatch, Request};
+    match policy_request::<Request>(json) {
+        Ok(req) => policy_ok(&dispatch(&req)),
         Err(envelope) => envelope,
     }
 }

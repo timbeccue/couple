@@ -803,9 +803,11 @@ fn seeded_offset_search(
 ///   `SyncResult` assembly. Final status thresholds, session write-on-success (owned by the Ctx
 ///   caller), editor drift windows, and export mapping math are all UNCHANGED.
 ///
-/// NOTE (boundary cut): NOTHING in this boundary calls this with `Some` outside the §11.3 tests —
-/// the FFI/CLI/Swift seed wiring is boundary 8+. The default full-sync path (`auto_sync_tracks`) is
-/// untouched and opt-in to the seed only.
+/// Wiring (the §11.3 "boundary 8+" follow-up, shipped 2026-07-03): `Ctx::auto_sync_blocking`
+/// threads an `Option<SyncSeed>` here; the FFI exposes it as `cpl_autosync_start_seeded`, the CLI
+/// as `couple sync --seed-lag-ms`, and WHICH seed a shell passes (accepted fingerprint evidence
+/// vs. the user's manual-rescue placement vs. none) is the `policy::sync_seed` decision. The
+/// default full-sync path (`auto_sync_tracks`) is untouched and opt-in to the seed only.
 pub fn auto_sync_tracks_seeded(
     p_cam: &PyramidReader,
     p_ext: &PyramidReader,

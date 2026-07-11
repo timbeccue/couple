@@ -15,6 +15,7 @@ pub mod media_removal;
 pub mod repair_drop;
 pub mod row_merge;
 pub mod shadow;
+pub mod sync_seed;
 
 pub use activity::{ImportPhase, LineKind, MatchPhase, Stages};
 pub use anchor::{AnchorCandidate, AnchorTuning};
@@ -23,3 +24,4 @@ pub use media_removal::{ClearSessionCounts, CoupleRef, MediaRemovalPlan};
 pub use repair_drop::RepairDropOutcome;
 pub use row_merge::RowMergePlan;
 pub use shadow::ShadowEvidenceRow;
+pub use sync_seed::{SeedPlan, SeedSource};

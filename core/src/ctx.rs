@@ -800,10 +800,15 @@ impl Ctx {
     /// Blocking full auto-sync on a session (§4.4 semantics): on Synced/LowConfidence
     /// core writes offset/drift/windows + suggested mode into the session state and
     /// leaves verified = false; on Failed the state is untouched (UX §3).
+    ///
+    /// `seed` is the OPTIONAL accepted offset/drift to begin from (PLAN-SPECTRAL-FINGERPRINT-
+    /// MATCHING §11.3; selected by `policy::sync_seed`): `None` is byte-identical to the
+    /// unseeded path, `Some` bypasses only the stage-1 blind discovery + its z gate.
     pub fn auto_sync_blocking(
         &self,
         session: SessionId,
         params: &crate::sync::SyncParams,
+        seed: Option<crate::sync::SyncSeed>,
         progress: ProgressFn,
         cancel: &CancelToken,
         job_id: JobId,
@@ -812,8 +817,14 @@ impl Ctx {
         let cam = self.track(s.camera)?;
         let ext = self.track(s.external)?;
         let mut prog = ProgressEmitter::new(job_id, progress);
-        let result =
-            crate::sync::auto_sync_tracks(&cam.pyramid, &ext.pyramid, params, &mut prog, cancel)?;
+        let result = crate::sync::auto_sync_tracks_seeded(
+            &cam.pyramid,
+            &ext.pyramid,
+            params,
+            seed,
+            &mut prog,
+            cancel,
+        )?;
         if !matches!(result.status, crate::sync::SyncStatus::Failed(_)) {
             let windows = result
                 .windows

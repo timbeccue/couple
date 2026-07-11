@@ -2142,4 +2142,44 @@ struct CoupleKitTests {
         #expect(PoolRailLayout.listHeight(available: 0, couplesContent: 0, poolContent: 0)
                 == PoolRailLayout.minListHeight)
     }
+
+    // ---- SyncSeedPolicy (§11.3 seed wiring; decision in core policy::sync_seed) ----
+
+    @Test func syncSeedEvidenceRoundTripsThroughFFI() {
+        // A resolver-accepted candidate (positive z) seeds an ambient sync from its lag.
+        let seed = SyncSeedPolicy.plan(
+            evidenceLagMs: -82006.8, evidenceZ: 8.17, evidenceDriftPpm: -477.8,
+            explicit: false, lastSyncFailed: false, currentOffsetMs: 0)
+        #expect(seed == SyncSeedPlan(offsetMs: -82006.8, driftPpm: -477.8, source: .evidence))
+    }
+
+    @Test func syncSeedRejectsManualPlaceholderCandidate() {
+        // A manual-re-pair placeholder (z 0, lag 0) is NOT evidence ⇒ unseeded blind sync.
+        let seed = SyncSeedPolicy.plan(
+            evidenceLagMs: 0, evidenceZ: 0, evidenceDriftPpm: nil,
+            explicit: false, lastSyncFailed: false, currentOffsetMs: 0)
+        #expect(seed == nil)
+    }
+
+    @Test func syncSeedManualRescueOutranksEvidence() {
+        // Explicit re-sync after a failure with a coarse-dragged lane adopts the user's
+        // placement (drift 0), not the evidence lag.
+        let seed = SyncSeedPolicy.plan(
+            evidenceLagMs: -82006.8, evidenceZ: 8.17, evidenceDriftPpm: nil,
+            explicit: true, lastSyncFailed: true, currentOffsetMs: -70000)
+        #expect(seed == SyncSeedPlan(offsetMs: -70000, driftPpm: 0, source: .manual))
+        // Ambient syncs never adopt the placement.
+        let ambient = SyncSeedPolicy.plan(
+            evidenceLagMs: nil, evidenceZ: nil, evidenceDriftPpm: nil,
+            explicit: false, lastSyncFailed: true, currentOffsetMs: -70000)
+        #expect(ambient == nil)
+    }
+
+    @Test func syncSeedErrorEnvelopeFallsBackToUnseeded() {
+        // Conservative fallback (PLAN §3.2): a nil/malformed envelope value can never
+        // invent an offset — nil ⇒ the caller runs today's unseeded sync.
+        #expect(SyncSeedPolicy.planFromEnvelope(nil) == nil)
+        #expect(SyncSeedPolicy.planFromEnvelope(["seed": NSNull()]) == nil)
+        #expect(SyncSeedPolicy.planFromEnvelope(["seed": ["offsetMs": "junk"]]) == nil)
+    }
 }

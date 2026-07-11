@@ -114,6 +114,7 @@ fn round_trip_resample_mode() {
         .auto_sync_blocking(
             sid,
             &couple_core::sync::SyncParams::default(),
+            None,
             noop_progress(),
             &CancelToken::new(),
             0,

@@ -344,7 +344,8 @@ final class AppModel {
         couple.candidates = snapshot.candidates
         if couple.id == selectedID { audition.teardown() } // close stream before freeing old session
         if let audioHandle {
-            couple.pair.load(cameraTrack: cam, externalTrack: audioHandle)
+            couple.pair.load(cameraTrack: cam, externalTrack: audioHandle,
+                             evidence: couple.candidates.first { $0.audioKey == couple.selectedAudioKey })
             couple.pair.runAutoSync(announce: false) // ambient re-derivation, like repair's
             if snapshot.approved { couple.pair.toggleVerified() } // load() reset it
         } else {
@@ -378,7 +379,11 @@ final class AppModel {
                                    durAudio: audioEntry.durationS, lagMs: 0)))
         }
         if couple.id == selectedID { audition.teardown() } // close stream before freeing old session
-        couple.pair.load(cameraTrack: cam, externalTrack: audioHandle)
+        // A picked existing candidate carries resolver evidence (seeds the sync, §11.3);
+        // a fresh pool drag is the z-0 placeholder appended above, which the seed policy
+        // rejects — its sync stays a blind search.
+        couple.pair.load(cameraTrack: cam, externalTrack: audioHandle,
+                         evidence: couple.candidates.first { $0.audioKey == audioKey })
         if couple.id == selectedID { attachAudition(couple) }
         // Forced verdict if this pairing is below the floor (a candidate carries
         // its z; a fresh pool drag correlates on sync — checked on completion).

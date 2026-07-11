@@ -181,6 +181,24 @@ uint64_t cpl_autosync_start(uint64_t ctx,
                             void *user);
 
 /*
+ Seeded full auto-sync (PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3 wiring). Identical to
+ `cpl_autosync_start` except the sync BEGINS from the supplied accepted offset/drift instead of
+ running the stage-1 blind global scan + its z acceptance gate — for pairs whose offset the
+ pairing resolver already proved (fingerprint evidence) or the user placed (manual rescue).
+ Which seed to pass, if any, is `cpl_policy_sync_seed`'s decision; callers with no seed use
+ `cpl_autosync_start`. Everything downstream (refinement ladder, drift pass, status gates,
+ session write-on-success) is unchanged. Returns the job id, 0 on error.
+ */
+
+uint64_t cpl_autosync_start_seeded(uint64_t ctx,
+                                   uint64_t session,
+                                   const char *params_json,
+                                   double seed_offset_ms,
+                                   double seed_drift_ppm,
+                                   CplProgressCb cb,
+                                   void *user);
+
+/*
  measure_local (§4.4): JSON {lagMs, ncc} or "null"; null pointer on error.
  */
 
@@ -607,6 +625,17 @@ char *cpl_policy_shadow_rows(const char *json);
  */
 
 char *cpl_policy_activity(const char *json);
+
+/*
+ Auto-sync seed selection (PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3; `policy::sync_seed`).
+ Request: `{"evidenceLagMs":f64|null,"evidenceZ":f64|null,"evidenceDriftPpm":f64|null,
+ "explicit":bool,"lastSyncFailed":bool,"currentOffsetMs":f64}` (all fields defaulted). Value:
+ `{"seed":{"offsetMs":f64,"driftPpm":f64,"source":"evidence"|"manual"}|null}` — `null` seed ⇒
+ call `cpl_autosync_start` (unseeded, unchanged); an object ⇒ pass its offset/drift to
+ `cpl_autosync_start_seeded`. On malformed JSON the error envelope (the wrapper's conservative
+ fallback is the unseeded sync). PURE (no ctx). Free with cpl_string_free.
+ */
+ char *cpl_policy_sync_seed(const char *json);
 
 /*
  LRU-GC the cache down to max_bytes; returns bytes freed.

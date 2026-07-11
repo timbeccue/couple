@@ -358,3 +358,44 @@ clears) is REMOVED — the new rule is a pure condition on existing state
 (`pair.session != nil`, `poolPrimaryEntry`), so no focus state is needed. The
 waveform seek strip and the pool rail-growth rule are unchanged. Gates: swift
 build + swift test green.
+
+## 2026-07-03 — Seeded auto-sync wired (§11.3): evidence placement + drag-to-rescue
+
+Owner repro (difficult-match test 3): the v2 queue paired `33-shortened-more.wav`
+with `bach 172.mov` correctly (spectral matcher), but the editor placed the audio
+at 0:00 with "no plausible correlation peak" — and manual placement + re-sync
+failed identically. Diagnosis: the editor's auto-sync discarded the row's accepted
+fingerprint lag and reran the §5 stage-1 blind envelope scan (z 8.0 < z_min 8.5 on
+this quiet 21 s clip). The core seeded-sync path (`SyncSeed`,
+`auto_sync_tracks_seeded`) was built for exactly this in the §11.3 prework but
+never called with `Some` outside tests (sync.rs's own "boundary 8+" wiring note);
+this session wires it end to end:
+
+- **`core/src/policy/sync_seed.rs`** (new policy + unit tests): decides
+  evidence-seed vs manual-rescue-seed vs unseeded. Evidence requires candidate
+  z > 0 (a manual re-pair placeholder is z 0/lag 0 and never seeds); manual
+  rescue requires explicit re-sync + last sync Failed + non-zero current offset,
+  and outranks evidence. Ambient syncs never read the current offset.
+- **Core**: `Ctx::auto_sync_blocking` takes `Option<SyncSeed>` and calls
+  `auto_sync_tracks_seeded` (None ⇒ byte-identical unseeded path, per its §11.3
+  contract). Stale "nothing calls this" note in sync.rs updated.
+- **FFI (additive)**: `cpl_autosync_start_seeded(ctx, session, params_json,
+  seed_offset_ms, seed_drift_ppm, cb, user)` + `cpl_policy_sync_seed` (uniform
+  policy envelope). `couple.h` regenerated.
+- **CLI**: `couple sync --seed-lag-ms=<ms> [--seed-drift-ppm=<ppm>]`
+  (conflicts with --offset-only). Verified on test 3: unseeded exit 5
+  (noPlausiblePeak, unchanged); seeded ⇒ lowConfidence, offset −82038 ms,
+  7/12 drift windows accepted, fit RMS 0.33 ms — mapping written, graph
+  populated, honest "please review" verdict.
+- **Swift**: `Session.autoSyncStart(seed:)` picks the seeded symbol;
+  `CoupleKit/SyncSeedPolicy.swift` is the thin FFI wrapper (conservative
+  fallback: unseeded); `PairSession.load` captures the selected candidate's
+  lag/z/ppm as evidence and `runAutoSync` passes the policy's decision
+  (explicit ≡ announce). All three load sites pass their selected candidate
+  (resolver, undo-restore, repair — repair's fresh-drag placeholder is
+  rejected by the policy).
+
+UX ledger: UX-DECISIONS 2026-07-03 entry. Gates: cargo test --release
+--workspace green (policy 9/9; sync_drift, ffi, cli suites); mac swift build
+(both variants) + swift test green (116, incl. 4 new SyncSeedPolicy tests).
+
