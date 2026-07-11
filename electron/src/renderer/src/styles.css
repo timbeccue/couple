@@ -38,6 +38,35 @@ body {
   -webkit-user-select: none;
 }
 
+/* Overlay-style auto-hiding scrollbars (mac parity): the gutter is a fixed narrow
+   width so the thumb appearing never reflows content, but the thumb is invisible
+   at rest and only paints while the surface is actively scrolling (`.scrolling`,
+   toggled by scroll-overlay.ts) or while hovered — mirroring macOS overlay bars. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+}
+.scrolling::-webkit-scrollbar-thumb,
+:hover::-webkit-scrollbar-thumb {
+  background: rgba(140, 145, 155, 0.45);
+  background-clip: padding-box;
+}
+.scrolling::-webkit-scrollbar-thumb:hover,
+:hover::-webkit-scrollbar-thumb:hover {
+  background: rgba(165, 170, 180, 0.7);
+  background-clip: padding-box;
+}
+
 .root {
   display: flex;
   flex-direction: column;

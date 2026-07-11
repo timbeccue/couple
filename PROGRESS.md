@@ -642,6 +642,35 @@ added an entry. What it contains (from the diff):
 Gates at commit time (run 2026-07-11 on the combined tree): tsc, smoke,
 §9 parity 5/5 green.
 
+## 2026-07-11 — Electron overlay scrollbars: auto-hide to match macOS (shell polish)
+
+Owner report (with before/after shots): the queue rail and media pool rendered
+Chromium's persistent scrollbar — a heavy always-on bar with a light track that
+read badly against the dark UI. The mac shell shows macOS overlay bars: nothing
+at rest, a thin transient thumb only while actually scrolling. Made Electron
+behave the same, globally so every scrollable surface (queue rail, media pool,
+export rail, editor lists) is consistent.
+
+- **styles.css**: global `::-webkit-scrollbar` treatment — an 8 px gutter
+  (fixed, so a thumb appearing never reflows content), fully transparent track /
+  corner, and a thumb that is transparent at rest. The thumb paints a
+  semi-translucent rounded pill (`background-clip: padding-box` inside a 2 px
+  transparent border, so it reads as a thin inset bar) only while the surface
+  carries a `.scrolling` class or is hovered.
+- **scroll-overlay.ts** (new, ~25 lines): `installOverlayScrollbars()` adds one
+  capture-phase, passive `scroll` listener on `document` (scroll doesn't bubble),
+  marks the scrolled element `.scrolling`, and clears it ~900 ms after motion
+  stops via a per-element `WeakMap` timer. Presentation only, no engine coupling
+  (PLAN-CORE-SHELL-BOUNDARY §1).
+- **main.tsx**: calls `installOverlayScrollbars()` at startup, before render.
+- No SPEC-CHANGE (shell presentation parity); no SHELL-UI-PARITY line (no
+  affordance added/removed) and no UX-DECISIONS entry (visual polish, matching
+  the 2026-07-11 visual-parity precedent above, which likewise recorded only
+  here).
+- Gates (from `electron/`): `typecheck`, `smoke` (12/12), `parity` (5/5 §9) all
+  green. Visual proof: a 24-clip media pool renders 24 entries with the region
+  overflowing (only 5 visible) and NO scrollbar painted at rest.
+
 ## 2026-07-11 — Electron verdict-dot parity: manual-pick match evidence (TODO-009)
 
 Fixed a shell parity bug where a manually-picked pairing that IS a confident
