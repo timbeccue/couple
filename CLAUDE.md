@@ -69,11 +69,12 @@ rename them.
 ## Build & test (CI is source of truth: `.github/workflows/ci.yml`; needs ffmpeg)
 
 - `cargo test --release --workspace` — integration suites require `--release`.
+- `scripts/golden-pair-rows.sh` — resolver-decision golden diff vs `fixtures/golden/rows/` (CI runs it in the test job). Intended decision change: `COUPLE_UPDATE_GOLDEN=1 scripts/golden-pair-rows.sh`, review diff, commit.
 - `cargo build --release -p couple-ffi` — must run **before** any swift build.
 - `cd mac && swift build -c release` — ship variant (DebugDrive stubbed).
 - `cd mac && swift build -c release -Xswiftc -DCOUPLE_DEVHARNESS` — dev harness.
 - `cd mac && swift test`
-- ROC gate (weekly/on-demand):
+- ROC gate (weekly/on-demand, plus auto on push/PR touching matcher paths — .github/workflows/roc-gate.yml):
   `cargo test --release -p couple-core --test matching_evidence -- --ignored synthetic_corpus_roc_gates_hold`
 - Known wart: after adding Swift test seams, `swift test` can throw a spurious link
   error while `swift build` passes — fix with `rm -rf mac/.build/*/debug`.

@@ -729,3 +729,38 @@ records the decision; SHELL-UI-PARITY's activity-strip line updated.
 - Gates: `cargo build --release -p couple-ffi`, `swift build -c release` (ship
   + `-DCOUPLE_DEVHARNESS`), `swift test` 116/116 all green. Dev-harness shot
   confirms the bar edge-to-edge mid-import.
+
+## 2026-07-11 — CI hardening: golden diff per-push + path-filtered ROC gate
+
+F1 finding: `scripts/golden-pair-rows.sh` (the resolver-decision golden diff
+frozen for PLAN-CORE-SHELL-BOUNDARY Phase 0) existed but nothing under
+`.github/` ran it — so a decision drift could land unnoticed; and the 33-case
+synthetic-corpus ROC gate was weekly/on-demand only, never per push/PR. Both are
+now wired into CI. No SPEC-CHANGE (test/CI plumbing only; no engine or policy).
+
+- **Golden diff in the ci.yml test job**: added a `Golden pair-rows decision
+  diff` step right after `cargo test --release --workspace`. All inputs are
+  committed JSON — specs in `fixtures/golden/specs`, goldens in
+  `fixtures/golden/rows` — so it needs no gitignored media, only the ffmpeg the
+  job already installs. The update path is unchanged and stays local-only
+  (`COUPLE_UPDATE_GOLDEN=1 scripts/golden-pair-rows.sh` → review diff → commit);
+  CI never sets that env, so it can only ever compare.
+- **Script switched debug→release**: the debug run measured ~10 min wall (fixture
+  synthesis + pair are DSP-heavy); release rides the artifacts `cargo test
+  --release` already built, locally and in CI. Re-ran under release WITHOUT
+  `COUPLE_UPDATE_GOLDEN`: "all scenarios match" against the existing goldens and
+  `git status fixtures/golden` clean — verified, NOT recaptured.
+- **New `.github/workflows/roc-gate.yml`**: runs the exact existing ROC command
+  (`cargo test --release -p couple-core --test matching_evidence -- --ignored
+  synthetic_corpus_roc_gates_hold`) on push-to-main and PR, filtered via
+  `on.paths` to matcher inputs — `core/src/{matching,match_refine,match_graph,
+  matcher_corpus,verify,pairing_params}.rs`, `core/src/fingerprint/**`,
+  `core/tests/matching_evidence.rs`, `fixtures/matcher-corpus/**`, and the
+  workflow file itself. Kept as its own workflow because `on.paths` gates the
+  whole workflow, not a single job — so this filter can't affect the main CI job.
+- **ci.yml corpus-gate job kept unchanged** as the no-change drift net (weekly +
+  workflow_dispatch): toolchain/brew-ffmpeg updates can move results with no
+  matcher-path change, which the path-filtered per-change run would miss. Header
+  comment + corpus-gate comment updated to describe the split.
+- **CLAUDE.md**: added the golden-diff bullet to the build/test list and noted the
+  ROC gate's new push/PR trigger.

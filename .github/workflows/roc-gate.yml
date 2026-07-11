@@ -1,0 +1,50 @@
+# Per-change run of the §10.5/§15.2 synthetic-corpus ROC gate (same command as
+# ci.yml's weekly corpus-gate job, which stays as the no-change drift net).
+# Corpus is fully synthetic: all 33 cases regenerate audio at runtime from
+# committed gen params (core/src/matcher_corpus.rs); needs ffmpeg, no media.
+name: ROC gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'core/src/matching.rs'
+      - 'core/src/match_refine.rs'
+      - 'core/src/match_graph.rs'
+      - 'core/src/matcher_corpus.rs'
+      - 'core/src/verify.rs'
+      - 'core/src/pairing_params.rs'
+      - 'core/src/fingerprint/**'
+      - 'core/tests/matching_evidence.rs'
+      - 'fixtures/matcher-corpus/**'
+      - '.github/workflows/roc-gate.yml'
+  pull_request:
+    paths:
+      - 'core/src/matching.rs'
+      - 'core/src/match_refine.rs'
+      - 'core/src/match_graph.rs'
+      - 'core/src/matcher_corpus.rs'
+      - 'core/src/verify.rs'
+      - 'core/src/pairing_params.rs'
+      - 'core/src/fingerprint/**'
+      - 'core/tests/matching_evidence.rs'
+      - 'fixtures/matcher-corpus/**'
+      - '.github/workflows/roc-gate.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  roc-gate:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Synthetic-corpus ROC gate
+        run: >
+          cargo test --release -p couple-core --test matching_evidence
+          -- --ignored synthetic_corpus_roc_gates_hold

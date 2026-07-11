@@ -6,8 +6,9 @@
 # later, the core/cli/ffi cargo tests are POSIX-portable and can move to an
 # ubuntu job (apt-get install ffmpeg) — the mac job then keeps only swift.
 #
-# The 33-case synthetic-corpus ROC gate (#[ignore]d, ~3.5 min locally) runs on
-# a weekly schedule + on demand, not per push — see the corpus-gate job.
+# The 33-case synthetic-corpus ROC gate (#[ignore]d, ~3.5 min locally) runs
+# weekly + on demand here (corpus-gate job) AND per push/PR when matcher paths
+# change — see roc-gate.yml (own workflow so native `on.paths` gates only it).
 #
 # Real-media suites (example_data/, matcher-corpus real splits) are inherently
 # local-only: the media is gitignored (SPEC §10.1) and absent here. Those cases
@@ -50,6 +51,9 @@ jobs:
 
       - name: cargo test (workspace, release)
         run: cargo test --release --workspace
+
+      - name: Golden pair-rows decision diff (resolver decisions vs fixtures/golden/rows)
+        run: scripts/golden-pair-rows.sh
 
       - name: Build FFI staticlib for the Swift package
         run: cargo build --release -p couple-ffi
@@ -126,6 +130,7 @@ jobs:
   # The §10.5/§15.2 synthetic-corpus ROC gate: scores the committed 33-case
   # corpus under production defaults and asserts the frozen CALIBRATION.md §6
   # baseline (0 confident-false, 0 FP, recall >= 31/32). Weekly + on demand.
+  # Kept unchanged as the drift net: toolchain/brew-ffmpeg updates can move results with no matcher-path change; per-change runs live in roc-gate.yml.
   corpus-gate:
     runs-on: macos-15
     timeout-minutes: 45

@@ -20,8 +20,10 @@ SPECS="$ROOT/fixtures/golden/specs"
 GOLDEN="$ROOT/fixtures/golden/rows"
 mkdir -p "$GOLDEN"
 
-cargo build -q -p couple-cli
-BIN="$ROOT/target/debug/couple"
+# Release: fixture synthesis + pair are DSP-heavy (debug run is ~10 min wall);
+# release rides the artifacts `cargo test --release` already built, locally and in CI.
+cargo build -q --release -p couple-cli
+BIN="$ROOT/target/release/couple"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
