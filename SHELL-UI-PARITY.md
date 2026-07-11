@@ -22,8 +22,11 @@ Legend: [source] = the reference implementation a port must read.
   queued/toApprove/toFix]
 - Couple row: evidence verdict dot (match-quality policy; pulsing while
   syncing), video identity, the SELECTED PAIRING visible, action word when
-  action is needed ("pick one" / "no audio" / "forced"). [QueueRail.swift,
-  Couple.swift verdict/actionWord]
+  action is needed ("pick one" / "no audio" / "forced"). A MANUAL pick greens
+  only once its pair clears the SAME core classifier the resolver uses
+  (`manualMatchConfident` ← `matchPair` classification == match, run on pick /
+  re-pair and on restore; TODO-009) — never on the click or the sync alone.
+  [QueueRail.swift, Couple.swift verdict/actionWord, AppModel reevaluateManualMatch]
 - Pool-audio drag onto a couple row = manual re-pair via repair-drop policy,
   with hover affordance. [PoolController.swift / RepairDropPolicy]
 

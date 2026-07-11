@@ -641,3 +641,44 @@ added an entry. What it contains (from the diff):
 
 Gates at commit time (run 2026-07-11 on the combined tree): tsc, smoke,
 §9 parity 5/5 green.
+
+## 2026-07-11 — Electron verdict-dot parity: manual-pick match evidence (TODO-009)
+
+Fixed a shell parity bug where a manually-picked pairing that IS a confident
+match showed green / TO APPROVE on mac but questionable / TO FIX in Electron
+over the SAME core state. The mac shell probes a manual pick's match evidence
+through the resolver's own path (`Resolver.manualPairIsConfident` →
+`engine.matchPair`, classification == match) at pick time, on re-pair, and on
+restore; the Electron shell never computed it — `manualMatchConfident` was only
+ever set to `null` or copied from persistence, and the `match_quality` policy
+reads `null` as "not confident". The stale CoupleRow.ts comment ("re-verified by
+the sync that follows") described a step that did not exist.
+
+- **Engine.ts**: exposed `matchPair(video, audio, paramsJSON?)` — thin port of
+  the existing `native.matchPair` (napi already exported it), mirroring the
+  `matchCandidates` idiom and CoupleKit/Engine.swift `matchPair`. Returns the
+  decoded `PairEvidence` or `null` on a core fault / null-payload miss. PLUMBING
+  ONLY — acceptance stays in core.
+- **AppModel.ts**: added `reevaluateManualMatch(couple)` mirroring the mac
+  AppModel method + the fingerprint branch of `Resolver.manualPairIsConfident`
+  (Electron runs the fingerprint-primary default, so `classification === 'match'`
+  is the whole answer). Called on manual pick / re-pair (`repairDrop` and
+  CenterColumn `pickCandidate`, the two `applyManualPick` sites — mac routes both
+  through `repair`) and on restore when the evidence wasn't persisted
+  (`applyRestore`, mirroring AppModel.swift's restore re-eval). A core fault
+  (null) is not confident; deferred a microtask so the pick paints questionable
+  before the dot may flip (the Swift shell runs it off-main). The undo-snapshot
+  path (`applyRepairSnapshot`) still restores the saved value verbatim — mac's
+  undo does the same.
+- **CoupleRow.ts**: corrected the stale `applyManualPick` comment.
+- **harness.ts**: added the `COUPLE_QUALITY_TEST` hook (app-target mirror of the
+  Swift DebugDrive COUPLE_QUALITY_TEST, but media-driven since the real probe
+  needs handles): re-picks a resolved couple's own audio and asserts
+  `manualMatchConfident` flips null→true with a `good` verdict.
+- **SHELL-UI-PARITY.md**: verdict-dot line made explicit that a manual pick
+  greens only via the same core classifier, on pick / re-pair / restore.
+- **CLAUDE.md**: added QUALITY to the `COUPLE_*_TEST` family list.
+- No engine/policy change; no SPEC-CHANGE (shell presentation parity —
+  the decision has always lived in core `match_quality` + `matchPair`).
+- Gates (from `electron/`): `build:native`, `typecheck`, `smoke` (12/12), and
+  `parity` (5/5 §9) all green.

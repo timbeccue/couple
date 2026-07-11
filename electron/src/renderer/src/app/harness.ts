@@ -50,6 +50,34 @@ export function runParityHarnesses(model: AppModel): void {
     })();
   }
 
+  // QUALITY (TODO-009): with media loaded, a MANUAL pick of a genuine match must
+  // green — its manualMatchConfident flips null→true via the core classifier
+  // (Engine.matchPair), and only that flips the dot. Guards the Electron parity bug
+  // where the probe never ran, so a confident manual pick stuck at questionable.
+  // App-target mirror of the Swift DebugDrive COUPLE_QUALITY_TEST, but media-driven
+  // (the real probe needs handles). Re-picks a resolved couple's own audio so the
+  // pair is a known match; asserts null→true and the resulting good verdict.
+  if (env.COUPLE_QUALITY_TEST) {
+    void (async () => {
+      await waitSettled(model);
+      const c = model.couples.find((x) => x.selectedAudioKey !== null && x.pair.session);
+      if (!c) {
+        console.log('[quality-test] no resolved couple to probe');
+        return;
+      }
+      const key = c.selectedAudioKey!;
+      const z = c.candidates.find((x) => x.audioKey === key)?.z ?? 0;
+      c.applyManualPick(key, z, model.zMin); // becomes a MANUAL pick: provenance=manual, confident=null
+      const beforeProbe = c.manualMatchConfident;
+      await model.reevaluateManualMatch(c);
+      console.log(
+        `[quality-test] key=${key} beforeProbe=${beforeProbe} manualMatchConfident=${c.manualMatchConfident} ` +
+          `forced=${c.forced} verdict=${c.verdict} ` +
+          `pass=${beforeProbe === null && c.manualMatchConfident === true && c.verdict === 'good'}`
+      );
+    })();
+  }
+
   // UNDO: approve the first couple, undo, assert it un-approved (TODO-015).
   if (env.COUPLE_UNDO_TEST) {
     void (async () => {

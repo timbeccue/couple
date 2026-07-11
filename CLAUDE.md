@@ -56,8 +56,8 @@ rename them.
   package via `npx electron-builder`. Harness env: `COUPLE_OPEN_DIR`,
   `COUPLE_SHOT_PATH`/`COUPLE_SHOT_DELAY_MS`, `COUPLE_AUTOQUIT_MS`, `COUPLE_HUD`,
   `COUPLE_USER_DATA` (persistence root override), plus a `COUPLE_*_TEST` family
-  (PLAY, EXPORT, NUDGE, ANCHOR, PERSIST, RESTORE, UNDO, REMOVE, POOL_PREVIEW,
-  POOL_INFO) mirroring the mac harness idiom.
+  (PLAY, EXPORT, NUDGE, ANCHOR, PERSIST, RESTORE, UNDO, QUALITY, REMOVE,
+  POOL_PREVIEW, POOL_INFO) mirroring the mac harness idiom.
 - `mac/` — Swift package: `CoupleKit` (FFI binding + policy mirrors), `Couple`
   (SwiftUI app), `CCouple` (C shim), `Tests/`. Swift mirrors Rust policies
   file-for-file (`RowMergePolicy.swift` ↔ `policy/row_merge.rs`, etc.); the Rust

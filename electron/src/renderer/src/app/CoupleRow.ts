@@ -91,7 +91,7 @@ export class CoupleRow extends Observable {
   applyManualPick(audioKey: string, candidateZ: number, zMin: number): void {
     this.selectedAudioKey = audioKey;
     this.selectionProvenance = 'manual';
-    this.manualMatchConfident = null; // re-verified by the sync that follows
+    this.manualMatchConfident = null; // questionable until the caller re-evaluates this pair's match evidence (TODO-009)
     this.pinned = true; // a manual choice; re-runs never override (§3.6)
     this.lastPickZ = candidateZ;
     this.lastPickZMin = zMin;

@@ -24,6 +24,7 @@ function pickCandidate(coupleId: string, candidate: RowCandidate): void {
   if (!couple || couple.selectedAudioKey === candidate.audioKey) return;
   couple.applyManualPick(candidate.audioKey, candidate.z, appModel.zMin);
   appModel.ingest.ensureSession(couple);
+  void appModel.reevaluateManualMatch(couple); // TODO-009: green only if this pair clears the classifier
   appModel.invalidate();
 }
 

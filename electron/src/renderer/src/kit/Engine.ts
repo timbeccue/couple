@@ -151,6 +151,16 @@ export class Engine {
     );
   }
 
+  /** Method-neutral evidence for ONE (video, audio) pair (`cpl_match_pair`, §14.2);
+   * the manual-pick confidence probe (TODO-009) reads only `classification`.
+   * PLUMBING ONLY — acceptance stays in core. null on a core fault or a null-payload
+   * miss (mirrors CoupleKit/Engine.swift `matchPair`). */
+  matchPair(video: TrackHandle, audio: TrackHandle, paramsJSON: string | null = null): PairEvidence | null {
+    const s = native.matchPair(this.ctx, video.id, audio.id, paramsJSON);
+    if (s === null) return null;
+    return s === 'null' ? null : (JSON.parse(s) as PairEvidence);
+  }
+
   /** Batch method-neutral evidence (display-only decoration; never re-decides rows). */
   matchCandidates(
     videos: bigint[],

@@ -165,9 +165,35 @@ export class AppModel extends Observable {
     const z = couple.candidates.find((c) => c.audioKey === droppedKey)?.z ?? 0;
     couple.applyManualPick(droppedKey, z, this.zMin);
     this.ingest.ensureSession(couple);
+    void this.reevaluateManualMatch(couple); // TODO-009: green only if this pair clears the classifier
     this.registerRepairUndo(couple, snapshot);
     this.saveQueue();
     this.invalidate();
+  }
+
+  /** TODO-009: (re)evaluate a MANUAL pick's match evidence and update its dot,
+   * reusing the SAME confident classifier the resolver uses — core's
+   * `PairEvidence.classification === 'match'` (`matchPair`), no re-derived threshold
+   * (invariant 8). The Electron shell runs the fingerprint-primary default, so the
+   * cell's classification is the whole answer (mirror of the fingerprint branch of
+   * Resolver.swift `manualPairIsConfident`). Run on a manual pick / re-pair and on a
+   * restore whose evidence wasn't persisted, so a questionable-looking manual pick
+   * that DOES match greens without a full re-sync. A core fault (null) is NOT
+   * confident — a manual pick never greens on absent evidence. Deferred a microtask
+   * so the pick paints (questionable) before the dot may flip (the Swift shell runs
+   * it off-main); no-op if the pair's handles are gone or the selection changed
+   * underneath it. */
+  async reevaluateManualMatch(couple: CoupleRow): Promise<void> {
+    const cam = couple.video.handle;
+    const key = couple.selectedAudioKey;
+    const audio = key ? (this.pool.entry(key)?.handle ?? null) : null;
+    if (!cam || !key || !audio) return;
+    await Promise.resolve(); // let the pick paint first (Swift shell runs this off-main)
+    const confident = this.engine.matchPair(cam, audio)?.classification === 'match';
+    if (couple.selectionProvenance !== 'manual' || couple.selectedAudioKey !== key) return;
+    couple.manualMatchConfident = confident;
+    couple.invalidate();
+    this.saveQueue();
   }
 
   // ---------- approve / rename (undoable, TODO-015) ----------
@@ -366,6 +392,9 @@ export class AppModel extends Observable {
       // Prefer the user's saved per-pair alignment; else sync this couple.
       if (!this.restoreCoupleAlignment(c) && c.pair.session) this.ingest.enqueueSync(c);
       if (sc.approved && c.pair.session && !c.approved) c.pair.setVerified(true);
+      // TODO-009: recompute a manual pick's evidence verdict only when it wasn't
+      // saved (a back-compat restore), reusing the SAME classifier as the pick path.
+      if (provenance === 'manual' && c.manualMatchConfident === null) void this.reevaluateManualMatch(c);
     }
     if (saved.export.destination) {
       this.exportDestination = saved.export.destination;
