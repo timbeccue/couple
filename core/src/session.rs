@@ -131,6 +131,20 @@ impl Session {
         }
     }
 
+    /// Cold-state lock, poison-TOLERANT (same pattern as track.rs fp_build_lock).
+    /// Justification: every critical section below performs only non-panicking
+    /// field moves / atomic stores (the sole allocations — vec![None; n] in
+    /// set_anchors and the clones in snapshot — happen while the data is still
+    /// parallel-consistent), so a poison mark can only come from a panic that the
+    /// FFI guard already reported; the data behind the lock is still valid, and
+    /// refusing it would turn one reported fault into a permanently dead session
+    /// (every later call panicking on the poisoned lock → abort at the ABI).
+    /// Parallel-array invariants are re-validated on every write path
+    /// (set_anchors/set_frames/set_state_json), so continuing is safe.
+    fn cold(&self) -> std::sync::MutexGuard<'_, ColdState> {
+        self.cold.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub fn offset_ms(&self) -> f64 {
         bits_to_f64(self.offset_ms_bits.load(Ordering::Acquire))
     }
@@ -186,7 +200,7 @@ impl Session {
 
     /// UX §1.5: None zeroes the live mapping but retains savedDriftPpm; Resample restores it.
     pub fn set_drift_mode(&self, mode: DriftMode) {
-        let mut cold = self.cold.lock().unwrap();
+        let mut cold = self.cold();
         match (self.drift_mode(), mode) {
             (DriftMode::Resample, DriftMode::None) => {
                 cold.saved_drift_ppm = self.drift_ppm();
@@ -205,15 +219,15 @@ impl Session {
     }
 
     pub fn set_verified(&self, v: bool) {
-        self.cold.lock().unwrap().verified = v;
+        self.cold().verified = v;
     }
 
     pub fn set_lock_zoom(&self, v: bool) {
-        self.cold.lock().unwrap().lock_zoom = v;
+        self.cold().lock_zoom = v;
     }
 
     pub fn set_loupe_layout(&self, layout: LoupeLayout) {
-        self.cold.lock().unwrap().loupe_layout_grid = layout == LoupeLayout::Grid;
+        self.cold().loupe_layout_grid = layout == LoupeLayout::Grid;
     }
 
     /// Invariants (§4.5): anchors ascending, at most 4; frames/measurements kept parallel.
@@ -222,7 +236,7 @@ impl Session {
         if frames.len() != anchors.len() {
             return Err(CoupleError::invalid("frames must parallel anchors"));
         }
-        let mut cold = self.cold.lock().unwrap();
+        let mut cold = self.cold();
         cold.per_anchor_measurements = vec![None; anchors.len()];
         cold.anchors = anchors;
         cold.frames = frames;
@@ -230,7 +244,7 @@ impl Session {
     }
 
     pub fn set_frames(&self, frames: Vec<Frame>) -> Result<()> {
-        let mut cold = self.cold.lock().unwrap();
+        let mut cold = self.cold();
         if frames.len() != cold.anchors.len() {
             return Err(CoupleError::invalid("frames must parallel anchors"));
         }
@@ -239,7 +253,7 @@ impl Session {
     }
 
     pub fn set_per_anchor_measurements(&self, m: Vec<Option<LocalMeasurement>>) -> Result<()> {
-        let mut cold = self.cold.lock().unwrap();
+        let mut cold = self.cold();
         if m.len() != cold.anchors.len() {
             return Err(CoupleError::invalid("measurements must parallel anchors"));
         }
@@ -248,11 +262,11 @@ impl Session {
     }
 
     pub fn set_drift_windows(&self, w: Vec<DriftWindowState>) {
-        self.cold.lock().unwrap().drift_windows = w;
+        self.cold().drift_windows = w;
     }
 
     pub fn snapshot(&self) -> AlignmentState {
-        let cold = self.cold.lock().unwrap();
+        let cold = self.cold();
         AlignmentState {
             version: 1,
             offset_ms: self.offset_ms(),
@@ -289,7 +303,7 @@ impl Session {
                 "frames/perAnchorMeasurements must parallel anchors",
             ));
         }
-        let mut cold = self.cold.lock().unwrap();
+        let mut cold = self.cold();
         self.offset_ms_bits.store(f64_to_bits(s.offset_ms), Ordering::Release);
         // driftMode "none" implies live drift 0 while savedDriftPpm retains the measurement.
         let live_ppm = match s.drift_mode {
@@ -321,7 +335,7 @@ impl Session {
         windows: Vec<DriftWindowState>,
         suggested: DriftMode,
     ) {
-        let mut cold = self.cold.lock().unwrap();
+        let mut cold = self.cold();
         self.offset_ms_bits.store(f64_to_bits(offset_ms), Ordering::Release);
         cold.saved_drift_ppm = drift_ppm;
         match suggested {
@@ -391,3 +405,30 @@ pub struct SessionFileTrack {
 }
 
 pub const SESSION_SCHEMA: &str = "couple-session/1";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // F2: `Session::cold()` is poison-TOLERANT — a panic that poisons the cold lock (already
+    // reported through the FFI guard) must not brick the session; reads and writes still work.
+    #[test]
+    fn cold_lock_poison_tolerated() {
+        let s = Session::new(1, 1, 2);
+        s.set_verified(true);
+        // Poison the lock from another thread by panicking while holding it.
+        let _ = std::thread::scope(|sc| {
+            sc.spawn(|| {
+                let _g = s.cold.lock().unwrap();
+                panic!("poison");
+            })
+            .join()
+        });
+        assert!(s.cold.is_poisoned(), "precondition: lock is poisoned");
+        assert!(s.snapshot().verified, "data survives poison");
+        s.set_verified(false);
+        assert!(!s.snapshot().verified, "writes still work");
+        let json = s.state_json();
+        assert!(s.set_state_json(&json).is_ok(), "round-trip on a poisoned session");
+    }
+}

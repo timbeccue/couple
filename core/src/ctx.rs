@@ -70,21 +70,27 @@ impl Ctx {
         let stream = Arc::new(crate::audition::AuditionStream::open(
             id, s, cam, ext, mode, t_start,
         ));
-        self.streams.write().unwrap().insert(id, stream);
+        // Poison-TOLERANT locks throughout Ctx (track/session/stream registries and the
+        // jobs Mutex): same rationale as Session::cold / track.rs fp_build_lock — a panic a
+        // caller already saw via the FFI guard's last-error must not turn every later Ctx
+        // call into a second panic (→ abort) on a poisoned global. The guarded data are
+        // owned HashMap entries whose critical sections are non-panicking inserts/removes/
+        // clones, so a poisoned lock's data is still valid.
+        self.streams.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id, stream);
         Ok(id)
     }
 
     pub fn audition_stream(&self, id: u64) -> Result<Arc<crate::audition::AuditionStream>> {
         self.streams
             .read()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&id)
             .cloned()
             .ok_or_else(|| CoupleError::invalid("unknown audition stream"))
     }
 
     pub fn audition_close(&self, id: u64) {
-        self.streams.write().unwrap().remove(&id);
+        self.streams.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&id);
     }
 
     pub fn cache_root(&self) -> &Path {
@@ -131,7 +137,7 @@ impl Ctx {
         let id = self.next_id();
         let mut prog = ProgressEmitter::new(job_id, progress);
         let data = import::import(&req, id, &mut prog, cancel)?;
-        self.tracks.write().unwrap().insert(id, Arc::new(data));
+        self.tracks.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id, Arc::new(data));
         Ok(id)
     }
 
@@ -157,7 +163,7 @@ impl Ctx {
             ctx.imports_inflight.fetch_sub(1, Ordering::SeqCst);
             r
         });
-        self.jobs.lock().unwrap().insert(
+        self.jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(
             job_id,
             JobEntry {
                 cancel,
@@ -168,7 +174,7 @@ impl Ctx {
     }
 
     pub fn job_cancel(&self, job: JobId) {
-        if let Some(e) = self.jobs.lock().unwrap().get(&job) {
+        if let Some(e) = self.jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&job) {
             e.cancel.cancel();
         }
     }
@@ -176,7 +182,7 @@ impl Ctx {
     /// Join a job; returns its result id (TrackId for imports). Removes the job entry.
     pub fn job_wait(&self, job: JobId) -> Result<u64> {
         let thread = {
-            let mut jobs = self.jobs.lock().unwrap();
+            let mut jobs = self.jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let e = jobs
                 .get_mut(&job)
                 .ok_or_else(|| CoupleError::invalid("unknown job"))?;
@@ -186,21 +192,21 @@ impl Ctx {
         let r = thread
             .join()
             .unwrap_or_else(|_| Err(CoupleError::internal("job thread panicked")));
-        self.jobs.lock().unwrap().remove(&job);
+        self.jobs.lock().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&job);
         r
     }
 
     pub fn track(&self, id: TrackId) -> Result<Arc<TrackData>> {
         self.tracks
             .read()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&id)
             .cloned()
             .ok_or_else(|| CoupleError::invalid(format!("unknown track {id}")))
     }
 
     pub fn track_free(&self, id: TrackId) {
-        self.tracks.write().unwrap().remove(&id);
+        self.tracks.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&id);
     }
 
     /// LRU cache GC with session pinning (SPEC-V2 §4, V2-F3). Mechanism: liveness via
@@ -210,7 +216,7 @@ impl Ctx {
         let pinned: std::collections::HashSet<String> = self
             .tracks
             .read()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .values()
             .map(|t| t.meta.content_key.clone())
             .collect();
@@ -757,21 +763,21 @@ impl Ctx {
         self.track(external)?;
         let id = self.next_id();
         let s = Arc::new(crate::session::Session::new(id, camera, external));
-        self.sessions.write().unwrap().insert(id, s);
+        self.sessions.write().unwrap_or_else(std::sync::PoisonError::into_inner).insert(id, s);
         Ok(id)
     }
 
     pub fn session(&self, id: SessionId) -> Result<Arc<crate::session::Session>> {
         self.sessions
             .read()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&id)
             .cloned()
             .ok_or_else(|| CoupleError::invalid(format!("unknown session {id}")))
     }
 
     pub fn session_free(&self, id: SessionId) {
-        self.sessions.write().unwrap().remove(&id);
+        self.sessions.write().unwrap_or_else(std::sync::PoisonError::into_inner).remove(&id);
     }
 
     /// §4.4 measure_local on a session. Synchronous, ≤ 5 ms budget; the caller (shell)

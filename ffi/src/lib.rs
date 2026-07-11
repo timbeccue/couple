@@ -8,6 +8,7 @@ use couple_core::{Ctx, CtxConfig};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr, CString};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -33,6 +34,13 @@ fn reg() -> &'static Mutex<Registry> {
     })
 }
 
+/// Registry lock, poison-TOLERANT: the map's critical sections are plain
+/// HashMap ops (structurally panic-safe), so a panic elsewhere must not turn
+/// every later FFI call into a second panic (→ abort) via a poisoned global.
+fn reg_lock() -> std::sync::MutexGuard<'static, Registry> {
+    reg().lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 thread_local! {
     static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
@@ -44,8 +52,71 @@ fn set_error(e: &couple_core::CoupleError) -> i32 {
     e.exit_code()
 }
 
+// ---------- panic guard (F2) ----------
+//
+// A panic must never unwind across the C ABI: since Rust 1.71 that aborts the
+// process, and it would take both shells down for any core unwrap/expect. Every
+// extern entry point below runs its body under `guarded_*`, which converts a
+// caught panic into the STANDARD thread-local last-error (§4.7
+// CoupleError::Internal, exit code 9) and returns the entry's error sentinel —
+// the exact error path shells already drain via cpl_take_error_json. The
+// default panic hook still prints location + backtrace to stderr BEFORE the
+// catch, so diagnostics are not lost; no custom hook is installed.
+//
+// Unwind safety: the closures capture raw caller pointers (Copy), Arc<Ctx>, and
+// the process-global registry. AssertUnwindSafe is sound here because (a) every
+// Mutex/RwLock this crate and core touch from FFI is poison-TOLERANT
+// (unwrap_or_else(PoisonError::into_inner) — see reg_lock(), Session::cold(),
+// ctx.rs registries; the guarded data are plain owned values whose critical
+// sections are non-panicking moves/inserts, so a poisoned lock's data is still
+// valid), and (b) caller out-buffers may be partially written on panic, but
+// every guarded fn returns its error sentinel, and the ABI contract already
+// says outputs are undefined on error. Panic-in-Drop-during-unwind still
+// aborts (pre-existing; core has no panicking Drops).
+
+/// Extract a human-readable message from a panic payload.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic payload".to_string())
+}
+
+/// Record a caught panic as the thread-local last-error; returns Internal's exit code (9).
+fn set_panic_error(payload: Box<dyn std::any::Any + Send>) -> i32 {
+    set_error(&couple_core::CoupleError::internal(format!(
+        "panic: {}",
+        panic_message(payload.as_ref())
+    )))
+}
+
+fn guarded_status(f: impl FnOnce() -> i32) -> i32 {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(set_panic_error)
+}
+
+fn guarded_ptr(f: impl FnOnce() -> *mut c_char) -> *mut c_char {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|p| {
+        set_panic_error(p);
+        std::ptr::null_mut()
+    })
+}
+
+fn guarded_id(f: impl FnOnce() -> u64) -> u64 {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|p| {
+        set_panic_error(p);
+        0
+    })
+}
+
+fn guarded_unit(f: impl FnOnce()) {
+    if let Err(p) = catch_unwind(AssertUnwindSafe(f)) {
+        set_panic_error(p);
+    }
+}
+
 fn ctx_of(handle: u64) -> Option<Arc<Ctx>> {
-    reg().lock().unwrap().ctxs.get(&handle).cloned()
+    reg_lock().ctxs.get(&handle).cloned()
 }
 
 fn invalid_handle() -> i32 {
@@ -73,20 +144,25 @@ pub extern "C" fn cpl_abi_version() -> u32 {
 /// Core version string; free with cpl_string_free.
 #[no_mangle]
 pub extern "C" fn cpl_version() -> *mut c_char {
+    guarded_ptr(|| {
     to_cstring(couple_core::version().to_string())
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cpl_string_free(s: *mut c_char) {
+    guarded_unit(|| {
     if !s.is_null() {
         drop(CString::from_raw(s));
     }
+    })
 }
 
 /// Create an engine context from a JSON config (`{"ffmpegPath", "ffprobePath",
 /// "cacheDir"}`, all optional; null/empty = defaults). Returns 0 on error.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_ctx_new(config_json: *const c_char) -> u64 {
+    guarded_id(|| {
     let config: CtxConfig = if config_json.is_null() {
         CtxConfig::default()
     } else {
@@ -99,26 +175,34 @@ pub unsafe extern "C" fn cpl_ctx_new(config_json: *const c_char) -> u64 {
         }
     };
     let ctx = Ctx::new(config);
-    let mut r = reg().lock().unwrap();
+    let mut r = reg_lock();
     let id = r.next;
     r.next += 1;
     r.ctxs.insert(id, ctx);
     id
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn cpl_ctx_free(ctx: u64) {
-    reg().lock().unwrap().ctxs.remove(&ctx);
+    guarded_unit(|| {
+    reg_lock().ctxs.remove(&ctx);
+    })
 }
 
 /// Thread-local last-error JSON (`{"error":{"kind","detail"},"message"}`); null if none.
 /// Free with cpl_string_free.
 #[no_mangle]
 pub extern "C" fn cpl_take_error_json(_ctx: u64) -> *mut c_char {
-    LAST_ERROR.with(|c| match c.borrow_mut().take() {
-        Some(s) => to_cstring(s),
-        None => std::ptr::null_mut(),
-    })
+    // Drain: on the (essentially impossible) panic, return null WITHOUT
+    // touching LAST_ERROR — shells fall back to "unknown core error".
+    catch_unwind(AssertUnwindSafe(|| {
+        LAST_ERROR.with(|c| match c.borrow_mut().take() {
+            Some(s) => to_cstring(s),
+            None => std::ptr::null_mut(),
+        })
+    }))
+    .unwrap_or(std::ptr::null_mut())
 }
 
 // ---------- jobs ----------
@@ -140,7 +224,7 @@ where
 {
     let job_id = ctx.next_id();
     let cancel = CancelToken::new();
-    reg().lock().unwrap().jobs.insert(job_id, cancel.clone());
+    reg_lock().jobs.insert(job_id, cancel.clone());
     let user = Arc::new(UserPtr(user));
     let progress_user = Arc::clone(&user);
     let progress: ProgressFn = Arc::new(move |p: &couple_core::Progress| {
@@ -150,7 +234,17 @@ where
         }
     });
     std::thread::spawn(move || {
-        let result = body(&ctx, progress, &cancel);
+        // A panic in the job body must surface as the terminal "error" callback —
+        // otherwise the worker dies silently, the shell's Job never settles, and the
+        // registry leaks the job (F2's async twin). Same AssertUnwindSafe reasoning
+        // as the entry-point guards.
+        let result = catch_unwind(AssertUnwindSafe(|| body(&ctx, progress, &cancel)))
+            .unwrap_or_else(|p| {
+                Err(couple_core::CoupleError::internal(format!(
+                    "panic: {}",
+                    panic_message(p.as_ref())
+                )))
+            });
         if let Some(cb) = cb {
             match result {
                 Ok(payload) => {
@@ -170,21 +264,25 @@ where
                 }
             }
         }
-        reg().lock().unwrap().jobs.remove(&job_id);
+        reg_lock().jobs.remove(&job_id);
     });
     job_id
 }
 
 #[no_mangle]
 pub extern "C" fn cpl_job_cancel(_ctx: u64, job: u64) {
-    if let Some(t) = reg().lock().unwrap().jobs.get(&job) {
+    guarded_unit(|| {
+    if let Some(t) = reg_lock().jobs.get(&job) {
         t.cancel();
     }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn cpl_job_free(_ctx: u64, job: u64) {
-    reg().lock().unwrap().jobs.remove(&job);
+    guarded_unit(|| {
+    reg_lock().jobs.remove(&job);
+    })
 }
 
 // ---------- media ----------
@@ -192,6 +290,7 @@ pub extern "C" fn cpl_job_free(_ctx: u64, job: u64) {
 /// Probe a file → MediaInfo JSON (§4.2 wire schema); null on error.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_probe_json(ctx: u64, path: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -207,6 +306,7 @@ pub unsafe extern "C" fn cpl_probe_json(ctx: u64, path: *const c_char) -> *mut c
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// Start an import job (§4.3). role: 0 = camera, 1 = external. Terminal "done"
@@ -219,6 +319,7 @@ pub unsafe extern "C" fn cpl_import_start(
     cb: CplProgressCb,
     user: *mut c_void,
 ) -> u64 {
+    guarded_id(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return 0;
@@ -237,11 +338,13 @@ pub unsafe extern "C" fn cpl_import_start(
         let track = ctx.track(id)?;
         Ok(serde_json::to_string(&track.meta).unwrap())
     })
+    })
 }
 
 /// TrackMeta JSON for a loaded track; null on error.
 #[no_mangle]
 pub extern "C" fn cpl_track_info_json(ctx: u64, track: u64) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -253,13 +356,16 @@ pub extern "C" fn cpl_track_info_json(ctx: u64, track: u64) -> *mut c_char {
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn cpl_track_free(ctx: u64, track: u64) {
+    guarded_unit(|| {
     if let Some(ctx) = ctx_of(ctx) {
         ctx.track_free(track);
     }
+    })
 }
 
 // ---------- reads (§4.3; caller-allocated buffers on the hot paths) ----------
@@ -279,6 +385,7 @@ pub unsafe extern "C" fn cpl_band(
     out_col_t0: *mut f64,
     out_col_dt: *mut f64,
 ) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     let t = match ctx.track(track) {
         Ok(t) => t,
@@ -301,6 +408,7 @@ pub unsafe extern "C" fn cpl_band(
         }
         Err(e) => set_error(&e),
     }
+    })
 }
 
 /// raw_window(): mono 48 kHz f32 into a caller buffer; frames written via out_frames.
@@ -314,6 +422,7 @@ pub unsafe extern "C" fn cpl_raw_window(
     out_capacity_frames: u32,
     out_frames: *mut u32,
 ) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     let t = match ctx.track(track) {
         Ok(t) => t,
@@ -329,11 +438,13 @@ pub unsafe extern "C" fn cpl_raw_window(
         }
         Err(e) => set_error(&e),
     }
+    })
 }
 
 /// rms() in dBFS over active bins in [t0, t1].
 #[no_mangle]
 pub unsafe extern "C" fn cpl_rms(ctx: u64, track: u64, t0: f64, t1: f64, out_dbfs: *mut f64) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     let t = match ctx.track(track) {
         Ok(t) => t,
@@ -346,11 +457,13 @@ pub unsafe extern "C" fn cpl_rms(ctx: u64, track: u64, t0: f64, t1: f64, out_dbf
         }
         Err(e) => set_error(&e),
     }
+    })
 }
 
 /// Ranked onsets in [t0, t1], JSON array of {t, score}; null on error.
 #[no_mangle]
 pub extern "C" fn cpl_onsets_json(ctx: u64, track: u64, t0: f64, t1: f64, limit: u32) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -365,11 +478,13 @@ pub extern "C" fn cpl_onsets_json(ctx: u64, track: u64, t0: f64, t1: f64, limit:
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// Best onset in [t0, t1] (zone proposal); JSON {t, score} or "null".
 #[no_mangle]
 pub extern "C" fn cpl_best_onset_in_json(ctx: u64, track: u64, t0: f64, t1: f64) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -381,11 +496,13 @@ pub extern "C" fn cpl_best_onset_in_json(ctx: u64, track: u64, t0: f64, t1: f64)
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// Best onset within ±half_span of t (snap); JSON {t, score} or "null".
 #[no_mangle]
 pub extern "C" fn cpl_best_onset_near_json(ctx: u64, track: u64, t: f64, half_span_s: f64) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -399,11 +516,13 @@ pub extern "C" fn cpl_best_onset_near_json(ctx: u64, track: u64, t: f64, half_sp
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// TrackStats JSON (§4.2); null on error.
 #[no_mangle]
 pub extern "C" fn cpl_track_stats_json(ctx: u64, track: u64) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -415,6 +534,7 @@ pub extern "C" fn cpl_track_stats_json(ctx: u64, track: u64) -> *mut c_char {
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 // ---------- session / state (§4.5) ----------
@@ -422,6 +542,7 @@ pub extern "C" fn cpl_track_stats_json(ctx: u64, track: u64) -> *mut c_char {
 /// Create a session over (camera, external) tracks. Returns 0 on error.
 #[no_mangle]
 pub extern "C" fn cpl_session_new(ctx: u64, camera: u64, external: u64) -> u64 {
+    guarded_id(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return 0;
@@ -433,18 +554,22 @@ pub extern "C" fn cpl_session_new(ctx: u64, camera: u64, external: u64) -> u64 {
             0
         }
     }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn cpl_session_free(ctx: u64, session: u64) {
+    guarded_unit(|| {
     if let Some(ctx) = ctx_of(ctx) {
         ctx.session_free(session);
     }
+    })
 }
 
 /// AlignmentState JSON (§4.5 wire schema); null on error.
 #[no_mangle]
 pub extern "C" fn cpl_state_json(ctx: u64, session: u64) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -456,10 +581,12 @@ pub extern "C" fn cpl_state_json(ctx: u64, session: u64) -> *mut c_char {
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn cpl_set_state_json(ctx: u64, session: u64, json: *const c_char) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     let s = match ctx.session(session) {
         Ok(s) => s,
@@ -472,11 +599,13 @@ pub unsafe extern "C" fn cpl_set_state_json(ctx: u64, session: u64, json: *const
         Ok(()) => 0,
         Err(e) => set_error(&e),
     }
+    })
 }
 
 /// Hot setter (gesture rate, lock-free).
 #[no_mangle]
 pub extern "C" fn cpl_set_offset_ms(ctx: u64, session: u64, v: f64) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     match ctx.session(session) {
         Ok(s) => {
@@ -485,11 +614,13 @@ pub extern "C" fn cpl_set_offset_ms(ctx: u64, session: u64, v: f64) -> i32 {
         }
         Err(e) => set_error(&e),
     }
+    })
 }
 
 /// Hot setter; a drift write while driftMode = none flips the mode to resample.
 #[no_mangle]
 pub extern "C" fn cpl_set_drift_ppm_live(ctx: u64, session: u64, v: f64) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     match ctx.session(session) {
         Ok(s) => {
@@ -498,11 +629,13 @@ pub extern "C" fn cpl_set_drift_ppm_live(ctx: u64, session: u64, v: f64) -> i32 
         }
         Err(e) => set_error(&e),
     }
+    })
 }
 
 /// Audition re-render point (UX §2.7); mapping itself is already live.
 #[no_mangle]
 pub extern "C" fn cpl_commit_drift(ctx: u64, session: u64) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     match ctx.session(session) {
         Ok(s) => {
@@ -511,11 +644,13 @@ pub extern "C" fn cpl_commit_drift(ctx: u64, session: u64) -> i32 {
         }
         Err(e) => set_error(&e),
     }
+    })
 }
 
 /// mode: 0 = resample, 1 = none (UX §1.5 semantics enforced in core).
 #[no_mangle]
 pub extern "C" fn cpl_set_drift_mode(ctx: u64, session: u64, mode: i32) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     match ctx.session(session) {
         Ok(s) => {
@@ -528,10 +663,12 @@ pub extern "C" fn cpl_set_drift_mode(ctx: u64, session: u64, mode: i32) -> i32 {
         }
         Err(e) => set_error(&e),
     }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn cpl_set_verified(ctx: u64, session: u64, verified: bool) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     match ctx.session(session) {
         Ok(s) => {
@@ -540,6 +677,7 @@ pub extern "C" fn cpl_set_verified(ctx: u64, session: u64, verified: bool) -> i3
         }
         Err(e) => set_error(&e),
     }
+    })
 }
 
 // ---------- sync (§4.4) ----------
@@ -555,6 +693,7 @@ pub unsafe extern "C" fn cpl_autosync_start(
     cb: CplProgressCb,
     user: *mut c_void,
 ) -> u64 {
+    guarded_id(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return 0;
@@ -573,6 +712,7 @@ pub unsafe extern "C" fn cpl_autosync_start(
     spawn_job(ctx, cb, user, move |ctx, progress, cancel| {
         let r = ctx.auto_sync_blocking(session, &params, None, progress, cancel, 0)?;
         Ok(serde_json::to_string(&r).unwrap())
+    })
     })
 }
 
@@ -593,6 +733,7 @@ pub unsafe extern "C" fn cpl_autosync_start_seeded(
     cb: CplProgressCb,
     user: *mut c_void,
 ) -> u64 {
+    guarded_id(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return 0;
@@ -616,6 +757,7 @@ pub unsafe extern "C" fn cpl_autosync_start_seeded(
         let r = ctx.auto_sync_blocking(session, &params, Some(seed), progress, cancel, 0)?;
         Ok(serde_json::to_string(&r).unwrap())
     })
+    })
 }
 
 /// measure_local (§4.4): JSON {lagMs, ncc} or "null"; null pointer on error.
@@ -628,6 +770,7 @@ pub extern "C" fn cpl_measure_local_json(
     center_ms: f64,
     span_ms: f64,
 ) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -639,11 +782,13 @@ pub extern "C" fn cpl_measure_local_json(
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// fit_ls over points_json `[[t_s, lag_ms], …]` → JSON {offMs, ppm, rmsMs} or "null".
 #[no_mangle]
 pub unsafe extern "C" fn cpl_fit_ls_json(points_json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     if points_json.is_null() {
         return std::ptr::null_mut();
     }
@@ -656,6 +801,7 @@ pub unsafe extern "C" fn cpl_fit_ls_json(points_json: *const c_char) -> *mut c_c
             }
         };
     to_cstring(serde_json::to_string(&couple_core::fit::fit_ls(&pts)).unwrap())
+    })
 }
 
 // ---------- audition (§4.8, Phase 6) ----------
@@ -664,6 +810,7 @@ pub unsafe extern "C" fn cpl_fit_ls_json(points_json: *const c_char) -> *mut c_c
 /// Returns the stream id, 0 on error.
 #[no_mangle]
 pub extern "C" fn cpl_audition_open(ctx: u64, session: u64, mode: i32, t_start: f64) -> u64 {
+    guarded_id(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return 0;
@@ -679,6 +826,7 @@ pub extern "C" fn cpl_audition_open(ctx: u64, session: u64, mode: i32, t_start: 
             0
         }
     }
+    })
 }
 
 /// Fill caller-allocated interleaved stereo f32 (48 kHz). Writes the frames
@@ -694,6 +842,7 @@ pub unsafe extern "C" fn cpl_audition_fill(
     out_frames: *mut u32,
     out_stream_t: *mut f64,
 ) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     let s = match ctx.audition_stream(stream) {
         Ok(s) => s,
@@ -709,10 +858,12 @@ pub unsafe extern "C" fn cpl_audition_fill(
         *out_stream_t = info.stream_t;
     }
     0
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn cpl_audition_seek(ctx: u64, stream: u64, t: f64) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     match ctx.audition_stream(stream) {
         Ok(s) => {
@@ -721,11 +872,13 @@ pub extern "C" fn cpl_audition_seek(ctx: u64, stream: u64, t: f64) -> i32 {
         }
         Err(e) => set_error(&e),
     }
+    })
 }
 
 /// mode: 0 = pan, 1 = overlay, 2 = null. Click-free (240-sample crossfade).
 #[no_mangle]
 pub extern "C" fn cpl_audition_set_mode(ctx: u64, stream: u64, mode: i32) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     match ctx.audition_stream(stream) {
         Ok(s) => {
@@ -734,12 +887,14 @@ pub extern "C" fn cpl_audition_set_mode(ctx: u64, stream: u64, mode: i32) -> i32
         }
         Err(e) => set_error(&e),
     }
+    })
 }
 
 /// Per-track monitor gains (1.0 = unity, 0.0 = mute), multiplied onto the
 /// loudness-matching gains. Click-free (240-sample crossfade).
 #[no_mangle]
 pub extern "C" fn cpl_audition_set_gains(ctx: u64, stream: u64, gain_cam: f32, gain_ext: f32) -> i32 {
+    guarded_status(|| {
     let Some(ctx) = ctx_of(ctx) else { return invalid_handle() };
     match ctx.audition_stream(stream) {
         Ok(s) => {
@@ -748,13 +903,16 @@ pub extern "C" fn cpl_audition_set_gains(ctx: u64, stream: u64, gain_cam: f32, g
         }
         Err(e) => set_error(&e),
     }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn cpl_audition_close(ctx: u64, stream: u64) {
+    guarded_unit(|| {
     if let Some(ctx) = ctx_of(ctx) {
         ctx.audition_close(stream);
     }
+    })
 }
 
 // ---------- export (§8, Phase 4) ----------
@@ -772,6 +930,7 @@ pub unsafe extern "C" fn cpl_export_start(
     cb: CplProgressCb,
     user: *mut c_void,
 ) -> u64 {
+    guarded_id(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return 0;
@@ -809,6 +968,7 @@ pub unsafe extern "C" fn cpl_export_start(
             cancel,
         )?;
         Ok(serde_json::to_string(&report).unwrap())
+    })
     })
 }
 
@@ -849,7 +1009,9 @@ unsafe fn pairing_params_or_error(params_json: *const c_char) -> Option<couple_c
 /// cpl_string_free.
 #[no_mangle]
 pub extern "C" fn cpl_pairing_params_default_json() -> *mut c_char {
+    guarded_ptr(|| {
     to_cstring(serde_json::to_string(&couple_core::PairingParams::default()).unwrap())
+    })
 }
 
 /// Role-agnostic stage-1 correlation between any two imported tracks (SPEC-V2 §3.2).
@@ -861,6 +1023,7 @@ pub extern "C" fn cpl_pairing_params_default_json() -> *mut c_char {
 /// (legacy z 8.5). Null on error; free with cpl_string_free.
 #[no_mangle]
 pub extern "C" fn cpl_pair_correlate(ctx: u64, track_a: u64, track_b: u64) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -872,6 +1035,7 @@ pub extern "C" fn cpl_pair_correlate(ctx: u64, track_a: u64, track_b: u64) -> *m
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// As `cpl_pair_correlate` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
@@ -883,6 +1047,7 @@ pub unsafe extern "C" fn cpl_pair_correlate_params(
     track_b: u64,
     params_json: *const c_char,
 ) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -897,6 +1062,7 @@ pub unsafe extern "C" fn cpl_pair_correlate_params(
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// FFI id-array → slice. A zero-length array yields `&[]` even when `ptr` is null;
@@ -921,6 +1087,7 @@ pub unsafe extern "C" fn cpl_pair_candidates(
     audios: *const u64,
     n_audios: usize,
 ) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -938,6 +1105,7 @@ pub unsafe extern "C" fn cpl_pair_candidates(
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// As `cpl_pair_candidates` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
@@ -951,6 +1119,7 @@ pub unsafe extern "C" fn cpl_pair_candidates_params(
     n_audios: usize,
     params_json: *const c_char,
 ) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -971,6 +1140,7 @@ pub unsafe extern "C" fn cpl_pair_candidates_params(
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// Method-neutral evidence for ONE candidate (video=`track_a`, audio=`track_b`) pair
@@ -992,6 +1162,7 @@ pub unsafe extern "C" fn cpl_match_pair(
     track_b: u64,
     pairing_params_json: *const c_char,
 ) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -1006,6 +1177,7 @@ pub unsafe extern "C" fn cpl_match_pair(
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// Batch method-neutral evidence (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.1): rows = `videos`,
@@ -1023,6 +1195,7 @@ pub unsafe extern "C" fn cpl_match_candidates(
     n_audios: usize,
     pairing_params_json: *const c_char,
 ) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -1043,6 +1216,7 @@ pub unsafe extern "C" fn cpl_match_candidates(
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// GRAPH-ADJUSTED batch evidence (PLAN-SPECTRAL-FINGERPRINT-MATCHING §13.4): same arguments and
@@ -1063,6 +1237,7 @@ pub unsafe extern "C" fn cpl_match_candidates_graph(
     n_audios: usize,
     pairing_params_json: *const c_char,
 ) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -1083,6 +1258,7 @@ pub unsafe extern "C" fn cpl_match_candidates_graph(
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// Start a GRAPH-ADJUSTED batch-matching JOB (incremental-matching boundary) — the asynchronous,
@@ -1113,6 +1289,7 @@ pub unsafe extern "C" fn cpl_match_candidates_graph_start(
     cb: CplProgressCb,
     user: *mut c_void,
 ) -> u64 {
+    guarded_id(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return 0;
@@ -1142,6 +1319,7 @@ pub unsafe extern "C" fn cpl_match_candidates_graph_start(
         let m = ctx.match_candidates_graph_prog(&vs, &aus, &params, &mut prog, cancel)?;
         Ok(serde_json::to_string(&m).unwrap())
     })
+    })
 }
 
 /// §13.4 audio-audio SIMULTANEITY predicate over affine evidence — the core-owned check the CLI and
@@ -1156,6 +1334,7 @@ pub unsafe extern "C" fn cpl_match_candidates_graph_start(
 /// ⇒ InvalidArgument. Additive — no ABI bump. Null on error; free with cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_triangle_closes(request_json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     use couple_core::match_graph::{triangle_closes, AffineMap, CycleResidual};
     use couple_core::MatchClassification;
     if request_json.is_null() {
@@ -1206,6 +1385,7 @@ pub unsafe extern "C" fn cpl_triangle_closes(request_json: *const c_char) -> *mu
         _ => 0.0,
     };
     to_cstring(serde_json::json!({"closes": closes, "residualMaxMs": residual_max_ms}).to_string())
+    })
 }
 
 /// Per-(video, audio) drift-fit RMS for contested candidate pairs (PLAN-RMS-TIEBREAKER
@@ -1215,6 +1395,7 @@ pub unsafe extern "C" fn cpl_triangle_closes(request_json: *const c_char) -> *mu
 /// Additive — no ABI bump. Null on error; free with cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_pair_fit_batch(ctx: u64, pairs_json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -1238,6 +1419,7 @@ pub unsafe extern "C" fn cpl_pair_fit_batch(ctx: u64, pairs_json: *const c_char)
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// As `cpl_pair_fit_batch` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
@@ -1248,6 +1430,7 @@ pub unsafe extern "C" fn cpl_pair_fit_batch_params(
     pairs_json: *const c_char,
     params_json: *const c_char,
 ) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -1274,6 +1457,7 @@ pub unsafe extern "C" fn cpl_pair_fit_batch_params(
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// Per-(video, audio) fine MATCH-verification for candidate pairs
@@ -1285,6 +1469,7 @@ pub unsafe extern "C" fn cpl_pair_fit_batch_params(
 /// (`cpl_abi_version` stays 1). Null on error; free with cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_verify_batch(ctx: u64, pairs_json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -1308,6 +1493,7 @@ pub unsafe extern "C" fn cpl_verify_batch(ctx: u64, pairs_json: *const c_char) -
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// As `cpl_verify_batch` but with a `PairingParams` JSON override (null/empty ⇒ defaults;
@@ -1319,6 +1505,7 @@ pub unsafe extern "C" fn cpl_verify_batch_params(
     pairs_json: *const c_char,
     params_json: *const c_char,
 ) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -1345,6 +1532,7 @@ pub unsafe extern "C" fn cpl_verify_batch_params(
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 // ---------- resolve (PLAN-CORE-SHELL-BOUNDARY §3.1, the core row resolver) ----------
@@ -1390,7 +1578,9 @@ unsafe fn resolve_params_or_error(
 /// The embedded `pairing` object is the same default `PairingParams`. Free with cpl_string_free.
 #[no_mangle]
 pub extern "C" fn cpl_resolve_params_default_json() -> *mut c_char {
+    guarded_ptr(|| {
     to_cstring(serde_json::to_string(&couple_core::resolve::ResolveParams::default()).unwrap())
+    })
 }
 
 /// Full §3.3 ROW RESOLUTION over imported tracks (PLAN-CORE-SHELL-BOUNDARY §3.1) — the single
@@ -1419,6 +1609,7 @@ pub unsafe extern "C" fn cpl_resolve(
     n_audios: usize,
     params_json: *const c_char,
 ) -> *mut c_char {
+    guarded_ptr(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return std::ptr::null_mut();
@@ -1439,6 +1630,7 @@ pub unsafe extern "C" fn cpl_resolve(
             std::ptr::null_mut()
         }
     }
+    })
 }
 
 /// Start a ROW-RESOLUTION JOB (PLAN-CORE-SHELL-BOUNDARY §3.1) — the asynchronous,
@@ -1471,6 +1663,7 @@ pub unsafe extern "C" fn cpl_resolve_start(
     cb: CplProgressCb,
     user: *mut c_void,
 ) -> u64 {
+    guarded_id(|| {
     let Some(ctx) = ctx_of(ctx) else {
         invalid_handle();
         return 0;
@@ -1500,6 +1693,7 @@ pub unsafe extern "C" fn cpl_resolve_start(
         let mut prog = ProgressEmitter::new(0, progress);
         let rows = ctx.resolve_prog(&vs, &aus, &params, &mut prog, cancel)?;
         Ok(serde_json::to_string(&rows).unwrap())
+    })
     })
 }
 
@@ -1555,11 +1749,13 @@ unsafe fn policy_request<T: serde::de::DeserializeOwned>(
 /// conservative `questionable`, never silently green). PURE (no ctx). Free with cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_policy_match_quality(json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     use couple_core::policy::match_quality::{decide, Request};
     match policy_request::<Request>(json) {
         Ok(req) => policy_ok(&decide(&req)),
         Err(envelope) => envelope,
     }
+    })
 }
 
 /// PURE manual drag-to-pair decision (TODO-013 / PLAN §3.2) — what dropping an audio file onto the
@@ -1572,11 +1768,13 @@ pub unsafe extern "C" fn cpl_policy_match_quality(json: *const c_char) -> *mut c
 /// conservative `reject`, which mutates NO state). PURE (no ctx). Free with cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_policy_repair_drop(json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     use couple_core::policy::repair_drop::{decide, Request};
     match policy_request::<Request>(json) {
         Ok(req) => policy_ok(&decide(&req)),
         Err(envelope) => envelope,
     }
+    })
 }
 
 /// PURE forced-verdict decision (TODO-009/-013, SPEC-V2 §3.6) — whether a KEPT manual pairing is
@@ -1589,11 +1787,13 @@ pub unsafe extern "C" fn cpl_policy_repair_drop(json: *const c_char) -> *mut c_c
 /// `cpl_abi_version` stays 1. PURE (no ctx). Free with cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_policy_repair_forced(json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     use couple_core::policy::repair_drop::{forced, ForcedRequest};
     match policy_request::<ForcedRequest>(json) {
         Ok(req) => policy_ok(&forced(&req)),
         Err(envelope) => envelope,
     }
+    })
 }
 
 /// PURE re-resolution merge decision (TODO-007 / PLAN §3.2) — how to fold a fresh `ResolvedRow`
@@ -1607,11 +1807,13 @@ pub unsafe extern "C" fn cpl_policy_repair_forced(json: *const c_char) -> *mut c
 /// cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_policy_row_merge(json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     use couple_core::policy::row_merge::{plan, Request};
     match policy_request::<Request>(json) {
         Ok(req) => policy_ok(&plan(&req)),
         Err(envelope) => envelope,
     }
+    })
 }
 
 /// PURE media-removal / clear-session decision (TODO-001 / PLAN §3.2) — whether a removal needs a
@@ -1627,11 +1829,13 @@ pub unsafe extern "C" fn cpl_policy_row_merge(json: *const c_char) -> *mut c_cha
 /// zero counts — so a failure removes nothing). PURE (no ctx). Free with cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_policy_media_removal(json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     use couple_core::policy::media_removal::{dispatch, Request};
     match policy_request::<Request>(json) {
         Ok(req) => policy_ok(&dispatch(&req)),
         Err(envelope) => envelope,
     }
+    })
 }
 
 /// PURE automatic anchor proposal / "+ anchor" decision (TODO-011 / PLAN §3.2) — overlap-bounded
@@ -1648,11 +1852,13 @@ pub unsafe extern "C" fn cpl_policy_media_removal(json: *const c_char) -> *mut c
 /// (no ctx). Free with cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_policy_anchor_propose(json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     use couple_core::policy::anchor::{dispatch, Request};
     match policy_request::<Request>(json) {
         Ok(req) => policy_ok(&dispatch(&req)),
         Err(envelope) => envelope,
     }
+    })
 }
 
 /// PURE shadow-telemetry projection (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.2 / PLAN §3.2) — orders
@@ -1667,11 +1873,13 @@ pub unsafe extern "C" fn cpl_policy_anchor_propose(json: *const c_char) -> *mut 
 /// ctx). Free with cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_policy_shadow_rows(json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     use couple_core::policy::shadow::{project, Request};
     match policy_request::<Request>(json) {
         Ok(req) => policy_ok(&project(&req)),
         Err(envelope) => envelope,
     }
+    })
 }
 
 /// PURE activity-strip decision (TODO-005 / PLAN §3.2 / Phase F) — the single honest summary line the
@@ -1689,11 +1897,13 @@ pub unsafe extern "C" fn cpl_policy_shadow_rows(json: *const c_char) -> *mut c_c
 /// cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_policy_activity(json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     use couple_core::policy::activity::{decide, Request};
     match policy_request::<Request>(json) {
         Ok(req) => policy_ok(&decide(&req)),
         Err(envelope) => envelope,
     }
+    })
 }
 
 /// Auto-sync seed selection (PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3; `policy::sync_seed`).
@@ -1705,11 +1915,13 @@ pub unsafe extern "C" fn cpl_policy_activity(json: *const c_char) -> *mut c_char
 /// fallback is the unseeded sync). PURE (no ctx). Free with cpl_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn cpl_policy_sync_seed(json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
     use couple_core::policy::sync_seed::{dispatch, Request};
     match policy_request::<Request>(json) {
         Ok(req) => policy_ok(&dispatch(&req)),
         Err(envelope) => envelope,
     }
+    })
 }
 
 // ---------- cache ----------
@@ -1717,6 +1929,7 @@ pub unsafe extern "C" fn cpl_policy_sync_seed(json: *const c_char) -> *mut c_cha
 /// LRU-GC the cache down to max_bytes; returns bytes freed.
 #[no_mangle]
 pub extern "C" fn cpl_cache_gc(ctx: u64, max_bytes: u64) -> u64 {
+    guarded_id(|| {
     match ctx_of(ctx) {
         Some(ctx) => ctx.cache_gc(max_bytes),
         None => {
@@ -1724,6 +1937,7 @@ pub extern "C" fn cpl_cache_gc(ctx: u64, max_bytes: u64) -> u64 {
             0
         }
     }
+    })
 }
 
 #[cfg(test)]
@@ -1739,6 +1953,105 @@ mod tests {
         let s = unsafe { CStr::from_ptr(p).to_string_lossy().into_owned() };
         unsafe { cpl_string_free(p) };
         Some(s)
+    }
+
+    // F2: a panic caught by a guard becomes the STANDARD Internal last-error (exit 9 /
+    // null / 0), drainable via cpl_take_error_json, and the engine keeps working after.
+    #[test]
+    fn panic_guard_maps_panic_to_internal_error_and_engine_survives() {
+        // status guard: 9, and the drained error is Internal with the panic message.
+        assert_eq!(guarded_status(|| panic!("boom-{}", 42)), 9);
+        let e = take(cpl_take_error_json(0)).expect("last error set");
+        assert!(e.contains("Internal"), "kind: {e}");
+        assert!(e.contains("boom-42"), "message: {e}");
+        // Drained exactly once.
+        assert!(take(cpl_take_error_json(0)).is_none(), "second drain must be empty");
+
+        // ptr guard: null + error set.
+        assert!(guarded_ptr(|| panic!("ptr-panic")).is_null());
+        assert!(take(cpl_take_error_json(0)).unwrap().contains("ptr-panic"));
+
+        // id guard: 0 + error set.
+        assert_eq!(guarded_id(|| panic!("id-panic")), 0);
+        assert!(take(cpl_take_error_json(0)).unwrap().contains("id-panic"));
+
+        // Non-string payload still yields a clean Internal error.
+        assert_eq!(guarded_status(|| std::panic::panic_any(7u32)), 9);
+        assert!(take(cpl_take_error_json(0))
+            .unwrap()
+            .contains("unknown panic payload"));
+
+        // A subsequent REAL FFI call succeeds — the guards did not corrupt engine state.
+        let ctx = unsafe { cpl_ctx_new(std::ptr::null()) };
+        assert_ne!(ctx, 0, "ctx must be created after guarded panics");
+        let rows = take(unsafe {
+            cpl_resolve(ctx, std::ptr::null(), 0, std::ptr::null(), 0, std::ptr::null())
+        })
+        .expect("resolve returns JSON");
+        assert_eq!(rows, "[]", "empty resolve is an empty array");
+        cpl_ctx_free(ctx);
+    }
+
+    // F2 async twin: a panic in a job body is delivered as the terminal "error" callback
+    // (Internal + panic message), and the job is removed from the FFI registry afterward.
+    #[test]
+    fn job_body_panic_delivers_error_terminal_and_frees_job() {
+        use std::sync::mpsc;
+
+        struct Sink(mpsc::Sender<(String, Option<String>)>);
+        extern "C" fn cb(
+            _job: u64,
+            phase: *const c_char,
+            _fraction: f64,
+            payload: *const c_char,
+            user: *mut c_void,
+        ) {
+            let sink = unsafe { &*(user as *const Sink) };
+            let phase = unsafe { CStr::from_ptr(phase) }.to_string_lossy().into_owned();
+            let payload = if payload.is_null() {
+                None
+            } else {
+                Some(unsafe { CStr::from_ptr(payload) }.to_string_lossy().into_owned())
+            };
+            match phase.as_str() {
+                "done" | "error" | "cancelled" => {
+                    let _ = sink.0.send((phase, payload));
+                }
+                _ => {} // progress; ignore
+            }
+        }
+
+        let handle = unsafe { cpl_ctx_new(std::ptr::null()) };
+        assert_ne!(handle, 0);
+        let ctx = ctx_of(handle).expect("ctx handle");
+
+        let (tx, rx) = mpsc::channel();
+        let sink = Box::new(Sink(tx));
+        let user = Box::into_raw(sink) as *mut c_void;
+        let job = spawn_job(ctx, Some(cb), user, |_ctx, _prog, _cancel| {
+            panic!("job boom")
+        });
+        assert_ne!(job, 0);
+
+        let (phase, payload) = rx.recv().expect("terminal callback");
+        assert_eq!(phase, "error", "job panic must be a terminal error");
+        let payload = payload.expect("error payload");
+        assert!(payload.contains("Internal"), "kind: {payload}");
+        assert!(payload.contains("job boom"), "message: {payload}");
+
+        // The registry removal runs after the callback returns — poll briefly.
+        let mut freed = false;
+        for _ in 0..50 {
+            if !reg_lock().jobs.contains_key(&job) {
+                freed = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(freed, "panicking job must be removed from the registry");
+
+        drop(unsafe { Box::from_raw(user as *mut Sink) });
+        cpl_ctx_free(handle);
     }
 
     #[test]

@@ -790,3 +790,37 @@ F6 finding, docs only — no code, no engine/policy change, no SPEC-CHANGE
   "hidden or inert window" clause. TODO.md and CLAUDE.md unaffected (no
   flag/command/layout/doc-role change; TODO-014's status line is already
   accurate).
+
+## 2026-07-11 — FFI panic guard: a core panic is an error, not a process abort (F2)
+
+Every `pub extern "C"` entry in ffi/src/lib.rs (65 of 66; `cpl_abi_version` is a
+constant) now runs under a `catch_unwind` guard that converts a panic into the
+EXISTING thread-local last-error as `CoupleError::Internal { "panic: …" }`
+(exit code 9) and returns the entry's error sentinel (null / 0 / status 9) —
+previously any core unwrap reached through the ABI aborted both shells
+(Rust ≥1.71 aborts on unwind-across-extern). Job bodies (`spawn_job`) get the
+same guard: a panicking job now delivers the terminal "error" callback and is
+removed from the registry instead of hanging the shell's Job forever. Locks a
+panic could poison are now poison-tolerant (`unwrap_or_else(PoisonError::
+into_inner)`, the existing track.rs fp_build_lock pattern): the FFI registry,
+`Session::cold` (11 sites, + a poison test), and the ctx.rs
+track/session/stream/job registries — one reported fault no longer cascades
+into every later session call aborting. Guard is once per FFI entry, never
+per-iteration: §9.6 budgets for `cpl_band`/`cpl_audition_fill` unaffected
+(zero-cost non-panic path, allocation-free fill preserved). No SPEC-CHANGE:
+§4.7 already defines `Internal` and the status+`cpl_take_error_json`
+convention; `couple.h` is byte-identical (no new symbols, ABI stays 1). Both
+shells are covered by the in-ffi guard (couple-node calls `cpl_*` directly;
+napi does not guard by default). CLI is unchanged by design — it links core
+directly and a batch-tool panic should stay a loud exit.
+- Gates: `cargo test --release --workspace` all green (new: ffi
+  `panic_guard_maps_panic_to_internal_error_and_engine_survives` + ffi
+  `job_body_panic_delivers_error_terminal_and_frees_job` + core
+  `session::tests::cold_lock_poison_tolerated`; ffi lib suite 20 passed);
+  `couple.h` diff clean (exit 0); mac `swift build -c release` (ship +
+  `-DCOUPLE_DEVHARNESS`) both Build complete, `swift test` 116 passed /
+  0 failures; electron `build:native` + `typecheck` clean, `smoke` 12/12,
+  `parity` 5/5. (Environment note, not this change: the freshly built
+  `couple-node.darwin-arm64.node` was initially SIGKILLed at `require()` with
+  "Code Signature Invalid" — stale kernel signature cache on the new artifact;
+  `codesign -s - -f` on the .node fixed it and both harnesses then passed.)
