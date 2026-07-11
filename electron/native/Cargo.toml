@@ -1,0 +1,24 @@
+[package]
+name = "couple-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The binding consumes couple-ffi's `pub extern "C" cpl_*` surface as a normal
+# Rust dependency (PLAN-CORE-SHELL-BOUNDARY §4-G: "port Engine/Wire to the target
+# language — thin FFI binding"). No couple-core dependency: the C ABI is the only
+# contact surface, same as the Swift shell.
+couple-ffi = { path = "../../ffi" }
+napi = { version = "2", default-features = false, features = ["napi8"] }
+napi-derive = "2"
+# The audition audio-output platform layer (PLAN-CORE-SHELL-BOUNDARY §4-G:
+# "pull frames → device" — CoreAudio/WASAPI/ALSA via one crate). DSP stays in
+# core behind cpl_audition_fill; this only pumps frames to the device.
+cpal = "0.15"
+
+[build-dependencies]
+napi-build = "2"

@@ -6,7 +6,11 @@ license.workspace = true
 
 [lib]
 name = "couple"
-crate-type = ["staticlib"]
+# staticlib: the C-ABI archive the Swift shell links (SPEC §4.9).
+# rlib: lets the Electron shell's napi binding (electron/native) call the same
+# `pub extern "C" cpl_*` surface as a type-checked Rust dependency instead of
+# re-declaring the header — same contract, no duplicate declarations.
+crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 couple-core = { path = "../core" }

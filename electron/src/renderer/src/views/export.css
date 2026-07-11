@@ -1,0 +1,183 @@
+/* export.css — right-rail batch export (§V2.8): destination picker, format
+ * selector, per-row editable filenames + status. Scoped to .export-rail so it
+ * never bleeds into the shared shell styles (styles.css). */
+
+.export-rail .dest-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  overflow: hidden;
+}
+
+.export-rail .dest-button .dest-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.export-rail .dest-button.unset {
+  color: var(--text-dim);
+}
+
+/* Segmented Auto/MOV/MP4/WAV selector. */
+.export-rail .format-seg {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.export-rail .format-seg button {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  border-left: 1px solid var(--border);
+  padding: 4px 0;
+  font-size: 11px;
+  background: var(--bg-raised);
+}
+
+.export-rail .format-seg button:first-child {
+  border-left: none;
+}
+
+.export-rail .format-seg button.on {
+  background: var(--accent);
+  color: #fff;
+}
+
+.export-rail .keep-audio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 6px;
+  cursor: default;
+}
+
+.export-rail .keep-audio.disabled {
+  opacity: 0.4;
+}
+
+.export-rail .export-run {
+  width: 100%;
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+.export-rail .export-progress {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.export-rail .export-progress .bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.export-rail .export-progress .bar > span {
+  display: block;
+  height: 100%;
+  background: var(--good);
+  transition: width 0.15s linear;
+}
+
+/* Per-couple export rows. */
+.export-rail .export-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.export-rail .export-row {
+  padding: 5px 6px;
+  border-radius: 5px;
+  background: var(--bg-raised);
+}
+
+.export-rail .export-row.selected {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.export-rail .export-row .row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.export-rail .status-dot {
+  flex: 0 0 12px;
+  font-size: 10px;
+  text-align: center;
+}
+
+.export-rail .status-dot.done {
+  color: var(--good);
+}
+
+.export-rail .status-dot.failed {
+  color: var(--danger);
+}
+
+.export-rail .status-dot .mini-spin {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  font-size: 8px;
+  color: var(--accent);
+}
+
+.export-rail .filename {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+}
+
+.export-rail .filename .stem {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.export-rail .filename .ext {
+  color: var(--text-dim);
+}
+
+.export-rail .filename input {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text);
+  background: var(--bg-hover);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0 2px;
+  min-width: 40px;
+}
+
+.export-rail .filename .reset {
+  margin-left: 5px;
+  padding: 0 4px;
+  font-size: 9px;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+}
+
+.export-rail .row-error {
+  margin-top: 3px;
+  padding-left: 18px;
+  font-size: 9px;
+  color: var(--danger);
+  line-height: 1.3;
+}

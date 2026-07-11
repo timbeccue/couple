@@ -1,0 +1,28 @@
+# electron-builder config (M7). The napi binding must stay OUTSIDE the asar
+# (native modules can't load from it); ffmpeg bundling is optional — drop
+# static builds into resources/ffmpeg/<darwin|win32|linux>/ to include them
+# (LGPL builds only; see the plan's licensing note).
+appId: com.timbeccue.couple
+productName: Couple
+directories:
+  output: dist
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: native
+    to: native
+    filter: ['index.cjs', '*.node']
+  - from: resources/ffmpeg/${platform}
+    to: ffmpeg
+mac:
+  target: dmg
+  category: public.app-category.video
+win:
+  target: nsis
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Video
+npmRebuild: false

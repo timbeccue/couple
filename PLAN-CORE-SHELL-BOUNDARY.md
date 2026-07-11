@@ -1,7 +1,13 @@
 # PLAN — Core / Shell Boundary Refactor (cross-platform)
 
-Status: PROPOSED · Owner: Tim · Target: a single Rust core that is the sole authority for
-all decision logic, with thin per-platform shells (macOS today; Windows + Linux next).
+Status: SHIPPED Phases A–F (on main as of 2026-07-01) · Phase G STARTED 2026-07-04 —
+the first cross-platform shell (Electron, `electron/`) is in progress: the thin FFI
+binding (`electron/native`, napi over couple-ffi), the §9 parity gate
+(`electron/scripts/parity.mjs`, wired into CI on macOS/Windows/Linux), the audio pump
+(cpal pulling `cpl_audition_fill`), and the core workflow UI are built; see PROGRESS.md
+2026-07-04. Core-side diff for the whole shell: 2 manifest lines (rlib crate-type +
+workspace member) — the §0 promise held. · Owner: Tim · Target: a single Rust core that
+is the sole authority for all decision logic, with thin per-platform shells.
 
 ## 0. Goal & motivation
 

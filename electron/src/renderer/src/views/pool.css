@@ -1,0 +1,293 @@
+/* pool.css — media-pool rail styling (QueueRail.swift MediaPoolSection port): the
+   couples scroll region + the bottom-pinned pool box with a fixed header, a bounded
+   inner list, and a sticky preview player. Semantic colors are the fixed SPEC §13.3
+   hues (camera teal / external amber), applied inline from the row's role. */
+
+/* The rail splits into a greedy couples scroll region and a bottom-pinned pool box,
+   so the sticky player stays put while either list scrolls independently. Neutralize
+   the base rail's own scroll — the two inner regions own their overflow. */
+.queue-rail {
+  overflow: hidden;
+}
+
+.rail-couples {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+/* Empty workflow sections stay visible but dimmed, with a dash placeholder. */
+.section-dash {
+  padding: 2px 12px 4px;
+  font-size: 11px;
+  color: var(--none);
+}
+
+/* ---------- pool box ---------- */
+
+.pool-box {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.pool-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.pool-chevron {
+  width: 10px;
+  font-size: 9px;
+}
+
+.pool-spacer {
+  flex: 1;
+}
+
+.pool-trash {
+  border: none;
+  background: none;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.pool-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* ---------- pool row ---------- */
+
+.pool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: default;
+  box-shadow: inset 0 0 0 1px transparent;
+}
+
+.pool-row:hover {
+  background: var(--bg-hover);
+}
+
+/* Finder-style multi-select: selected rows tint; the PRIMARY (the entry the player
+   follows) reads a touch stronger with an accent outline. */
+.pool-row.selected {
+  background: rgba(74, 158, 218, 0.1);
+}
+
+.pool-row.primary {
+  background: rgba(74, 158, 218, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(74, 158, 218, 0.55);
+}
+
+.pool-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.pool-thumb {
+  width: 28px;
+  height: 16px;
+  flex: none;
+  object-fit: cover;
+  border-radius: 3px;
+  background: #0f1113;
+}
+
+.pool-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pool-row-name {
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pool-row-sub {
+  font-size: 9px;
+  font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--none);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- sticky preview player ---------- */
+
+.sticky-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.sticky-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--none);
+  font-size: 10px;
+}
+
+.sticky-play-glyph {
+  font-size: 10px;
+}
+
+.play-btn {
+  flex: none;
+  width: 24px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.play-btn.playing {
+  color: var(--external);
+}
+
+.seek-time {
+  flex: none;
+  width: 30px;
+  font-size: 8px;
+  font-family: ui-monospace, monospace;
+  color: var(--none);
+}
+
+.seek-time.right {
+  text-align: right;
+}
+
+.seek-strip {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  display: block;
+  cursor: pointer;
+}
+
+/* ---------- info popover ---------- */
+
+.info-wrap {
+  position: relative;
+  flex: none;
+}
+
+.info-btn {
+  width: 20px;
+  height: 18px;
+  border: none;
+  background: none;
+  color: var(--none);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.info-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.meta-popover {
+  position: absolute;
+  right: 0;
+  bottom: 26px;
+  z-index: 50;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.meta-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.meta-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.meta-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.meta-label {
+  flex: none;
+  width: 78px;
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--none);
+}
+
+.meta-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 9px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-dim);
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.meta-divider {
+  height: 1px;
+  background: var(--border);
+}

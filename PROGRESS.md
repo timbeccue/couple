@@ -443,3 +443,144 @@ Gates: cargo test --release -p couple-core --test sync_drift (10, incl. new)
 green; swift build both variants + swift test (116) green; full workspace suite
 re-run green.
 
+## 2026-07-04 — Phase G started: Electron shell over the same core (experiment)
+
+Built the first cross-platform shell (`electron/`) as the PLAN-CORE-SHELL-BOUNDARY
+§4-G exercise: verify a new shell needs ONLY an FFI binding + UI + pool I/O + an
+audio callback, with zero resolution/policy logic. Core-side diff for the entire
+shell: 2 manifest lines (`ffi` gains crate-type rlib; workspace member added) —
+no core code changed.
+
+- **Binding** (`electron/native`, crate `couple-node`): napi cdylib consuming
+  couple-ffi's `pub extern "C" cpl_*` surface as a typed Rust dep (no header
+  re-parse). One JS export per symbol; BigInt handles; zero-copy TypedArray
+  fills for band/rawWindow/auditionFill; ThreadsafeFunction trampoline for job
+  progress (worker thread → JS). Same `.node` runs in plain Node and Electron
+  (N-API ABI stability; no electron-rebuild).
+- **Parity gate (§9)** (`electron/scripts/parity.mjs`): the golden-pair-rows
+  scenarios (continuous / simultaneous / restart-legacy / ambiguous-legacy /
+  overflow-legacy) resolved via the kit's `resolveStart` vs `couple pair
+  --json`, compared on the machine-stable decision projection — **identical on
+  all 5**. Wired into CI as a 3-OS matrix job (macos/windows/ubuntu) along with
+  the media-free binding smoke test.
+- **Audio** (Phase G's "pull frames → device"): cpal output pump inside
+  couple-node pulling `cpl_audition_fill` on the device callback thread — no JS
+  in the audio path. Verified: clock advances in real time, 0 underruns.
+  Muted `<video>` slaved to the audition clock by playbackRate micro-slew
+  (±5%, hard-seek >250 ms); measured A/V skew with H.264 media ≈ −15 ms mean
+  (< 1 frame @30 fps; spread is `video.currentTime` frame quantization).
+- **Shell** (React/TS, engine in the renderer for synchronous hot calls):
+  kit/ mirrors CoupleKit file-for-file (Engine/Wire/Job/Track/Session/Audition/
+  Policies — all 9 policy wrappers + triangleCloses with couple.h's documented
+  conservative fallbacks); app/ ports MediaPool/CoupleRow/PairSession/
+  IngestController (unified ingest bar, serialized per-couple sync queue,
+  row-merge via `cpl_policy_row_merge`, seeding via `cpl_policy_sync_seed`);
+  views: 3-column layout, queue sections + evidence verdict dots, resolve
+  banner with candidate re-pick, dual-lane Canvas waveform stage (band() with
+  reused buffers, offscreen caching) + drift sparkline, batch export rail
+  (Auto/MOV/MP4/WAV, per-row stems, disk preflight, serial continue-past-
+  failure — verified: 3 fixture exports, valid containers per ffprobe).
+- **Packaging/CI**: electron-builder (dmg/nsis/AppImage+deb; .node outside
+  asar; bundled ffmpeg optional per-platform under resources/ffmpeg/), local
+  unsigned dmg build verified; `electron` CI job runs smoke + parity +
+  typecheck + build + package on all 3 OSes.
+- **Editing interactions**: drag on the external lane = live offset
+  (`cpl_set_offset_ms` hot setter), shift-drag = pivot drift (live ppm +
+  `cpl_commit_drift` on release), stage keys (arrow/bracket nudge families,
+  esc restores drag-start alignment), j/k/v/space keymap; verified end-to-end
+  (a +500 ms nudge read back from `cpl_state_json` exactly). Manual re-pair:
+  candidate re-pick + pool-audio drag onto a row, both through
+  `cpl_policy_repair_drop` / `cpl_policy_repair_forced` (re-checked when the
+  sync settles) — no shell-side thresholds.
+- Dev-harness env family (Electron twin of DebugDrive): COUPLE_OPEN_DIR,
+  COUPLE_SHOT_PATH/COUPLE_SHOT_DELAY_MS, COUPLE_AUTOQUIT_MS, COUPLE_HUD,
+  COUPLE_PLAY_TEST, COUPLE_EXPORT_TEST.
+- Deferred (scope: core workflow first, per owner): queue/session persistence
+  (couple-queue/1 / couple-session/1 in userData), undo, restore toast,
+  activity-strip composition via cpl_policy_activity (simple honest strip for
+  now), loupes, pool preview player, media removal UI, screenshot-test
+  scripting. Known warts: sync ffprobe on the drop path can jank the renderer
+  (async probe binding is the fix); fixture mpeg4 video doesn't decode in
+  Chromium (H.264 real media does); Swift shell unchanged and green.
+
+Gates: parity 5/5 identical; binding smoke green; cargo workspace untouched
+except 2 manifest lines; swift build (release) green post-change; tsc clean;
+electron-vite build green; unsigned dmg packaged.
+
+## 2026-07-04 (later) — Electron shell: full product-parity round
+
+Owner call after the first demo: bring the Electron shell to FULL feature parity
+for an honest shell-vs-shell comparison (supersedes the same-day "deferred"
+list above — those items are now built). Also fixed real drag-drop (Electron
+32+ removed `File.path`; now `webUtils.getPathForFile`) and added a native
+"Choose/Add files…" picker fallback.
+
+- **Anchors + loupes + sync tools**: anchor state on PairSession with proposal/
+  add via `cpl_policy_anchor_propose` and onset snap via
+  `cpl_best_onset_near_json`; draggable pins, loupe windows (additive blend,
+  local-Δ readouts, ⇥ align, pivot-about-anchor), lock-zoom + side-by-side/
+  stacked layouts; sync-tools bar (offset/drift nudges + readouts, drift-mode
+  toggle, monitor Pan/Overlay/Null, per-track monitor gains); VideoHero
+  transport (play/timecode/anchor jumps/fullscreen). Verified: 4 anchors all
+  inside overlap, loupes/tools render in headless shots.
+- **Persistence + undo + activity strip**: `couple-queue/1` + `couple-session/1`
+  ports writing the mac formats under userData/Couple/; autosave on the mac
+  app's triggers; launch restore toast → `suppressAutoSync` path (verified:
+  relaunch restored 3 couples, offsets byte-equal, 0 re-syncs); ⌘Z/⇧⌘Z undo
+  stack (approve/re-pair/rename); ⌘⌫ clear-session with
+  `cpl_policy_media_removal` clearCounts in the confirm copy; activity strip
+  now composed by `cpl_policy_activity` (shell holds clocks/debounce, formats
+  strings — Phase F contract).
+- **Media pool parity**: Finder multiselect (PoolSelection port), sticky bottom
+  preview player w/ waveform seek strip, video thumbnails (canvas frame grab;
+  glyph fallback), metadata popover (MediaMetaCard projection, never re-probes),
+  TODO-001 removal via `cpl_policy_media_removal` plan + confirmation +
+  correct teardown ordering (verified: removal → re-resolve re-paired the
+  survivor). Usage lines ("used by/alternate for N couples").
+- Harness env grew: COUPLE_USER_DATA + COUPLE_{PERSIST,RESTORE,UNDO,REMOVE,
+  POOL_PREVIEW,POOL_INFO,ANCHOR}_TEST (CLAUDE.md updated).
+- Still out of scope: the scripted screenshot/dev harness (DebugDrive
+  equivalent) — dev tooling, not product surface.
+
+Gates re-run green after integration: binding smoke; §9 parity 5/5 identical;
+tsc; electron-vite build; integrated headless run (anchors+loupes+persistence
+in one session) with zero renderer errors.
+
+## 2026-07-04 (later still) — Electron shell: real-media fixes after owner testing
+
+Owner testing with real media (HEVC .MOV camera files + long WAVs) surfaced
+failures the fixture-driven harness never hit. All fixed; the root causes are
+the sharpest shell-comparison lessons so far:
+
+- **Local media serving** (video hero / pool preview / thumbnails dead in dev):
+  Chromium blocks file:// subresources on the dev server's http origin. Added a
+  `couple-media://` protocol (main process). THREE stacked requirements before
+  a <video> will consume a custom scheme: (1) `registerSchemesAsPrivileged`
+  with `standard: true` + `stream: true` — without `standard` the media stack
+  silently ignores the element (readyState 0, no error); (2) ranged responses
+  must be STREAMED in full — Chromium does not chain short 206 chunks on
+  custom schemes (small files masked this; a large .MOV died); (3) .mov must
+  be served as `video/mp4` — Chromium rejects `video/quicktime` outright.
+  HEVC itself HW-decodes fine (VideoToolbox; canPlayType "probably").
+- **Seek plumbing**: the audio clock is the master — seeking the <video>
+  directly is snapped back by the slaving loop. Playhead clicks now route
+  pair.setPlayhead → audition seek (AppModel-injected hook); pause holds the
+  frame at the stop position.
+- **Pool preview seek**: Chromium extrapolates WAV duration from the first
+  chunk (58.25 s for a 120 s file) → scrubs clamped + a phantom `ended` reset
+  the strip. The probe's `durationS` is now authoritative for the strip domain
+  /clamp/end detection (the mac AVPlayer model); early `ended` is ignored.
+- **Doubled waveform**: the shell had grown a zoomable main stage PLUS a
+  separate full-domain overview — the Swift WaveformStage has ONE zoomable
+  OverviewStrip owning pins + playhead (no minimap). Collapsed to match.
+- **StrictMode ingest race**: dev double-mounted the startup effect → two
+  concurrent ingests of one folder; concurrent same-content imports collided
+  and silently dropped a file. Startup one-shot guard + MediaPool now
+  serializes import batches (also covers real double-drops).
+- Real drag-drop fixed earlier the same session (Electron 32+ removed
+  File.path → webUtils.getPathForFile) + native "Choose/Add files…" pickers.
+
+Verified with the owner's real pair (8-min HEVC 1080p .MOV × 120 s WAV):
+import → confident row → audition with video at readyState 4, measured skew
+−4…−33 ms, 0 underruns; seek strip lands within ±0.3 s. Gates re-run green
+(smoke, §9 parity 5/5, tsc, build).

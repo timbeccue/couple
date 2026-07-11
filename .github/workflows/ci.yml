@@ -66,6 +66,63 @@ jobs:
         working-directory: mac
         run: swift test
 
+  # Electron shell (PLAN-CORE-SHELL-BOUNDARY Phase G): build the napi binding on
+  # all three desktop OSes and run the §9 parity gate — the kit must produce
+  # resolution decisions IDENTICAL to the CLI on shared fixtures. The smoke test
+  # covers the ABI/error/policy/job plumbing without media. Packaging is
+  # exercised by electron-builder without publishing.
+  electron:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg (fixture generation + decode path)
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then brew install ffmpeg
+          elif [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update && sudo apt-get install -y ffmpeg libasound2-dev
+          else choco install ffmpeg -y --no-progress
+          fi
+        shell: bash
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: npm install
+        working-directory: electron
+        run: npm ci
+
+      - name: Build native binding
+        working-directory: electron
+        run: npm run build:native
+
+      - name: Binding smoke test (ABI, errors, policies, job path)
+        working-directory: electron
+        run: npm run smoke
+
+      - name: Phase G §9 parity gate (kit rows == CLI rows)
+        working-directory: electron
+        run: npm run parity
+
+      - name: Typecheck + renderer build
+        working-directory: electron
+        run: npx tsc --noEmit && npx electron-vite build
+
+      - name: Package (no publish)
+        working-directory: electron
+        run: npx electron-builder --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
   # The §10.5/§15.2 synthetic-corpus ROC gate: scores the committed 33-case
   # corpus under production defaults and asserts the frozen CALIBRATION.md §6
   # baseline (0 confident-false, 0 FP, recall >= 31/32). Weekly + on demand.
