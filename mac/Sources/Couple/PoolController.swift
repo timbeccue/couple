@@ -254,10 +254,10 @@ final class PoolController {
     /// Cancel the pending Clear Session (TODO-001): make no change.
     func cancelClearSession() { pendingClearSession = nil }
 
-    /// Clear the whole session (TODO-001) and return to the initial import screen. Stops
+    /// Clear the whole session (TODO-001) and return to the empty session. Stops
     /// active work, releases every pooled track, clears queue/export state, REMOVES the
     /// persisted restore record, and resets to the empty state (`hasContent == false` ⇒
-    /// RootView shows the LoadSurface). Source files and previously exported files are
+    /// the center column shows the import surface). Source files and previously exported files are
     /// untouched; the cleared state does NOT reappear on relaunch (the restore record is
     /// gone and the empty state is never re-persisted by the save guard).
     func confirmClearSession() {

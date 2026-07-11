@@ -1,7 +1,9 @@
-// Empty/launch state (§2.1): a single drop surface for a whole session — any
-// number of files and/or folders. Everything is probed and classified into the
-// media pool (video stream ⇒ video role, audio-only ⇒ audio); non-media is
-// skipped silently and surfaced once. Drop anywhere, or choose files.
+// Empty/launch state (§2.1, revised 2026-07-11): the center column's import
+// surface, shown inside the full three-column shell — the app never hides its
+// layout behind a splash screen. Accepts any number of files and/or folders;
+// everything is probed and classified into the media pool (video stream ⇒ video
+// role, audio-only ⇒ audio); non-media is skipped silently and surfaced once.
+// Drop anywhere in the window, or choose files.
 
 import CoupleKit
 import SwiftUI
@@ -13,17 +15,7 @@ struct LoadSurface: View {
     @State private var dropHover = false
 
     var body: some View {
-        VStack(spacing: 18) {
-            HStack {
-                Text("COUPLE")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .kerning(3)
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer()
-            }
-            .padding(.top, 24)
-            .padding(.leading, 62) // below traffic lights
-            Spacer()
+        VStack(spacing: 16) {
             Image(systemName: "tray.and.arrow.down")
                 .font(.system(size: 30))
                 .foregroundStyle(Theme.textTertiary)
@@ -39,9 +31,17 @@ struct LoadSurface: View {
             Button("Choose files…") { importerShown = true }
                 .buttonStyle(.bordered)
 
+            // Orientation for first-time users (the rails around this surface are
+            // visible but empty): where results land and what happens after.
+            Text("Matched pairs appear in the queue on the left. Approve them here, then export from the right rail.")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.textTertiary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+
             // A plain spinner (NO percentage bar) only while a drop is actively importing.
-            // The full import→match→sync progress bar lives in the main layout, not here;
-            // gating on `pool.importing` also keeps the empty import screen from ever
+            // The full import→match→sync progress bar lives in the export rail, not here;
+            // gating on `pool.importing` also keeps the empty import surface from ever
             // showing a stale bar carried over from a discarded session.
             if model.pool.importing {
                 HStack(spacing: 8) {
@@ -50,15 +50,13 @@ struct LoadSurface: View {
                         .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 }
             }
-            Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(24)
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(dropHover ? Theme.accent : Theme.panelStroke,
                               style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-                .padding(14)
         )
         .onDrop(of: [.fileURL], isTargeted: $dropHover) { providers in
             Task { await ingest(providers) }

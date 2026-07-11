@@ -57,12 +57,8 @@ body {
   z-index: 40;
 }
 
-.columns,
-.load-surface {
-  padding-top: 30px;
-}
-
 .columns {
+  padding-top: 30px;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -116,25 +112,72 @@ body {
   color: var(--accent);
 }
 
-/* ---------- load surface ---------- */
+/* ---------- import surface (LoadSurface.tsx — center-column empty state,
+   LoadSurface.swift twin; UX-DECISIONS 2026-07-11: no splash screen) ---------- */
 
-.load-surface {
+.import-surface {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 14px;
+  margin: 14px;
+  border: 1.5px dashed var(--border);
+  border-radius: 10px;
   color: var(--text-dim);
+  text-align: center;
 }
 
-.load-surface h1 {
-  font-size: 20px;
+/* Whole-window drag hover (App.tsx sets .drop-active on the root) highlights
+   the dashed border, like the Swift surface's Theme.accent stroke. */
+.drop-active .import-surface {
+  border-color: var(--accent);
+}
+
+.import-surface .import-icon {
+  color: var(--none);
+}
+
+.import-surface h2 {
+  font-size: 16px;
   font-weight: 500;
   color: var(--text);
 }
 
-.drop-active .load-surface,
+.import-surface .import-sub {
+  font-size: 11px;
+  max-width: 420px;
+}
+
+.import-surface .import-hint {
+  font-size: 10px;
+  max-width: 380px;
+  color: var(--none);
+}
+
+.import-surface .import-busy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.import-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-dim);
+  border-radius: 50%;
+  animation: import-spin 0.8s linear infinite;
+}
+
+@keyframes import-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .drop-active .columns {
   outline: 2px dashed var(--accent);
   outline-offset: -8px;

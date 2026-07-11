@@ -73,8 +73,17 @@ struct CenterColumn: View {
             if let couple = model.selectedCouple {
                 titleBar(couple)
             }
-            VideoHero()
-                .frame(maxWidth: .infinity, maxHeight: .infinity) // greedy
+            if model.hasContent {
+                VideoHero()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity) // greedy
+            } else {
+                // Empty session (revised 2026-07-11): the import surface takes the
+                // hero slot inside the always-visible three-column shell — no
+                // separate splash screen. The BottomBar below stays, inert, so the
+                // editor controls are discoverable before any media exists.
+                LoadSurface()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity) // greedy
+            }
 
             if let couple = model.selectedCouple, couple.needsResolve {
                 ResolveBanner(couple: couple,

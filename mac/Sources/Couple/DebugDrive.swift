@@ -610,7 +610,7 @@ final class DebugDrive {
         model.confirmClearSession()
         check("(C) Clear Session empties the pool (returns to import screen)", model.pool.isEmpty)
         check("(C) Clear Session empties the couples", model.couples.isEmpty)
-        check("(C) Clear Session has no content (LoadSurface)", !model.hasContent)
+        check("(C) Clear Session has no content (center import surface)", !model.hasContent)
         check("(C) Clear Session clears the pool selection",
               model.poolSelection.isEmpty && model.poolPrimary == nil)
         check("(C) Clear Session removed the persisted restore record (was present: \(hadRecordBefore))",

@@ -16,7 +16,7 @@ Legend: [source] = the reference implementation a port must read.
 ## Queue rail (left)
 - Session header: app title, media counts ("N video · M audio"), "Approve to
   queue · a/b approved" status line, visible "Clear Session…" control (disabled
-  mid-export). [QueueRail.swift header]
+  mid-export and when the session is empty). [QueueRail.swift header]
 - Three live sections QUEUED FOR EXPORT / TO APPROVE / TO FIX with counts;
   membership = approved / (¬approved ∧ verdict good) / rest. [AppModel.swift
   queued/toApprove/toFix]
@@ -42,6 +42,12 @@ Legend: [source] = the reference implementation a port must read.
   confirmation), teardown ordering, survivors re-resolve. [PoolController.swift]
 
 ## Center column (editor)
+- Empty session: NO separate splash/launch screen — the full three-column shell
+  renders from first launch, with the import surface (drop zone with hover
+  highlight, "Choose files…" picker, one-line orientation to the rails,
+  importing spinner) taking the hero slot; rails show their dimmed empty
+  sections around it. [LoadSurface.swift, RootView.swift, CenterColumn.swift;
+  UX-DECISIONS 2026-07-11]
 - Video hero (preview-greedy layout): muted video slaved to the AUDITION CLOCK
   (audio is master; ≤1 frame skew), transport (play/pause, timecode, anchor
   jump chips with −0.8 s pre-roll, monitor mode Pan L/R / Overlay (Null

@@ -1,8 +1,9 @@
 // Root layout (§V2.1): three columns with no modal screens — everything visible
-// at once. Empty session ⇒ the load surface; otherwise the queue rail (left),
-// the video-hero center, and the export rail (right), with both side rails
-// drag-resizable (HSplitView) and the center absorbing the slack. The whole
-// window stays a drop target (§2.1).
+// at once, INCLUDING the empty session (revised 2026-07-11: no splash screen;
+// an empty pool just renders the import surface in the center column with the
+// rails dimmed-empty around it). Queue rail (left), video-hero center, export
+// rail (right), with both side rails drag-resizable (HSplitView) and the center
+// absorbing the slack. The whole window stays a drop target (§2.1).
 
 import CoupleKit
 import SwiftUI
@@ -17,20 +18,14 @@ struct RootView: View {
     var body: some View {
         @Bindable var model = model
         return VStack(spacing: 0) {
-            Group {
-                if !model.hasContent {
-                    LoadSurface()
-                } else {
-                    HSplitView {
-                        QueueRail()
-                            .frame(minWidth: 248, idealWidth: 304, maxWidth: 440)
-                        CenterColumn()
-                            .frame(minWidth: 460)
-                            .layoutPriority(1)
-                        ExportRail()
-                            .frame(minWidth: 224, idealWidth: 280, maxWidth: 400)
-                    }
-                }
+            HSplitView {
+                QueueRail()
+                    .frame(minWidth: 248, idealWidth: 304, maxWidth: 440)
+                CenterColumn()
+                    .frame(minWidth: 460)
+                    .layoutPriority(1)
+                ExportRail()
+                    .frame(minWidth: 224, idealWidth: 280, maxWidth: 400)
             }
             FooterBar()
         }

@@ -166,7 +166,7 @@ function RailHeader(): React.JSX.Element {
         <span className="rail-title">COUPLE</span>
         <button
           className="clear-session"
-          disabled={model.batch.isRunning}
+          disabled={model.batch.isRunning || !model.hasContent}
           title="Discard this session and start over (does not delete source or exported files)"
           onClick={() => appModel.requestClearSession()}
         >

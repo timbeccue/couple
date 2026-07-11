@@ -1,6 +1,8 @@
-// App.tsx — root layout (RootView.swift port): empty ⇒ LoadSurface; else the
-// 3-column QueueRail / CenterColumn / ExportRail split + FooterBar. The whole
-// window is the drop target.
+// App.tsx — root layout (RootView.swift port): the 3-column QueueRail /
+// CenterColumn / ExportRail split + FooterBar, ALWAYS — the empty session is
+// not a separate splash screen (UX-DECISIONS 2026-07-11); an empty pool just
+// renders the import surface in the center column's hero slot with the rails
+// dimmed-empty around it. The whole window is the drop target.
 import React, { useCallback, useEffect, useState } from 'react';
 import { appModel } from '../app/AppModel';
 import { useModel } from '../app/observable';
@@ -12,7 +14,7 @@ import { ExportRail } from './ExportRail';
 import { ActivityStrip } from './ActivityStrip';
 import { ToastStack } from './ToastStack';
 
-const { webUtils, ipcRenderer } = (window as unknown as { require: NodeRequire }).require(
+const { webUtils } = (window as unknown as { require: NodeRequire }).require(
   'electron'
 ) as typeof import('electron');
 
@@ -30,18 +32,12 @@ function droppedPaths(e: React.DragEvent): string[] {
     .filter((p) => p.length > 0);
 }
 
-/** Native open dialog fallback for adding media without drag-drop. */
-async function pickAndIngest(): Promise<void> {
-  const paths = (await ipcRenderer.invoke('couple:pick-media')) as string[];
-  if (paths.length > 0) appModel.ingest.importDropped(paths);
-}
-
 /** One-shot guard for the startup effect (React StrictMode double-runs
  * effects in dev; two concurrent ingests of the same batch would race). */
 let startupRan = false;
 
 export function App(): React.JSX.Element {
-  const model = useModel(appModel);
+  useModel(appModel);
   const [dropActive, setDropActive] = useState(false);
 
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -159,22 +155,11 @@ export function App(): React.JSX.Element {
       onDrop={onDrop}
     >
       {platform === 'darwin' && <div className="titlebar-drag" />}
-      {model.pool.isEmpty && !model.pool.importing ? (
-        <div className="load-surface">
-          <h1>Couple</h1>
-          <p>Drop two recordings of the same event — video and audio — anywhere in this window.</p>
-          <p>They are paired and synced by matching their sound.</p>
-          <button className="primary" style={{ marginTop: 12 }} onClick={() => void pickAndIngest()}>
-            Choose files…
-          </button>
-        </div>
-      ) : (
-        <div className="columns">
-          <QueueRail />
-          <CenterColumn />
-          <ExportRail />
-        </div>
-      )}
+      <div className="columns">
+        <QueueRail />
+        <CenterColumn />
+        <ExportRail />
+      </div>
       <ActivityStrip />
       <div className="footer-bar">
         <span

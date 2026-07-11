@@ -584,3 +584,33 @@ Verified with the owner's real pair (8-min HEVC 1080p .MOV × 120 s WAV):
 import → confident row → audition with video at readyState 4, measured skew
 −4…−33 ms, 0 underruns; seek strip lands within ±0.3 s. Gates re-run green
 (smoke, §9 parity 5/5, tsc, build).
+
+## 2026-07-11 — No splash screen: empty session renders the full three-column shell (both shells)
+
+Owner: the launch-time file picker as its own screen made the app a black box —
+you couldn't see what the app is like or what you can do until you picked files.
+Now the three-column shell renders from first launch and the import surface
+(drop zone + "Choose files…" + one orientation line pointing at the rails) sits
+in the video hero's slot; rails show their designed empty states around it
+(dimmed sections, 0-counts, pool "+ import", disabled Export). UX-DECISIONS
+2026-07-11 entry revises §3 "Empty / launch"; SHELL-UI-PARITY updated (center
+column + Clear Session disable-when-empty). Shipped mac-first; Electron port
+followed the same day after owner approval of the Swift version.
+
+- mac: `RootView` no longer branches on `hasContent`; `LoadSurface` restyled as
+  the embedded center empty state (wordmark dropped — the queue-rail header
+  owns it); `CenterColumn` swaps it in for `VideoHero` when the pool is empty;
+  "Clear Session…" disables when the session is already empty.
+- Electron: `App.tsx` splash branch removed (always `.columns`); new
+  `views/LoadSurface.tsx` (Swift copy verbatim, incl. importing spinner)
+  rendered by `CenterColumn.tsx` when `!hasContent`; `.import-surface` styles
+  with the window-level `.drop-active` highlighting its dashed border; same
+  Clear Session disable. The pre-existing Electron splash copy ("Drop two
+  recordings…") was v1-era and is replaced by the shared copy.
+- No engine/policy change; no SPEC-CHANGE (launch surface is shell
+  presentation, UX-DECISIONS authority).
+- Verified — mac dev harness: `00-launch-empty.png` shows the full shell with
+  the centered import surface; post-import walkthrough shots unchanged;
+  REMOVE-TEST clear-session checks pass (label updated: "center import
+  surface"); `swift test` 116 green. Electron: tsc, smoke, §9 parity 5/5 green;
+  harness shots confirm the empty shell and an unchanged 2-couple loaded state.

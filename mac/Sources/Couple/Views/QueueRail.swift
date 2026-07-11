@@ -80,7 +80,7 @@ struct QueueRail: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
                 .buttonStyle(.plain)
-                .disabled(model.batch.isRunning)
+                .disabled(model.batch.isRunning || !model.hasContent)
                 .help("Discard this session and start over (does not delete source or exported files)")
             }
             Text("\(model.pool.videos.count) video · \(model.pool.audios.count) audio")

@@ -17,6 +17,7 @@ import type { RowCandidate } from '../kit/Wire';
 import { WaveformStage } from './WaveformStage';
 import { LoupeArea } from './LoupeView';
 import { VideoHero } from './VideoHero';
+import { LoadSurface } from './LoadSurface';
 
 function pickCandidate(coupleId: string, candidate: RowCandidate): void {
   const couple = appModel.couples.find((c) => c.id === coupleId);
@@ -28,6 +29,16 @@ function pickCandidate(coupleId: string, candidate: RowCandidate): void {
 
 export function CenterColumn(): React.JSX.Element {
   const model = useModel(appModel);
+  useModel(model.pool);
+  // Empty session (UX-DECISIONS 2026-07-11): the import surface takes the hero
+  // slot inside the always-visible three-column shell — no separate splash.
+  if (!model.hasContent) {
+    return (
+      <div className="center-column">
+        <LoadSurface />
+      </div>
+    );
+  }
   const couple = model.selected;
   if (!couple) {
     return (

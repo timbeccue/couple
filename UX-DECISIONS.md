@@ -633,3 +633,35 @@ confidence… I wish there were more data points." Two causes, two fixes:
   genuinely attempt spread measurements across their overlap instead of
   re-measuring one spot 12 times — so the dots/ticks the graph shows are now
   real coverage, not copies.
+
+## 2026-07-11 — No splash screen: the empty session IS the three-column shell (REVISES §3 "Empty / launch")
+
+Owner: launching into a lone drop zone makes the app a black box — a new user
+can't see what the app is like or what they'll be able to do until they commit
+files to it, and with no visible structure they don't even know *which* files
+the app wants. §V2.1 already says "three columns, no modal screens — everything
+is visible at once"; the launch splash was the one surviving violation.
+
+Decision (mac RootView/LoadSurface/CenterColumn; Electron App/LoadSurface/
+CenterColumn ported same day):
+
+- **The three-column shell renders from first launch.** There is no separate
+  launch screen; `RootView` no longer branches on session content.
+- **The import surface becomes the center column's empty state**, taking the
+  video hero's slot: drop zone (whole-window drop still works), "Choose
+  files…" picker, the same copy, plus one plain orientation line — "Matched
+  pairs appear in the queue on the left. Approve them here, then export from
+  the right rail." — so the empty rails around it explain themselves.
+- **The rails show their real empty states** (already designed): dimmed
+  workflow sections with "—", "0 video · 0 audio" counts, media pool with its
+  "+ import" affordance, export rail with destination/format and a disabled
+  Export (0 files). The editor's bottom toolbar stays visible, inert — the
+  controls are discoverable before any media exists.
+- **"Clear Session…" disables when the session is already empty** (it was a
+  visible no-op on the old splash's replacement state).
+- Clear Session now returns to this same layout with the center import surface
+  — the "import screen" wording in older entries means this state.
+- The v1 two-slot picker description in §3 "Empty / launch" (one camera slot +
+  one external slot, "the rest of the window may be hidden or inert") was
+  already superseded by the v2 any-number-of-files pool; this entry retires
+  its "hidden or inert window" clause explicitly.
