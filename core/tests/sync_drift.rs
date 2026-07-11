@@ -101,6 +101,48 @@ fn drift_row(dir: &Path, overlap_s: f64, ppm_true: f64, ppm_tol: f64, seed: u64)
     }
 }
 
+/// §5.5 adaptive short-overlap windows (SPEC-CHANGE 2026-07-03): a 21 s external
+/// against a long camera must yield DISTINCT accepted window centers spanning most
+/// of the overlap — the fixed 9 s half-window left a ≤3 s feasible center span, so
+/// every window re-measured the same audio and the fit hid its own redundancy —
+/// and the drift fit must still be measurable.
+#[test]
+fn short_overlap_drift_windows_spread() {
+    let dir = tempfile::tempdir().unwrap();
+    let spec = FixtureSpec {
+        offset_ms: -50_000.0, // external covers 50–71 s of the camera (difficult-match test-3 shape)
+        ppm: 0.0,
+        dur_cam_s: 120.0,
+        dur_ext_s: 21.0,
+        snr_db: Some(15.0),
+        gain_db: -6.0,
+        seed: 304,
+        ..Default::default()
+    };
+    let pair = build_pair(dir.path(), &spec);
+    let r = full_sync(&pair, &SyncParams::default());
+    assert!(
+        matches!(r.status, SyncStatus::Synced | SyncStatus::LowConfidence),
+        "short overlap must produce a mapping: {:?}",
+        r.status
+    );
+    // Slope guard: a ~10 s accepted baseline is below drift_min_fit_span_s (15), so
+    // the pass is intercept-only — no ppm extrapolated from a short cluster.
+    assert!(!r.drift_measurable, "21 s overlap must not claim a measurable drift");
+    assert_eq!(r.drift_ppm, 0.0);
+    let accepted: Vec<f64> = r.windows.iter().filter(|w| w.accepted).map(|w| w.t).collect();
+    assert!(accepted.len() >= 6, "expected ≥6 accepted windows, got {}", accepted.len());
+    let span = accepted.iter().cloned().fold(f64::NEG_INFINITY, f64::max)
+        - accepted.iter().cloned().fold(f64::INFINITY, f64::min);
+    assert!(
+        span >= 7.0,
+        "accepted centers span {span:.1} s — windows are stacked, not spread"
+    );
+    // The offset itself stays accurate (refinement-ladder value, no slope applied).
+    let err = (r.offset_ms - -50_000.0).abs();
+    assert!(err <= 3.0, "offset error {err:.2} ms");
+}
+
 #[test]
 fn drift_ladder_600s() {
     let dir = tempfile::tempdir().unwrap();
@@ -232,7 +274,7 @@ fn auto_sync_writes_session_state() {
     let ext_id = common::import(&ctx, &dir.path().join(&truth.external_file), TrackRole::External).unwrap();
     let sid = ctx.session_new(cam_id, ext_id).unwrap();
     let r = ctx
-        .auto_sync_blocking(sid, &SyncParams::default(), noop_progress(), &CancelToken::new(), 0)
+        .auto_sync_blocking(sid, &SyncParams::default(), None, noop_progress(), &CancelToken::new(), 0)
         .unwrap();
     assert!(matches!(r.status, SyncStatus::Synced));
 

@@ -240,7 +240,13 @@ private struct WaveformRow: View {
                 } else if case .failed(let message) = pair.syncActivity {
                     Text(message).foregroundStyle(Theme.bad).lineLimit(2)
                 } else if let fit = pair.fitStatus {
-                    Text(String(format: "fit RMS %.2f ms · %d win", fit.rmsMs, fit.windows))
+                    // accepted/attempted when the last sync's telemetry is at hand
+                    // (state persists accepted windows only); offset-only pairs say
+                    // so instead of implying a fitted drift (§5.5 slope guard).
+                    let attempted = (pair.lastSync?.windows.count).map { "/\($0)" } ?? ""
+                    let drift = pair.lastSync.map { $0.driftMeasurable ? "" : " · offset-only" } ?? ""
+                    Text(String(format: "fit RMS %.2f ms · %d%@ win%@",
+                                fit.rmsMs, fit.windows, attempted, drift))
                         .foregroundStyle(Theme.textSecondary)
                 } else {
                     Text("not measured").foregroundStyle(Theme.textTertiary)

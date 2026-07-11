@@ -611,3 +611,25 @@ Decision (core `policy::sync_seed`; PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3):
 - A manual re-pair placeholder candidate (z 0, lag 0) is NOT evidence; a fresh
   pool drag still syncs blind.
 
+## 2026-07-03 — Drift sparkline: zoom to the measurements, show the attempts
+
+Owner feedback on the first seeded short-clip sync: "the graph is not inspiring
+confidence… I wish there were more data points." Two causes, two fixes:
+
+- **The graph now frames the measured span, not the full video** (a 21 s overlap
+  in a 4:15 take previously crammed every dot into ~8% of the width). Small m:ss
+  labels in the bottom corners keep the where-in-the-video context. Deliberately
+  still peripheral — no axes, no grid.
+- **Attempted-but-rejected windows are drawn as baseline ticks** at their time
+  (from the last sync's telemetry). A failed measurement has no meaningful lag,
+  so it is never plotted as a dot — the tick honestly says "measured here, no
+  lock". Restored sessions (no telemetry) show accepted dots only.
+- **The caption tells the whole story**: `fit RMS 2.52 ms · 5/12 win ·
+  offset-only` — accepted/attempted, and an explicit offset-only marker when the
+  core refused to fit a drift slope (see the §5.5 slope guard SPEC-CHANGE in
+  PROGRESS.md: a ppm extrapolated from a few clustered seconds is noise, and the
+  UI must not dress it up as a fit).
+- The underlying §5.5 change (adaptive short-overlap windows) means short clips
+  genuinely attempt spread measurements across their overlap instead of
+  re-measuring one spot 12 times — so the dots/ticks the graph shows are now
+  real coverage, not copies.

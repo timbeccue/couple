@@ -65,6 +65,22 @@ pub struct SyncParams {
     /// Drift pass (§5.5)
     pub drift_windows: usize,
     pub half_win_s: f64,
+    /// §5.5 adaptive half-window for SHORT overlaps (SPEC-CHANGE 2026-07-03): the
+    /// effective half-window is `clamp(overlap · drift_win_frac / 2,
+    /// drift_half_win_min_s, half_win_s)` — the same shrink rule the §5.4 verify
+    /// windows use. At the fixed 9 s, a ~21 s overlap leaves a ~3 s feasible center
+    /// span, so all 12 windows measure the SAME audio and the fit hides its own
+    /// redundancy. Overlap ≥ 2·half_win_s/drift_win_frac (36 s at defaults) is
+    /// byte-identical to the fixed-window behavior.
+    pub drift_win_frac: f64,
+    pub drift_half_win_min_s: f64,
+    /// §5.5 minimum accepted-center time span (s) for fitting a SLOPE (SPEC-CHANGE
+    /// 2026-07-03): below it the pass is intercept-only — mapping (offset_stage, 0),
+    /// `drift_measurable = false` — because a ppm extrapolated from a few seconds of
+    /// baseline is noise amplified by the full track length (a real 21 s clip fitted
+    /// −7245 ppm from a 2.5 s cluster). 15 s keeps every ≥ ~32 s overlap fitting
+    /// exactly as before.
+    pub drift_min_fit_span_s: f64,
     pub drift_base_span_ms: f64,
     pub drift_span_scale_ppm: f64,
     pub drift_span_cap_ms: f64,
@@ -95,6 +111,9 @@ impl Default for SyncParams {
             suggest_resample_ms: 2.0,
             drift_windows: 12,
             half_win_s: 9.0,
+            drift_win_frac: 0.5,
+            drift_half_win_min_s: 2.5,
+            drift_min_fit_span_s: 15.0,
             drift_base_span_ms: 120.0,
             drift_span_scale_ppm: 150.0,
             drift_span_cap_ms: 2000.0,
@@ -121,6 +140,9 @@ impl SyncParams {
             "suggest-resample-ms" => self.suggest_resample_ms = v,
             "drift-windows" => self.drift_windows = v as usize,
             "half-win-s" => self.half_win_s = v,
+            "drift-win-frac" => self.drift_win_frac = v,
+            "drift-half-win-min-s" => self.drift_half_win_min_s = v,
+            "drift-min-fit-span-s" => self.drift_min_fit_span_s = v,
             "drift-base-span-ms" => self.drift_base_span_ms = v,
             "drift-span-cap-ms" => self.drift_span_cap_ms = v,
             "refit-ppm-threshold" => self.refit_ppm_threshold = v,
@@ -529,7 +551,12 @@ fn drift_pass(
     let off_s = offset_stage_ms / 1000.0;
     let t0 = (-off_s).max(0.0);
     let t1 = (dur_ext - off_s).min(dur_cam);
-    let hw = params.half_win_s;
+    // §5.5 adaptive half-window (SPEC-CHANGE 2026-07-03; see SyncParams::drift_win_frac):
+    // short overlaps shrink the window like §5.4 verify windows do, so the k_n centers
+    // can actually spread instead of all clamping onto one ~3 s feasible span and
+    // re-measuring the same audio. Overlap ≥ 36 s (defaults) ⇒ hw == half_win_s exactly.
+    let hw = ((t1 - t0).max(0.0) * params.drift_win_frac * 0.5)
+        .clamp(params.drift_half_win_min_s.min(params.half_win_s), params.half_win_s);
     let k_n = params.drift_windows;
     let t_mid = (t0 + t1) / 2.0;
 
@@ -585,6 +612,23 @@ fn drift_pass(
         Ok(out)
     };
 
+    // §5.5 slope guard (SPEC-CHANGE 2026-07-03; see SyncParams::drift_min_fit_span_s):
+    // fit a slope only when the accepted centers cover enough time-baseline to support
+    // one; otherwise intercept-only (fit None ⇒ mapping (offset_stage, 0), honest
+    // "drift not measurable") — never a ppm extrapolated from a few clustered seconds.
+    let min_fit_span_s = params.drift_min_fit_span_s;
+    let fit_over = move |pts: &[(f64, f64)]| -> Option<crate::fit::Fit> {
+        if pts.len() < 3 {
+            return None;
+        }
+        let span = pts.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max)
+            - pts.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+        if span < min_fit_span_s {
+            return None;
+        }
+        crate::fit::fit_ls(pts)
+    };
+
     // First pass: centers on the stage offset, spans scaled by distance from overlap
     // midpoint (F6: covers ±150 ppm true drift at long range), cap ±2 s.
     let mut windows = measure_all(&|_tc| offset_stage_ms, &span_at, prog, cancel)?;
@@ -593,11 +637,7 @@ fn drift_pass(
         .filter(|w| w.accepted)
         .map(|w| (w.t, w.lag_ms))
         .collect();
-    let mut fit = if accepted_pts.len() >= 3 {
-        crate::fit::fit_ls(&accepted_pts)
-    } else {
-        None
-    };
+    let mut fit = fit_over(&accepted_pts);
 
     // §5.5 iteration [SHOULD]: at high ppm, re-measure with centers on the fitted
     // mapping (recovers windows the first pass missed at long range), then refit.
@@ -614,8 +654,8 @@ fn drift_pass(
                 .filter(|w| w.accepted)
                 .map(|w| (w.t, w.lag_ms))
                 .collect();
-            if accepted_pts.len() >= 3 {
-                fit = crate::fit::fit_ls(&accepted_pts);
+            if let Some(refit) = fit_over(&accepted_pts) {
+                fit = Some(refit);
             }
         }
     }

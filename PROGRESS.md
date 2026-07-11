@@ -399,3 +399,47 @@ UX ledger: UX-DECISIONS 2026-07-03 entry. Gates: cargo test --release
 --workspace green (policy 9/9; sync_drift, ffi, cli suites); mac swift build
 (both variants) + swift test green (116, incl. 4 new SyncSeedPolicy tests).
 
+## 2026-07-03 (later) — Sync graph honesty: adaptive drift windows + slope guard
+
+Owner feedback on the newly-working test-3 pair: the drift sparkline "is not
+inspiring confidence" — two lonely dots. Investigation: (a) the sparkline's
+x-domain was the FULL video, cramming a 21 s overlap's dots into ~8% of the
+width; (b) §5.5's fixed 9 s half-window left a ~3 s feasible center span on a
+21 s overlap, so all 12 windows measured the SAME audio — the "7 win" were seven
+near-copies of one measurement.
+
+SPEC-CHANGE (§5.5, two coupled changes; both default-equivalent for the
+validated long material):
+
+1. **Adaptive drift half-window**: effective half-window =
+   `clamp(overlap · drift_win_frac/2, drift_half_win_min_s, half_win_s)`
+   (defaults 0.5 / 2.5 s / 9 s — the §5.4 verify-window shrink rule). Overlap
+   ≥ 36 s ⇒ 9 s exactly as before. New `--params drift-win-frac`,
+   `drift-half-win-min-s`.
+2. **Slope guard**: the least-squares DRIFT fit runs only when the accepted
+   centers span ≥ `drift_min_fit_span_s` (15 s; `--params drift-min-fit-span-s`);
+   below it the pass is intercept-only — mapping (stage offset, 0 ppm),
+   `drift_measurable = false`. Found the hard way: with shrunk windows the real
+   test-3 clip accepted a 2.5 s cluster and the unguarded fit extrapolated
+   **−7245 ppm** across 4:15 (the old stacked windows were accidentally
+   protected — identical lags ⇒ harmless slope). A ppm from a few seconds of
+   baseline is noise amplified by track length; refusing it is the §5.5.6
+   "drift not measurable" state working as designed. Overlaps ≥ ~32 s fit
+   exactly as before (all drift-ladder rows unchanged).
+
+Test: `sync_drift::short_overlap_drift_windows_spread` (21 s external vs 120 s
+camera — the test-3 shape): ≥6 accepted windows spanning ≥7 s, NO measurable
+drift claimed, offset within 3 ms. Real test 3 after the change: offset
+−82035.7 ms, ppm 0, honest lowConfidence.
+
+Shell (UX-DECISIONS addendum): sparkline x-domain = measured span with m:ss
+corner labels (was: full video); attempted-but-rejected windows from the last
+sync's telemetry drawn as baseline ticks ("measured here, no lock" — a failed
+measurement has no lag to plot); fit line unchanged. Caption gains
+accepted/attempted counts and an explicit "offset-only" marker when no drift
+was fitted: `fit RMS 2.52 ms · 5/12 win · offset-only`.
+
+Gates: cargo test --release -p couple-core --test sync_drift (10, incl. new)
+green; swift build both variants + swift test (116) green; full workspace suite
+re-run green.
+
