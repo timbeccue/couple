@@ -27,6 +27,12 @@ struct RootView: View {
                 ExportRail()
                     .frame(minWidth: 224, idealWidth: 280, maxWidth: 400)
             }
+            // Unified long-running activity strip (TODO-005), pinned full window
+            // WIDTH at the bottom just above the footer (relocated here from the
+            // export rail 2026-07-11 to match the Electron shell, where the strip
+            // spans the whole window under the columns). It renders nothing when
+            // idle, so the footer sits directly below the columns until work starts.
+            ActivityStripView()
             FooterBar()
         }
         .background(Theme.windowBg)
@@ -125,6 +131,64 @@ struct RootView: View {
             }) { urls.append(url) }
         }
         if !urls.isEmpty { model.importDropped(urls) }
+    }
+}
+
+// MARK: - Unified activity strip (TODO-005)
+
+/// The global activity strip, spanning the FULL window width just above the footer
+/// (TODO-005; relocated from the export rail 2026-07-11 to mirror the Electron shell,
+/// where the strip runs the whole width under the columns). Renders
+/// `model.activity.summary`: nothing when nil (idle, or work younger than the ~250 ms
+/// debounce), an ERROR line (no bar) for a failed operation, a DETERMINATE bar when
+/// the summary carries a trustworthy fraction, and an INDETERMINATE bar otherwise.
+/// Never shows a fabricated percentage — that honesty is enforced upstream in the
+/// pure `ActivitySummaryPolicy`; this view only draws what it is handed.
+private struct ActivityStripView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if let summary = model.activity.summary {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 5) {
+                    if summary.isError {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Theme.bad)
+                    }
+                    Text(summary.text)
+                        .font(.system(size: 11))
+                        .foregroundStyle(summary.isError ? Theme.bad : Theme.textSecondary)
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 0)
+                }
+                // A bar only when there is progress to show; an error line carries no
+                // bar (TODO-005: failure is an actionable line, not a stuck bar). The
+                // linear bar fills the strip's full width — the whole point of the move.
+                if !summary.isError {
+                    if let fraction = summary.fraction {
+                        ProgressView(value: fraction)   // determinate (trustworthy %)
+                            .progressViewStyle(.linear)
+                            .controlSize(.mini)
+                            .tint(Theme.accent)
+                    } else {
+                        ProgressView()                  // indeterminate (text-only honesty)
+                            .progressViewStyle(.linear)
+                            .controlSize(.mini)
+                            .tint(Theme.accent)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Top hairline separating the strip from the columns above, mirroring the
+            // Electron strip's `border-top: 1px solid var(--border)`.
+            .overlay(alignment: .top) {
+                Rectangle().fill(Theme.panelStroke).frame(height: 1)
+            }
+            .transition(.opacity)
+        }
     }
 }
 

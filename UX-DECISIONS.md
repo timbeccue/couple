@@ -665,3 +665,30 @@ CenterColumn ported same day):
   one external slot, "the rest of the window may be hidden or inert") was
   already superseded by the v2 any-number-of-files pool; this entry retires
   its "hidden or inert window" clause explicitly.
+
+## 2026-07-11 — Activity strip spans the full window width along the bottom
+
+Owner: the Electron shell renders the long-running activity strip
+(import → match → sync progress, the unified TODO-005 bar) full window width at
+the very bottom, and that reads better than the mac app, where the same strip
+was tucked inside the export rail (right column only, ~280 px wide). Present job
+progress the same way in both shells.
+
+Decision (mac RootView.swift; Electron already ships this in App.tsx):
+
+- **The activity strip renders full window width along the bottom**, in the root
+  layout between the three columns and the footer cheat line — not inside any one
+  column. A determinate bar therefore spans the whole window, the same as the
+  Electron shell.
+- **What the strip shows is unchanged** (it is the same view over the same pure
+  `ActivitySummaryPolicy`): nothing when idle or before the ~250 ms debounce, an
+  error line (no bar) for a failure, a determinate bar when the fraction is
+  trustworthy, an indeterminate bar otherwise. No fabricated percentages.
+- **Idle shows nothing** (matching Electron): the footer sits directly below the
+  columns until work starts, so the strip appearing/disappearing nudges the
+  footer rather than reserving a permanent empty slot. The old export-rail
+  placement reserved a fixed 30 px slot to avoid reflowing the couple list; at
+  the window bottom there is no list below it, so the reservation is dropped.
+- Label bumped to 11 pt (was 9.5 pt, sized for the narrow rail) to match the
+  Electron strip now that it has the full width to breathe; a top hairline
+  separates it from the columns above, mirroring Electron's `border-top`.

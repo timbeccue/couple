@@ -66,14 +66,6 @@ struct ExportRail: View {
                 }
             }
             Spacer(minLength: 0)
-            // Unified long-running activity strip (TODO-005), pinned to the BOTTOM of
-            // the export rail (moved here from the queue-rail header so it no longer
-            // reflows the couple list when work starts/stops). A fixed-height slot
-            // reserves the space whether or not anything is running, so the strip
-            // appearing/disappearing never shifts the rows above it — the same
-            // "reserve space to avoid layout shift" idiom as the per-row status column.
-            ActivityStripView()
-                .frame(maxWidth: .infinity, minHeight: 30, alignment: .bottomLeading)
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -115,55 +107,6 @@ struct ExportRail: View {
                     model.chooseExportDestination(url)
                 }
             }
-        }
-    }
-}
-
-// MARK: - Unified activity strip (TODO-005)
-
-/// The compact global activity strip pinned to the bottom of the export rail
-/// (TODO-005; relocated here from the queue-rail header). Renders
-/// `model.activity.summary`: nothing when nil (idle, or work younger than the ~250 ms
-/// debounce), an ERROR line (no bar) for a failed operation, a DETERMINATE bar when
-/// the summary carries a trustworthy fraction, and an INDETERMINATE bar otherwise.
-/// Never shows a fabricated percentage — that honesty is enforced upstream in the
-/// pure `ActivitySummaryPolicy`; this view only draws what it is handed.
-private struct ActivityStripView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        if let summary = model.activity.summary {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 5) {
-                    if summary.isError {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 8))
-                            .foregroundStyle(Theme.bad)
-                    }
-                    Text(summary.text)
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(summary.isError ? Theme.bad : Theme.textSecondary)
-                        .lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 0)
-                }
-                // A bar only when there is progress to show; an error line carries no
-                // bar (TODO-005: failure is an actionable line, not a stuck bar).
-                if !summary.isError {
-                    if let fraction = summary.fraction {
-                        ProgressView(value: fraction)   // determinate (trustworthy %)
-                            .progressViewStyle(.linear)
-                            .controlSize(.mini)
-                            .tint(Theme.accent)
-                    } else {
-                        ProgressView()                  // indeterminate (text-only honesty)
-                            .progressViewStyle(.linear)
-                            .controlSize(.mini)
-                            .tint(Theme.accent)
-                    }
-                }
-            }
-            .padding(.top, 2)
-            .transition(.opacity)
         }
     }
 }

@@ -94,7 +94,9 @@ Legend: [source] = the reference implementation a port must read.
 - Keymap: j/k select, v approve (undoable), space/l play, esc, ⌘Z/⇧⌘Z, ⌘⌫
   clear session (policy counts in the confirm). [InputRouter.swift]
 - Unified import→match→sync activity strip composed by the activity policy
-  (shell holds clocks/debounce; never sticks at 100%). [ActivityStrip.swift]
+  (shell holds clocks/debounce; never sticks at 100%), rendered FULL WINDOW
+  WIDTH along the bottom just above the footer (idle ⇒ nothing shown).
+  [ActivityStrip.swift controller; ActivityStripView in RootView.swift]
 - Persistence: couple-queue/1 + couple-session/1 in the platform app-data dir,
   autosave on the mac app's triggers, launch restore toast → saved alignments
   apply WITHOUT re-sync. [QueueStore.swift, SessionStore.swift]

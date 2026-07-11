@@ -682,3 +682,21 @@ the sync that follows") described a step that did not exist.
   the decision has always lived in core `match_quality` + `matchPair`).
 - Gates (from `electron/`): `build:native`, `typecheck`, `smoke` (12/12), and
   `parity` (5/5 §9) all green.
+
+## 2026-07-11 — mac activity strip spans the full window width (Electron parity)
+
+Owner request (prefers the Electron treatment): the unified import→match→sync
+activity strip (TODO-005 bar) moved from the bottom of the export rail to the
+root layout — full window width between the three columns and the FooterBar,
+top hairline mirroring Electron's border-top, label 9.5→11 pt. Idle renders
+nothing: the old rail placement's fixed 30 px slot (which avoided reflowing the
+couple list) is dropped, since at the window bottom there is nothing below to
+reflow — matching Electron. Same view over the same pure `ActivitySummaryPolicy`;
+no engine/policy change, no SPEC-CHANGE. The UX-DECISIONS 2026-07-11 entry
+records the decision; SHELL-UI-PARITY's activity-strip line updated.
+
+- mac: `ActivityStripView` moved out of `ExportRail.swift` into `RootView.swift`
+  (root VStack, between the HSplitView and FooterBar), restyled full-width.
+- Gates: `cargo build --release -p couple-ffi`, `swift build -c release` (ship
+  + `-DCOUPLE_DEVHARNESS`), `swift test` 116/116 all green. Dev-harness shot
+  confirms the bar edge-to-edge mid-import.
