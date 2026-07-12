@@ -113,6 +113,10 @@ jobs:
         working-directory: electron
         run: npm run smoke
 
+      - name: Renderer app/kit unit tests (Vitest, real binding)
+        working-directory: electron
+        run: npm test
+
       - name: Phase G §9 parity gate (kit rows == CLI rows)
         working-directory: electron
         run: npm run parity

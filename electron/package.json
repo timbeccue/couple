@@ -8,6 +8,7 @@
     "smoke": "node scripts/smoke.mjs",
     "parity": "node scripts/parity.mjs",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "dev": "npm run build:native && electron-vite dev",
     "build": "npm run build:native && electron-vite build",
     "start": "electron-vite preview"
@@ -22,7 +23,8 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^6.0.3",
-    "vite": "^7.3.6"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "react": "^19.2.7",

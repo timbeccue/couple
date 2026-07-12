@@ -104,6 +104,20 @@ ipcMain.handle('couple:reveal', (_e, path: string) => {
   shell.showItemInFolder(path);
 });
 
+// Defense-in-depth for the nodeIntegration renderer: this shell is local-only
+// content, so no webContents may ever open a child window or navigate away from
+// the app's own pages (the dev server origin or the packaged file:// bundle).
+// Programmatic loadURL/loadFile don't emit will-navigate, so the app's own
+// loads are unaffected; external links, if ever added, must use shell.openExternal.
+app.on('web-contents-created', (_event, contents) => {
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  contents.on('will-navigate', (event, url) => {
+    const dev = process.env.ELECTRON_RENDERER_URL;
+    const allowed = url.startsWith('file://') || (!!dev && url.startsWith(dev));
+    if (!allowed) event.preventDefault();
+  });
+});
+
 // couple-media://: local media for <video>/<audio>/thumbnails. Chromium blocks
 // file:// subresources on the dev server's http origin, so both dev and
 // packaged builds load media through this scheme instead. Range headers are

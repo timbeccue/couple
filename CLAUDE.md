@@ -52,7 +52,7 @@ rename them.
   the CoupleKit/app split, `scripts/parity.mjs` = the PLAN-CORE-SHELL-BOUNDARY
   §9 gate (kit rows byte-identical to CLI rows; runs in CI on all 3 OSes).
   Engine lives in the renderer (nodeIntegration; local content only). Commands
-  from `electron/`: `npm run build:native | smoke | parity | dev | typecheck`;
+  from `electron/`: `npm run build:native | smoke | parity | test | dev | typecheck`;
   package via `npx electron-builder`. Harness env: `COUPLE_OPEN_DIR`,
   `COUPLE_SHOT_PATH`/`COUPLE_SHOT_DELAY_MS`, `COUPLE_AUTOQUIT_MS`, `COUPLE_HUD`,
   `COUPLE_USER_DATA` (persistence root override), plus a `COUPLE_*_TEST` family

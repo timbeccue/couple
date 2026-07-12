@@ -33,6 +33,7 @@ export function jobFree(ctx: bigint, job: bigint): void;
 
 // media / tracks
 export function probeJson(ctx: bigint, path: string): string | null;
+export function probeJsonAsync(ctx: bigint, path: string): Promise<string>;
 export function importStart(
   ctx: bigint,
   path: string,

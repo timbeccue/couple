@@ -146,6 +146,17 @@ final class AppModel {
         }
         self.pool = MediaPool(engine: engine, toasts: toasts)
         self.placeholderPair = PairSession(engine: engine, toasts: toasts, audition: audition)
+        // F5d: the resolver-constant presentation mirrors (PairParams.zMin/.zMargin) read
+        // CORE's defaults (cpl_resolve_params_default_json) instead of trusting hardcoded
+        // copies — the same single source the Electron shell reads (AppModel.ts `zMin`).
+        // Failure behavior matches Electron exactly: a core fault or a missing key keeps
+        // the struct's fallback literals (8.5 / 6.0).
+        if let json = engine.resolveParamsDefaultJSON(),
+           let data = json.data(using: .utf8),
+           let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            if let z = obj["zMin"] as? Double { params.zMin = z }
+            if let m = obj["zMargin"] as? Double { params.zMargin = m }
+        }
         input.installMonitors()
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main

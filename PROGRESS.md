@@ -909,3 +909,48 @@ byte-identical.
   + couple.h diff clean. Swift/electron gates skipped (core-internal, no
   policy/ file, header identical); windows arm is compile-verified by the CI
   electron job, not locally (no MSVC toolchain on macOS).
+
+## 2026-07-11 — F5: Electron shell tests, navigation guard, async import probe, mac zMin from core
+
+Finding F5 (shell hardening, four items). couple-core/couple-ffi untouched —
+`couple.h` byte-identical; the only Rust changed is the shell's own couple-node
+binding (`probeJsonAsync`). No SHELL-UI-PARITY change (no affordance added or
+removed). No SPEC-CHANGE (timing-only + value-identical plumbing).
+
+- **(a) Vitest over the Electron app/kit layer** — first automated tests for the
+  renderer's reducers/controllers (the layer the 87136e4 manual-pick
+  verdict-parity bug lived in). `npm test` (`vitest run`) in electron/: 6 suites
+  — Policies envelope decode + conservative fallbacks, CoupleRow
+  verdict/actionWord/forced lifecycle, AppModel manual-pick evidence flow
+  (incl. the 87136e4 regression shape: pick ⇒ null ⇒ core classifier 'match' ⇒
+  green; core fault ⇒ never green; stale-selection no-op), QueueStore TODO-009
+  provenance round-trip, poolSelect/poolListHeight, UndoStack. Tests run in
+  plain node against the REAL couple-node binding (vitest.setup.ts shims
+  window.require / COUPLE_NATIVE_DIR / an isolated COUPLE_USER_DATA), so every
+  cpl_policy_* decision asserted is core's own — no re-encoded policy tables in
+  mocks; only media-bound calls (matchPair, session load) are stubbed. Wired
+  into the electron CI job on all 3 OSes after the smoke step.
+- **(b) Main-process navigation guard** — defense-in-depth for the
+  nodeIntegration renderer: every webContents denies window.open and blocks
+  will-navigate away from the app's own content (dev ELECTRON_RENDERER_URL or
+  packaged file://).
+- **(c) Async import probe** — the drop path's `cpl_probe_json` now runs on the
+  libuv pool (couple-node `probeJsonAsync`, napi AsyncTask; the core error is
+  drained WORKER-side because couple-ffi's LAST_ERROR is thread-local) and
+  MediaPool awaits `Engine.probeAsync`, so a slow ffprobe spawn no longer janks
+  the renderer — mac parity (MediaPool.swift probes via Task.detached).
+  Ordering unchanged: the import loop stays sequential and batches still chain;
+  the pre-existing 'probing' activity line now actually paints during the gap.
+  The role/no-audio classification stays exactly where it was (shell-side in
+  both shells) — no decision moved (PLAN-CORE-SHELL-BOUNDARY §1).
+- **(d) mac zMin/zMargin read core defaults** — AppModel.init overwrites the
+  PairParams presentation mirrors from `cpl_resolve_params_default_json` (the
+  surface Electron already reads); the 8.5/6.0 literals remain only as
+  core-fault fallbacks, matching Electron's `?? 8.5` idiom exactly.
+  Byte-identical today (core defaults are 8.5/6.0); the mirror can no longer
+  drift silently. No FFI addition needed — the binding surface already existed.
+- Gates: electron `typecheck` clean, `npm test` all green, `smoke` all-pass,
+  `parity` all rows byte-identical (after build:native; codesign -s - -f wart
+  applies to the fresh .node); mac `swift build -c release` (ship +
+  -DCOUPLE_DEVHARNESS) Build complete, `swift test` 0 failures;
+  `git diff core ffi` empty.

@@ -12,5 +12,5 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src", "native/index.d.ts", "electron.vite.config.ts"]
+  "include": ["src", "native/index.d.ts", "electron.vite.config.ts", "vitest.config.ts", "vitest.setup.ts"]
 }

@@ -31,10 +31,12 @@ import Foundation
 struct PairParams: Sendable, Equatable {
     // The two constants the SHELL reads for PRESENTATION (they do NOT drive the resolve — core owns
     // that): `zMin` gates the "forced" badge on a manual sub-floor pair (AppModel), `zMargin` rides
-    // the fit line (CenterColumn). Deliberate presentation MIRRORS of core `ResolveParams::default()`
-    // (plan §5 acceptable-duplication), kept in lock-step with core's 8.5 / 6.0.
-    var zMin = 8.5            // [VALIDATED] mirror of core ResolveParams.z_min
-    var zMargin = 6.0         // [TUNE] mirror of core ResolveParams.z_margin
+    // the fit line (CenterColumn). READ FROM CORE at launch: AppModel.init overwrites them from
+    // `cpl_resolve_params_default_json` (the same single source the Electron shell reads,
+    // AppModel.ts `zMin`); the literals below are only the CORE-FAULT FALLBACKS, matching
+    // Electron's `?? 8.5` idiom, so the mirror can no longer drift silently.
+    var zMin = 8.5            // [VALIDATED] fallback; live value = core ResolveParams.z_min
+    var zMargin = 6.0         // [TUNE] fallback; live value = core ResolveParams.z_margin
 
     // ---- resolver-owned classifier policy (PLAN-AUDIO-MATCHING-PREWORK §6.6) ----
     // The fine-verifier THRESHOLDS live in core `PairingParams`. `verifyClassifierActive` is the

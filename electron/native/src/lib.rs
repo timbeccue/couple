@@ -20,7 +20,7 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{
     ErrorStrategy, ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
-use napi::JsFunction;
+use napi::{Env, JsFunction, Task};
 use napi_derive::napi;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
@@ -179,6 +179,43 @@ pub fn job_free(ctx: BigInt, job: BigInt) {
 pub fn probe_json(ctx: BigInt, path: String) -> Option<String> {
     let p = cs(&path);
     take(unsafe { c::cpl_probe_json(h(&ctx), p.as_ptr()) })
+}
+
+/// Async twin of `probe_json`: the same `cpl_probe_json`, computed on the libuv
+/// worker pool so a drop's ffprobe child process never blocks the renderer
+/// thread (mac parity: MediaPool.swift probes via Task.detached). couple-ffi's
+/// LAST_ERROR is thread-local, so the core error is drained HERE, on the worker
+/// thread, and crosses as the rejection message (the raw cpl_take_error_json
+/// JSON; the kit decodes it like any other core error).
+pub struct ProbeTask {
+    ctx: u64,
+    path: CString,
+}
+
+impl Task for ProbeTask {
+    type Output = String;
+    type JsValue = String;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        match take(unsafe { c::cpl_probe_json(self.ctx, self.path.as_ptr()) }) {
+            Some(s) => Ok(s),
+            None => {
+                let err = take(unsafe { c::cpl_take_error_json(self.ctx) }).unwrap_or_else(|| {
+                    r#"{"error":"internal","message":"unknown core error"}"#.to_string()
+                });
+                Err(Error::new(Status::GenericFailure, err))
+            }
+        }
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
+#[napi(ts_return_type = "Promise<string>")]
+pub fn probe_json_async(ctx: BigInt, path: String) -> AsyncTask<ProbeTask> {
+    AsyncTask::new(ProbeTask { ctx: h(&ctx), path: cs(&path) })
 }
 
 /// role: 0 = camera, 1 = external. Returns the job id (0n = error).

@@ -122,7 +122,9 @@ export class MediaPool extends Observable {
 
         let info: MediaInfo;
         try {
-          info = this.engine.probe(file);
+          // Off-thread probe (F5c): the 'probing' activity line set above now
+          // actually paints instead of being blocked by a sync ffprobe spawn.
+          info = await this.engine.probeAsync(file);
         } catch {
           newlySkipped.push(name);
           continue;

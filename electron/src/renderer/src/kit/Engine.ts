@@ -60,6 +60,14 @@ export class Engine {
   static staticTakeError(ctx: bigint = 0n): CoreError {
     const json = native.takeErrorJson(ctx);
     if (!json) return new CoreError('internal', 'unknown core error');
+    return Engine.coreErrorFromJSON(json);
+  }
+
+  /** Decode a core error JSON (`{"error":…,"message":…}`) into a CoreError.
+   * Shared by the thread-local drain above and the async-probe rejection path
+   * (whose error is drained WORKER-side in couple-node — thread-local
+   * LAST_ERROR never crosses threads). */
+  static coreErrorFromJSON(json: string): CoreError {
     try {
       const obj = JSON.parse(json) as { error?: unknown; message?: string };
       let kind = 'internal';
@@ -90,6 +98,20 @@ export class Engine {
 
   probe(path: string): MediaInfo {
     return this.decode<MediaInfo>(native.probeJson(this.ctx, path));
+  }
+
+  /** Async twin of `probe` (couple-node `probeJsonAsync`): the same
+   * `cpl_probe_json`, run on the libuv pool so the ffprobe child process never
+   * blocks the renderer thread (mac parity: MediaPool.swift probes via
+   * Task.detached). Rejects with the CoreError drained worker-side. */
+  async probeAsync(path: string): Promise<MediaInfo> {
+    let s: string;
+    try {
+      s = await native.probeJsonAsync(this.ctx, path);
+    } catch (e) {
+      throw Engine.coreErrorFromJSON(e instanceof Error ? e.message : String(e));
+    }
+    return JSON.parse(s) as MediaInfo;
   }
 
   /** Start an import job (§4.3); the job's value is the imported TrackMeta. */
