@@ -762,3 +762,17 @@ fn realdata_pair_confident_row() {
     assert!((lag - -5536.639).abs() <= 25.0, "lag {lag} vs frozen −5536.639 ± 25");
     eprintln!("realdata row: {r:?}");
 }
+
+// 2026-07-11 RE-FREEZE — resolver-constant VALUE LOCK (PLAN-REALDATA-CALIBRATION §4.4,
+// V2-F2 closure). A change is a re-calibration decision, not an edit.
+#[test]
+fn resolve_params_value_lock() {
+    let p = ResolveParams::default();
+    assert_eq!(p.coverage_full, 0.95, "re-frozen 2026-07-11: real full-true min 0.9628 vs genuine partial 0.082");
+    // Held (zero true different-take conflicts observed; gap RECORDED).
+    assert_eq!(p.z_min, 8.5);
+    assert_eq!(p.z_margin, 6.0);
+    assert_eq!(p.triangle_tol_ms, 250.0);
+    assert_eq!(p.rms_trust_floor_ms, 9.0);
+    assert_eq!(p.rms_ratio, 3.0);
+}

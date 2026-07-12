@@ -91,7 +91,8 @@ pub struct ResolveParams {
     pub z_margin: f64,
     /// §3.4 legacy closure tolerance, ms [SPEC, TUNE].
     pub triangle_tol_ms: f64,
-    /// Coverage at/above which a single match is `confident` [SPEC, TUNE].
+    /// Coverage at/above which a single match is `confident` [SPEC, VALIDATED 2026-07-11:
+    /// re-frozen on the owner corpus; value-locked by `resolve_params_value_lock`].
     pub coverage_full: f64,
     /// Interval-overlap clustering tolerance, seconds [SPEC, TUNE].
     pub disjoint_tol_s: f64,
@@ -122,7 +123,11 @@ impl Default for ResolveParams {
             z_min: 8.5,
             z_margin: 6.0,
             triangle_tol_ms: 250.0,
-            coverage_full: 0.98,
+            // SPEC-CHANGE (2026-07-11): SPEC-V2 §9 COVERAGE_FULL 0.98 → 0.95 (realdata-report
+            // 2026-07-12 05:07Z): real full-true coverage min 0.9628; the one genuine partial
+            // (fixture) measures 0.082 — two-sided clean. z_margin/triangle_tol_ms UNCHANGED
+            // (zero true different-take conflicts observed; regime gap RECORDED, V2-F2).
+            coverage_full: 0.95,
             disjoint_tol_s: 0.5,
             verify_active: false,
             rms_escalation: false,

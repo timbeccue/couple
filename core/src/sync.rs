@@ -56,7 +56,9 @@ pub struct SyncParams {
     pub z_min: f64,
     /// Drift-window acceptance NCC [VALIDATED]
     pub ncc_window_min: f64,
-    /// Synced gate [TUNE]
+    /// Synced gate [VALIDATED 2026-07-11: re-frozen on the owner corpus,
+    /// realdata-report 2026-07-12 05:07Z; SPEC-CHANGE in PROGRESS.md; value-locked
+    /// by `sync_verdict_value_lock`]
     pub synced_fine_ncc: f64,
     pub synced_min_windows: usize,
     pub synced_max_rms_ms: f64,
@@ -105,9 +107,18 @@ impl Default for SyncParams {
             // ceiling (≤ 7.5) and the weakest must-pass true peak (9.9 at 20 s, SNR 10).
             z_min: 8.5,
             ncc_window_min: 0.4,
+            // SPEC-CHANGE (2026-07-11): §5.6/Appendix A synced gate re-frozen on the owner
+            // corpus (realdata-report 2026-07-12 05:07Z; n=18 true couples, 4 real sessions).
+            // fine NCC 0.5 UNCHANGED (real true min 0.619). min_windows 6 → 4: weakest true
+            // locks 5 (deg recital, owner-confirmed), wrong pairings lock 0; 4 sits between,
+            // above verify_min_windows_floor = 3. max_rms 1.0 → 12.0: true fit RMS min 0.002 /
+            // median 4.713 / p95 7.814 / max 9.012 ms (worst = 2022orch dvorak.MOV, owner-
+            // confirmed); 12.0 ≈ 1.33× worst true, aligns with pairing verify_rms_max_ms = 12.0.
+            // No wrong-take RMS exists to bound from above (wrong pairings fail the fit, 0
+            // windows) — gap RECORDED per PLAN-REALDATA-CALIBRATION §4.3.
             synced_fine_ncc: 0.5,
-            synced_min_windows: 6,
-            synced_max_rms_ms: 1.0,
+            synced_min_windows: 4,
+            synced_max_rms_ms: 12.0,
             suggest_resample_ms: 2.0,
             drift_windows: 12,
             half_win_s: 9.0,
@@ -1174,5 +1185,19 @@ mod pair_fit_tests {
         let a = a.expect("clean pair should lock");
         // Exact bit-equality of every field (PairFit is Copy + PartialEq).
         assert_eq!(a.off_ms.to_bits(), b.unwrap().off_ms.to_bits());
+    }
+
+    // 2026-07-11 RE-FREEZE — the calibrated sync-verdict VALUE LOCK (PLAN-REALDATA-
+    // CALIBRATION §4.4). A change here is a re-calibration decision (new owner-signed
+    // SPEC-CHANGE + regenerated realdata report), not an edit.
+    #[test]
+    fn sync_verdict_value_lock() {
+        let p = SyncParams::default();
+        assert_eq!(p.synced_max_rms_ms, 12.0, "re-frozen 2026-07-11: 1.33× worst true RMS 9.012, = pairing verify_rms_max_ms");
+        assert_eq!(p.synced_min_windows, 4, "re-frozen 2026-07-11: weakest true 5, wrong pairings 0, floor 3");
+        // Held at prior values by the same calibration (unchanged neighbors).
+        assert_eq!(p.synced_fine_ncc, 0.5, "real true min 0.619 — held");
+        assert_eq!(p.suggest_resample_ms, 2.0, "held");
+        assert_eq!(p.z_min, 8.5, "held [VALIDATED]");
     }
 }

@@ -32,10 +32,6 @@ rename them.
   core; presentation lives in the shell"). Phases A–F shipped; Phase G (new
   shells) started 2026-07-04 via the `electron/` shell. Stays in root while
   Phase G is in progress.
-- `PLAN-REALDATA-CALIBRATION.md` — PROPOSAL awaiting owner data + sign-off (F4):
-  real-data verdict/margin calibration — run `scripts/realdata-sweep.sh`, read
-  the report, then re-freeze the [TUNE] lines per matcher-corpus CALIBRATION.md
-  §6–7; contains DRAFTED (not enacted) SPEC-CHANGE entries.
 - `docs/archive/` — shipped plans, historical only; kept because code cites them.
 - `fixtures/matcher-corpus/CALIBRATION.md` — derivation of frozen matcher
   thresholds. §1–5 are self-marked superseded; §6–7 (profile 2) is the live

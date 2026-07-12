@@ -1,12 +1,11 @@
 # PLAN-REALDATA-CALIBRATION — re-freezing the [TUNE] verdict lines on the owner's real sessions
 
-> **STATUS: PROPOSAL — AWAITING OWNER DATA + OWNER SIGN-OFF.**
-> Nothing in this document is enacted. No threshold, gate line, or verdict
-> constant has been changed. The SPEC-CHANGE entries in §6 are DRAFTS and MUST
-> NOT be appended to PROGRESS.md until Tim has run the sweep, reviewed the
-> numbers, and signed off (SPEC §0 process). What HAS shipped alongside this
-> document is measurement-only: fail-loud realdata test skips and
-> `scripts/realdata-sweep.sh`.
+> **STATUS: ENACTED 2026-07-11 (owner signed off).** The §6 drafts were filled and
+> appended to PROGRESS.md as three SPEC-CHANGE (2026-07-11) entries — that ledger is
+> now the authority; this document is historical. Recorded gaps: fresh-holdout gate
+> deferred (all sessions read during tuning, §6.5b analogue); §7 hand-sync gate
+> dormant (no material). §9.4 freeze files live under
+> COUPLE_REALDATA_DIR/multifile-session/<session>/expected.json (not in the repo).
 
 ## 1. Problem (finding F4, 2026-07-11)
 

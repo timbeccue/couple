@@ -344,6 +344,11 @@ Phase numbering continues v1's (Phases 1–6 complete).
 | V2-F5 | Audio stitching for recorder-restart straddles would break the two-track Session model. | Out of scope; `split across files` honesty instead (§3.3). |
 | V2-F6 | The v1 editor's "Auto-sync hero button" contradicts the 5% attention target — it advertises a step the user shouldn't think about. | Mockup direction: sync controls share the narrowed overview row; auto-sync is ambient (runs on pairing), the button is the re-run affordance. |
 
+> **V2-F2 closure (2026-07-11):** the [TUNE] re-calibration on the owner's first real
+> multi-take corpus happened — see the SPEC-CHANGE (2026-07-11) entries in PROGRESS.md
+> (COVERAGE_FULL 0.98 → 0.95; Z_MARGIN/TRIANGLE_TOL_MS held; zero true different-take
+> conflicts observed, regime gap recorded). §9's table values are superseded by that ledger.
+
 ---
 
 ## 11. Open owner decisions — SETTLED at Session G convergence (2026-06-12)

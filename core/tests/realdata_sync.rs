@@ -150,3 +150,61 @@ fn real_pair_onset_zone_property() {
     }
     assert!(good >= 2, "only {good}/3 zone winners are attacks-from-quiet");
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionExpected {
+    frozen_at: String,
+    owner_verified: bool,
+    tolerance_ms: f64,
+    engine_version: String,
+    note: String,
+    couples: Vec<ExpectedCouple>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExpectedCouple {
+    video: String,
+    audio: String,
+    offset_ms: f64,
+    drift_ppm: f64, // recorded for reference; offset is the asserted quantity (§9.4 F2)
+}
+
+/// §9.4 F2 extension (SPEC-CHANGE 2026-07-11): every multifile-session/<session>/
+/// expected.json is a frozen, owner-verified set of true couples; re-measure each and
+/// assert offset within ±toleranceMs and status Synced under the re-frozen verdict lines.
+/// Uses the DEFAULT platform cache (same as the sweep) so re-runs are warm.
+#[test]
+#[ignore = "SKIPPED (no realdata): set COUPLE_REALDATA_DIR and run scripts/realdata-sweep.sh (or -- --include-ignored)"]
+fn real_sessions_frozen_expectations() {
+    let root = common::realdata_dir().join("multifile-session");
+    let ctx = couple_core::Ctx::new(couple_core::CtxConfig::default());
+    let mut frozen = 0usize;
+    let mut dirs: Vec<_> = std::fs::read_dir(&root).expect("multifile-session/")
+        .filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.is_dir()).collect();
+    dirs.sort();
+    for session in dirs {
+        let path = session.join("expected.json");
+        if !path.is_file() { continue; }
+        let exp: SessionExpected =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(exp.owner_verified, "{}: ownerVerified must be true", path.display());
+        for c in &exp.couples {
+            let v = common::import(&ctx, &session.join(&c.video), TrackRole::Camera).unwrap();
+            let a = common::import(&ctx, &session.join(&c.audio), TrackRole::External).unwrap();
+            let (cam, ext) = (ctx.track(v).unwrap(), ctx.track(a).unwrap());
+            let mut prog = ProgressEmitter::new(0, noop_progress());
+            let r = auto_sync_tracks(&cam.pyramid, &ext.pyramid, &SyncParams::default(),
+                                     &mut prog, &CancelToken::new()).unwrap();
+            assert!((r.offset_ms - c.offset_ms).abs() <= exp.tolerance_ms,
+                "{} × {}: offset {} vs frozen {} (± {})",
+                c.video, c.audio, r.offset_ms, c.offset_ms, exp.tolerance_ms);
+            assert!(matches!(r.status, SyncStatus::Synced),
+                "{} × {}: {:?} (re-frozen verdict lines must yield Synced)", c.video, c.audio, r.status);
+            frozen += 1;
+        }
+    }
+    assert!(frozen > 0, "no expected.json found under {} — freeze per §9.4 F2", root.display());
+    eprintln!("frozen expectations verified: {frozen} couples");
+}

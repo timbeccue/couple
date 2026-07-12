@@ -954,3 +954,69 @@ removed). No SPEC-CHANGE (timing-only + value-identical plumbing).
   applies to the fresh .node); mac `swift build -c release` (ship +
   -DCOUPLE_DEVHARNESS) Build complete, `swift test` 0 failures;
   `git diff core ffi` empty.
+
+## 2026-07-11 — Realdata calibration ENACTED (F4; PLAN-REALDATA-CALIBRATION §6, owner signed off 2026-07-11)
+
+The owner-approved re-freeze of the [TUNE] verdict/coverage lines, from
+realdata-report.md (generated 2026-07-12 05:07Z; 4 real multifile-session/*
+sessions, n=18 true couples — root fixtures and difficult-match/* excluded as
+engineered same-recording variants). Constants + value-locks + §9.4 freeze files
++ consuming test in one change. PLAN-REALDATA-CALIBRATION.md marked ENACTED and
+archived. Shell mirrors verified clean (core is the single source since Phase D /
+F5d — no Swift/TS value changed).
+
+SPEC-CHANGE (2026-07-11): §5.6/Appendix A sync-verdict lines re-frozen on the
+owner corpus (realdata-report.md 2026-07-12 05:07Z, N=18 true couples):
+synced_max_rms_ms 1.0 → 12.0 (derivation: true-couple fit RMS min 0.002 /
+median 4.713 / p95 7.814 / max 9.012 ms, worst true = 2022orch dvorak.MOV,
+owner-confirmed; 12.0 ≈ 1.33× worst true; aligns with pairing
+verify_rms_max_ms = 12.0; no wrong-take RMS was measurable — wrong pairings
+fail the fit outright with 0 windows, regime gap RECORDED); synced_min_windows
+6 → 4 (weakest true = 5 windows, deg recital, owner-confirmed; wrong pairings
+lock 0; 4 sits between, above verify_min_windows_floor = 3); synced_fine_ncc
+0.5 unchanged (real true min 0.619); suggest_resample_ms 2.0 unchanged (|drift|
+median 24.1 / p95 70.2 / max 90.2 ppm). Two-sided margins per CALIBRATION.md
+§6.3 discipline. CAVEAT: the fresh-holdout release gate is DEFERRED — every
+session was read during tuning (contaminated per CALIBRATION.md §6.5b); the
+first future unseen sessions serve as after-the-fact validation. Owner signed
+off 2026-07-11. Value-locked in core/src/sync.rs tests (sync_verdict_value_lock).
+
+SPEC-CHANGE (2026-07-11): SPEC-V2 §9 pairing constants re-frozen on the first
+real multi-take corpus (V2-F2 closure): COVERAGE_FULL 0.98 → 0.95 (real
+full-true coverage min 0.9628; genuine partial (fixture) 0.082 — two-sided
+clean); Z_MARGIN 6.0 → unchanged (legacy per-video z-margin min 0.059 / median
+13.4 — the sub-margin cells are same-recording fixture copies, not takes);
+TRIANGLE_TOL_MS 250 → unchanged (residual p95 135 ms). Different-take hazard
+characterized: 5 cross-cell `match` classifications over 810 non-selected
+cells — all trimmed/shortened same-recording fixture copies, NOT different
+takes → zero true different-take conflicts; Z_MARGIN/COVERAGE/TRIANGLE stay
+conservative and the regime gap is RECORDED per plan §4.3. Owner signed off
+2026-07-11. Value-locked in core/tests/resolve.rs (resolve_params_value_lock).
+Golden rows: no resolution decision changed (no golden scenario's coverage
+lies in [0.95, 0.98) — goldens byte-identical, no regeneration).
+
+SPEC-CHANGE (2026-07-11): §9.4 frozen real-pair regression extended: sessions
+multifile-session/{2022orch, deg recital, hsBach, large} frozen per the F2
+procedure (measured offset/drift written to <session>/expected.json,
+ownerVerified=true after ear check, asserted at ±1.0 ms thereafter by
+core/tests/realdata_sync.rs::real_sessions_frozen_expectations; 18 couples;
+files live under COUPLE_REALDATA_DIR, outside the repo). CAVEAT: the §9.5
+hand-sync gate stays dormant (no material). Owner signed off 2026-07-11.
+
+- Gates: `cargo test --release --workspace` all targets pass (realdata tests show
+  the SKIPPED markers, now 3 in realdata_sync incl. the new
+  real_sessions_frozen_expectations; both value locks green). With
+  COUPLE_REALDATA_DIR set: realdata_import 1/1, realdata_sync 3/3 (frozen
+  expectations verified 18 couples), resolve realdata 1/1, cli pair_gates
+  realdata 1/1. `scripts/golden-pair-rows.sh`: all 5 scenarios match —
+  byte-identical, no regeneration (prediction held). `cargo build --release -p
+  couple-ffi` clean, couple.h unchanged. mac `swift build -c release` (ship +
+  -DCOUPLE_DEVHARNESS) Build complete; `swift test` 116/116. electron
+  build:native + typecheck clean, vitest 40/40, smoke all checks passed, parity
+  "kit rows identical to CLI rows on all scenarios". Sweep acceptance
+  (regenerated report): all 18 multifile-session true couples status=synced
+  (was 4), rowState=confident 18/18 — the five 0.96–0.98-coverage rows
+  (2022orch dvorak 3 0.9628, prokofiev 0.9785, hsBach bach 169 0.9715,
+  bach 170 0.9786, large bach 169 0.9715) flipped partial → confident;
+  crossMatches unchanged (the 5 known fixture-copy cells, none new); report §5
+  suites all PASS.
