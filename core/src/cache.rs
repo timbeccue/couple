@@ -131,18 +131,48 @@ impl CacheEntry {
     }
 }
 
-/// Free bytes on the volume holding `path`.
-pub fn available_bytes(path: &Path) -> u64 {
+/// Free bytes on the volume holding `path`, or None if the platform query failed.
+#[cfg(unix)]
+fn available_bytes_impl(path: &Path) -> Option<u64> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
-    let Some(cpath) = CString::new(path.as_os_str().as_bytes()).ok() else {
-        return u64::MAX;
-    };
+    let cpath = CString::new(path.as_os_str().as_bytes()).ok()?;
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
     if unsafe { libc::statvfs(cpath.as_ptr(), &mut st) } == 0 {
-        (st.f_bavail as u64).saturating_mul(st.f_frsize as u64)
+        Some((st.f_bavail as u64).saturating_mul(st.f_frsize as u64))
     } else {
-        u64::MAX
+        None
+    }
+}
+
+/// Free bytes on the volume holding `path`, or None if the platform query failed.
+#[cfg(windows)]
+fn available_bytes_impl(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let mut free: u64 = 0;
+    // SAFETY: NUL-terminated wide path; out-params are plain u64s; null totals allowed.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(wide.as_ptr(), &mut free, std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    (ok != 0).then_some(free)
+}
+
+/// Free bytes on the volume holding `path`. A failed query is loudly assumed
+/// infinite: the DiskFull preflight (§6.3/§8.3) is a guard, not a gate, and
+/// blocking imports on an unqueryable volume would be worse — but it must
+/// never be disabled silently.
+pub fn available_bytes(path: &Path) -> u64 {
+    match available_bytes_impl(path) {
+        Some(b) => b,
+        None => {
+            eprintln!(
+                "couple-core: free-disk query failed for {}; assuming enough space (disk-full preflight skipped)",
+                path.display()
+            );
+            u64::MAX
+        }
     }
 }
 

@@ -58,6 +58,43 @@ fn epoch_rule_materializes_lead_zeros() {
     assert!((track.meta.duration_s - (3.0 + 0.18)).abs() < 0.02);
 }
 
+/// F3a: a container reporting an absurd start_time must be rejected up front —
+/// no zero-fill, no cache litter (the guard runs before the entry dir exists).
+#[test]
+fn absurd_start_time_is_rejected_before_zero_fill() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut rng = ChaCha8Rng::seed_from_u64(31);
+    let samples: Vec<f32> = (0..48_000).map(|_| rng.gen_range(-0.5f32..0.5)).collect();
+    let wav = dir.path().join("src.wav");
+    common::write_wav_mono_48k(&wav, &samples);
+
+    let mov = dir.path().join("absurd.mov");
+    let st = Command::new(ffmpeg_path())
+        .args(["-nostdin", "-v", "error", "-y", "-itsoffset", "200000", "-i"])
+        .arg(&wav)
+        .args(["-c", "copy"])
+        .arg(&mov)
+        .status()
+        .unwrap();
+    assert!(st.success());
+
+    let cache = dir.path().join("cache");
+    let ctx = common::test_ctx(&cache);
+    let info = ctx.probe(&mov).unwrap();
+    let epoch = info.audio[0].start_time_s;
+    assert!(epoch.abs() > 100_000.0, "fixture start_time = {epoch}");
+
+    let err = common::import(&ctx, &mov, TrackRole::External).unwrap_err();
+    assert!(
+        matches!(err, couple_core::CoupleError::UnsupportedFormat { .. }),
+        "expected UnsupportedFormat, got {err:?}"
+    );
+
+    // Guard runs before create_dir_all: no cache entry litter.
+    let entries = couple_core::cache::list_entries(&cache);
+    assert!(entries.is_empty(), "cache litter: {entries:?}");
+}
+
 #[test]
 fn plain_wav_has_zero_epoch_and_roundtrips_cache() {
     let dir = tempfile::tempdir().unwrap();

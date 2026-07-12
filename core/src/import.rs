@@ -15,6 +15,33 @@ use std::process::{Command, Stdio};
 
 const SR: f64 = SAMPLE_RATE as f64;
 
+/// §7.2 epoch guard: sanity bound on the probed audio start_time. Legitimate
+/// epochs are sub-second (MP4 edit lists / AAC priming; the reference camera
+/// is 0.1808 s, SPEC §1.2) or, at the structural extreme, an MPEG-TS PCR
+/// baseline, which wraps at 2^33/90000 ≈ 95 444 s. Anything beyond that is
+/// container corruption; honoring it would zero-fill the PCM cache without
+/// bound. Reject rather than clamp: a truncated epoch would silently misplace
+/// the track on the canonical timeline (F1).
+const MAX_EPOCH_ABS_S: f64 = 100_000.0;
+
+/// Ok(lead samples at 48 kHz) or Err(detail) when start_time cannot be a real
+/// capture timestamp. Pure so the bound is unit-testable without ffmpeg.
+fn epoch_lead(epoch_s: f64) -> std::result::Result<i64, String> {
+    if !epoch_s.is_finite() || epoch_s.abs() > MAX_EPOCH_ABS_S {
+        return Err(format!(
+            "audio start_time {epoch_s}s is outside the sane range \
+             (±{MAX_EPOCH_ABS_S}s); container timestamps look corrupt"
+        ));
+    }
+    Ok((epoch_s * SR).round() as i64)
+}
+
+/// Import disk projection (§6.3): PCM bytes for duration PLUS the epoch
+/// zero-fill lead, with the 5 % pyramid/onsets overhead.
+fn projected_cache_bytes(duration_s: f64, epoch_s: f64) -> u64 {
+    ((duration_s.max(1.0) + epoch_s.max(0.0)) * SR * 4.0 * 1.05) as u64
+}
+
 pub struct ImportRequest<'a> {
     pub path: &'a Path,
     pub role: TrackRole,
@@ -91,9 +118,14 @@ fn decode_into_cache(
     // §1.2/§7.2: the canonical timeline is the container timeline. The decoded audio
     // stream's start_time becomes leading zeros (positive) or dropped samples (negative).
     let epoch_s = audio.start_time_s;
-    let lead_samples: i64 = (epoch_s * SR).round() as i64;
+    let lead_samples: i64 = epoch_lead(epoch_s).map_err(|detail| {
+        CoupleError::UnsupportedFormat {
+            path: req.path.to_path_buf(),
+            detail,
+        }
+    })?;
 
-    let projected = (info.duration_s.max(1.0) * SR * 4.0 * 1.05) as u64;
+    let projected = projected_cache_bytes(info.duration_s, epoch_s);
     cache::preflight(req.cache_root, projected)?;
     std::fs::create_dir_all(&entry.dir)
         .map_err(|e| CoupleError::internal(format!("create cache entry dir: {e}")))?;
@@ -442,5 +474,37 @@ impl Drop for TempCleanup {
         if self.armed {
             let _ = std::fs::remove_dir_all(&self.dir);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn epoch_guard_accepts_real_container_range() {
+        assert_eq!(epoch_lead(0.0), Ok(0));
+        assert_eq!(epoch_lead(0.180792), Ok(8678)); // §1.2 reference camera
+        assert_eq!(epoch_lead(-0.5), Ok(-24_000)); // negative epoch: dropped samples
+        assert!(epoch_lead(95_443.7).is_ok()); // MPEG-TS PCR wrap baseline
+    }
+
+    #[test]
+    fn epoch_guard_rejects_corrupt_start_time() {
+        for bad in [1.0e9, -1.0e9, 100_001.0, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let err = epoch_lead(bad).unwrap_err();
+            assert!(err.contains("start_time"), "detail should name the field: {err}");
+        }
+    }
+
+    #[test]
+    fn preflight_projection_accounts_for_epoch_lead() {
+        let base = projected_cache_bytes(10.0, 0.0);
+        assert_eq!(base, (10.0 * 48_000.0 * 4.0 * 1.05) as u64);
+        assert_eq!(
+            projected_cache_bytes(10.0, 5.0),
+            (15.0 * 48_000.0 * 4.0 * 1.05) as u64
+        );
+        assert_eq!(projected_cache_bytes(10.0, -5.0), base);
     }
 }

@@ -824,3 +824,43 @@ directly and a batch-tool panic should stay a loud exit.
   `couple-node.darwin-arm64.node` was initially SIGKILLed at `require()` with
   "Code Signature Invalid" — stale kernel signature cache on the new artifact;
   `codesign -s - -f` on the .node fixed it and both harnesses then passed.)
+
+## 2026-07-11 — Core hardening: epoch-lead bound, portable disk preflight (F3 a,c,d)
+
+F3 finding, core-internal — no FFI symbol, wire, or shell change; couple.h
+byte-identical.
+
+- **Epoch guard (a)**: `import.rs` now rejects a probed audio `start_time`
+  outside ±100 000 s (`MAX_EPOCH_ABS_S`; first round number above the MPEG-TS
+  33-bit PCR wrap ≈ 95 444 s — no legitimate container baseline exceeds it)
+  as `UnsupportedFormat` instead of honoring it: a corrupt container could
+  previously force near-unbounded zero-fill of the PCM cache. Reject, not
+  clamp — a truncated epoch would silently misplace the track (F1). The
+  disk preflight projection now also counts the epoch zero-fill
+  (`projected_cache_bytes`), so a huge-but-legit lead fails early as an
+  honest DiskFull instead of filling the disk mid-decode. §7.2's epoch rule
+  is unchanged for every input it contemplates; recorded reason per SPEC §0.
+- **Portable disk-free query (c)**: `cache::available_bytes` split into
+  `#[cfg(unix)]` statvfs and `#[cfg(windows)]` GetDiskFreeSpaceExW
+  (windows-sys 0.61, target-gated; already in the windows dep tree via
+  tempfile). Previously the unix-only code had no cfg guard, so couple-core
+  could not compile on windows at all — the electron windows CI job would
+  have failed at build:native on its first real run. libc is now a
+  cfg(unix) dependency.
+- **Loud fallback (d)**: a failed free-disk query now logs
+  `couple-core: free-disk query failed for <path>; assuming enough space
+  (disk-full preflight skipped)` to stderr (core's eprintln idiom; no log
+  crate) before returning u64::MAX — previously the DiskFull preflight
+  (import §6.3 and export §8.3 both) was silently disabled.
+- NOT done here (owner decision pending): F3b content-key hardening
+  (middle-slice) — SPEC.md §6.3 normatively fixes the key composition
+  ([SPEC] tag), so it requires a SPEC-CHANGE with owner sign-off.
+- Gates: `cargo test --release --workspace` green (new: import
+  `epoch_guard_accepts_real_container_range` /
+  `epoch_guard_rejects_corrupt_start_time` /
+  `preflight_projection_accounts_for_epoch_lead`, import_pipeline
+  `absurd_start_time_is_rejected_before_zero_fill`);
+  `scripts/golden-pair-rows.sh` clean; `cargo build --release -p couple-ffi`
+  + couple.h diff clean. Swift/electron gates skipped (core-internal, no
+  policy/ file, header identical); windows arm is compile-verified by the CI
+  electron job, not locally (no MSVC toolchain on macOS).
