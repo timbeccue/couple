@@ -65,6 +65,10 @@ rename them.
 - `scripts/`, `fixtures/` (test corpora; media gitignored, manifests tracked),
   `example_data/` (owner-local media, optional), `design/` (mockups v1+v2 — both
   live; v2 is queue-scope, not a replacement).
+- `website/` — product marketing page (`index.html`, static; only external dep is
+  Google Fonts). Kept from the 2026-07-04 prototype round (the "product frame"
+  variant; other prototypes discarded). Preview: `python3 -m http.server 8642`
+  from `website/`.
 
 ## Build & test (CI is source of truth: `.github/workflows/ci.yml`; needs ffmpeg)
 
