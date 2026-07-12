@@ -1020,3 +1020,12 @@ hand-sync gate stays dormant (no material). Owner signed off 2026-07-11.
   bach 170 0.9786, large bach 169 0.9715) flipped partial → confident;
   crossMatches unchanged (the 5 known fixture-copy cells, none new); report §5
   suites all PASS.
+
+Follow-up (same session): scripts/realdata_sweep.py no longer hardcodes a
+display-only SYNC_LINES mirror — it parses the four verdict lines live from
+core/src/sync.rs `SyncParams::default()` (hard-exit if the parse fails), so
+report annotations can never go stale against a re-freeze again. Caught by the
+enactment implementer: the first regenerated report annotated distributions
+against the OLD lines (`synced_max_rms_ms = 1.0`) while the engine correctly
+used the new ones. Verified: --self-check OK; full sweep re-run annotates
+`= 12.0`, 0/26 over the line. Script stays read-only (SPEC §0).

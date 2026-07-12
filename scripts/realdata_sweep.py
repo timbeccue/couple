@@ -25,13 +25,31 @@ MEDIA_EXT = {".mp4", ".mov", ".m4v", ".3gp", ".mkv",
 SKIP_DIRS = {"peaks", "handsync"}
 MAX_DEPTH = 3
 
-# Current sync-verdict [TUNE] lines (SPEC §5.6 / Appendix A). Display-only mirror.
-SYNC_LINES = {
-    "syncedMaxRmsMs": 1.0,
-    "syncedMinWindows": 6,
-    "syncedFineNcc": 0.5,
-    "suggestResampleMs": 2.0,
-}
+# Sync-verdict lines (SPEC §5.6 / Appendix A), parsed LIVE from the source of
+# truth — core/src/sync.rs `SyncParams::default()` — so report annotations can
+# never go stale against a re-freeze. Display-only; this script never writes
+# any params source.
+def sync_lines_from_source():
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "..", "core", "src", "sync.rs")
+    fields = {"synced_max_rms_ms": "syncedMaxRmsMs",
+              "synced_min_windows": "syncedMinWindows",
+              "synced_fine_ncc": "syncedFineNcc",
+              "suggest_resample_ms": "suggestResampleMs"}
+    import re
+    text = open(src, encoding="utf-8").read()
+    lines = {}
+    for rust, key in fields.items():
+        m = re.search(rf"^\s*{rust}:\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*$", text, re.M)
+        if not m:
+            sys.exit(f"realdata-sweep: cannot parse `{rust}` from {src} — "
+                     "SyncParams::default() moved or was renamed; fix this parser.")
+        v = m.group(1)
+        lines[key] = int(v) if "." not in v else float(v)
+    return lines
+
+
+SYNC_LINES = sync_lines_from_source()
 GOOD_STATES = {"confident", "partial", "split", "twoSources"}
 NEGATIVE_CLASSES = {"nomatch", "insufficientoverlap"}
 
