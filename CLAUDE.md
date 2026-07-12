@@ -32,6 +32,10 @@ rename them.
   core; presentation lives in the shell"). Phases A–F shipped; Phase G (new
   shells) started 2026-07-04 via the `electron/` shell. Stays in root while
   Phase G is in progress.
+- `PLAN-REALDATA-CALIBRATION.md` — PROPOSAL awaiting owner data + sign-off (F4):
+  real-data verdict/margin calibration — run `scripts/realdata-sweep.sh`, read
+  the report, then re-freeze the [TUNE] lines per matcher-corpus CALIBRATION.md
+  §6–7; contains DRAFTED (not enacted) SPEC-CHANGE entries.
 - `docs/archive/` — shipped plans, historical only; kept because code cites them.
 - `fixtures/matcher-corpus/CALIBRATION.md` — derivation of frozen matcher
   thresholds. §1–5 are self-marked superseded; §6–7 (profile 2) is the live
@@ -76,6 +80,10 @@ rename them.
 - `cd mac && swift test`
 - ROC gate (weekly/on-demand, plus auto on push/PR touching matcher paths — .github/workflows/roc-gate.yml):
   `cargo test --release -p couple-core --test matching_evidence -- --ignored synthetic_corpus_roc_gates_hold`
+- Real data (owner-only): `COUPLE_REALDATA_DIR=<sessions> scripts/realdata-sweep.sh`
+  — one-command calibration sweep + report (`--self-check` = synthetic dry run).
+  The realdata suites are `#[ignore]`d ("SKIPPED (no realdata)" in default
+  output); the sweep runs them via `--include-ignored`.
 - Known wart: after adding Swift test seams, `swift test` can throw a spurious link
   error while `swift build` passes — fix with `rm -rf mac/.build/*/debug`.
 
