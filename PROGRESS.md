@@ -1029,3 +1029,7 @@ enactment implementer: the first regenerated report annotated distributions
 against the OLD lines (`synced_max_rms_ms = 1.0`) while the engine correctly
 used the new ones. Verified: --self-check OK; full sweep re-run annotates
 `= 12.0`, 0/26 over the line. Script stays read-only (SPEC §0).
+
+## 2026-07-12 — F3b: middle 8 MiB slice in the cache content key
+
+SPEC-CHANGE (2026-07-12): SPEC §6.3 contentKey = BLAKE3(first 8 MiB ‖ middle 8 MiB ‖ last 8 MiB ‖ u64 size), hex128. Middle slice len = min(size, 8 MiB) at offset (size − len)/2 (floor; overlap allowed, matching the head/tail clamp idiom). F3b from the 2026-07-11 review; approved by owner 2026-07-12; middle 8 MiB slice, not mtime, self-invalidating key, no version bump: a file edited only in the middle previously reused stale PCM/pyramids. Old-key entries stay inside the v1 tree where LRU GC evicts them first (never touched again ⇒ oldest lastUsed); a root bump would orphan them outside GC's reach. Accepted consequences: one-time re-decode of imported media on next use; autosaves keyed by old contentKeys aren't offered. Shells unaffected (key is opaque through FFI; couple.h byte-identical). Gates: workspace tests green (4 new key unit tests in cache.rs), golden rows byte-identical (projection excludes keys by design).

@@ -511,7 +511,7 @@ level data:     interleaved i8 pairs (min,max) per bin, finest level first
 ### 6.3 Cache directory and lifecycle
 
 - Location: `~/Library/Caches/Couple/v1/<contentKey>/{pyramid.cpk, pcm48f32.raw, onsets.json, meta.json}` (CLI: `--cache-dir`, default platform cache dir).
-- `contentKey` = BLAKE3 of (first 8 MiB ‖ last 8 MiB ‖ u64 file size), hex-truncated to 128 bits [SPEC]. Path-independent, rename-proof, fast on 3 GB files.
+- `contentKey` = BLAKE3 of (first 8 MiB ‖ middle 8 MiB ‖ last 8 MiB ‖ u64 file size), hex-truncated to 128 bits [SPEC]. The middle slice is `min(size, 8 MiB)` bytes starting at `(size − len) / 2` (floor); slices may overlap on files < 24 MiB, and a file smaller than 8 MiB is hashed three times in full. Path-independent, rename-proof, middle-edit-sensitive, fast on 3 GB files. The key is self-invalidating: a key-scheme change re-keys content in place — no cache version bump; old-key entries age out via normal LRU GC. (SPEC-CHANGE 2026-07-12, F3b.)
 - Preflight: import MUST verify free disk ≥ 1.5x the projected cache size and fail early with `DiskFull`.
 - GC: LRU by directory atime/recorded lastUsed, default cap 20 GB [SPEC]; `cpl_cache_gc` / `couple cache gc`. Partial writes go to a temp name + atomic rename; `CacheCorrupt` evicts and re-imports.
 - Onsets stored as JSON (`onsets.json`, ~100 KB) — small, debuggable, re-derivable.
@@ -1050,7 +1050,7 @@ PROGRESS.md.
 | Audition | 32-tap Kaiser sinc; 240-sample crossfade | SPEC | §4.8 |
 | Export resampler bar | THD+N ≤ −110 dBFS, linear phase | SPEC | §8.2 |
 | AAC bitrate | 256 kbps | SPEC | §8.4 |
-| Cache | BLAKE3(first 8 MiB ‖ last 8 MiB ‖ size) → 128-bit key; GC cap 20 GB | SPEC | §6.3 |
+| Cache | BLAKE3(first ‖ middle ‖ last 8 MiB ‖ size) → 128-bit key; GC cap 20 GB | SPEC | §6.3 |
 | Progress / cancel | ≤ 30 Hz; cancel observed ≤ 100 ms | SPEC | §4.6 |
 | Budgets | see §9.6 table | SPEC | §9.6 |
 

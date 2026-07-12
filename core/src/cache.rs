@@ -9,7 +9,11 @@ use std::path::{Path, PathBuf};
 
 const KEY_SAMPLE_BYTES: u64 = 8 * 1024 * 1024;
 
-/// BLAKE3(first 8 MiB ‖ last 8 MiB ‖ u64 size), hex-truncated to 128 bits (§6.3).
+/// BLAKE3(first 8 MiB ‖ middle 8 MiB ‖ last 8 MiB ‖ u64 size), hex-truncated to 128 bits (§6.3).
+/// Middle slice: len = min(size, 8 MiB), starting at (size − len) / 2 — centered, floor division.
+/// Slices may overlap (any file < 24 MiB); a file < 8 MiB is simply hashed three times, matching
+/// the existing head/tail clamp idiom. Pure function of (content, size): SPEC-CHANGE 2026-07-12
+/// (F3b) — a middle-only edit previously reused stale caches.
 pub fn content_key(path: &Path) -> Result<String> {
     let mut f = fs::File::open(path).map_err(|_| CoupleError::FileNotFound {
         path: path.to_path_buf(),
@@ -23,6 +27,14 @@ pub fn content_key(path: &Path) -> Result<String> {
     let mut buf = vec![0u8; head_len as usize];
     f.read_exact(&mut buf)
         .map_err(|e| CoupleError::internal(format!("read head: {e}")))?;
+    hasher.update(&buf);
+    let mid_len = size.min(KEY_SAMPLE_BYTES);
+    let mid_start = (size - mid_len) / 2;
+    f.seek(SeekFrom::Start(mid_start))
+        .map_err(|e| CoupleError::internal(format!("seek middle: {e}")))?;
+    let mut buf = vec![0u8; mid_len as usize];
+    f.read_exact(&mut buf)
+        .map_err(|e| CoupleError::internal(format!("read middle: {e}")))?;
     hasher.update(&buf);
     let tail_len = size.min(KEY_SAMPLE_BYTES);
     f.seek(SeekFrom::Start(size - tail_len))
@@ -254,4 +266,98 @@ pub fn gc(cache_root: &Path, max_bytes: u64, pinned: &std::collections::HashSet<
         freed += e.bytes;
     }
     freed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Write a deterministic patterned file of `size` bytes into a fresh tempdir.
+    /// Returns (tempdir kept alive by caller, path).
+    fn patterned_file(size: usize) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("media.bin");
+        let mut f = fs::File::create(&path).unwrap();
+        // Simple deterministic pattern; distinct across the whole span.
+        let mut buf = vec![0u8; size];
+        for (i, b) in buf.iter_mut().enumerate() {
+            *b = (i as u64 % 251) as u8;
+        }
+        f.write_all(&buf).unwrap();
+        f.flush().unwrap();
+        (dir, path)
+    }
+
+    fn flip_byte(path: &Path, offset: u64) {
+        let mut f = fs::OpenOptions::new().read(true).write(true).open(path).unwrap();
+        f.seek(SeekFrom::Start(offset)).unwrap();
+        let mut one = [0u8; 1];
+        f.read_exact(&mut one).unwrap();
+        one[0] ^= 0xff;
+        f.seek(SeekFrom::Start(offset)).unwrap();
+        f.write_all(&one).unwrap();
+        f.flush().unwrap();
+    }
+
+    const MIB: usize = 1024 * 1024;
+
+    #[test]
+    fn middle_edit_changes_key() {
+        // 25 MiB: disjoint head/middle/tail slices.
+        let (_dir, path) = patterned_file(25 * MIB);
+        let base = content_key(&path).unwrap();
+        flip_byte(&path, (25 * MIB / 2) as u64);
+        let after = content_key(&path).unwrap();
+        assert_ne!(base, after, "flipping the middle byte must change the key");
+    }
+
+    #[test]
+    fn head_and_tail_edits_still_change_key() {
+        let (_dir, path) = patterned_file(25 * MIB);
+        let base = content_key(&path).unwrap();
+
+        flip_byte(&path, 0);
+        let head = content_key(&path).unwrap();
+        flip_byte(&path, 0); // restore
+
+        flip_byte(&path, (25 * MIB - 1) as u64);
+        let tail = content_key(&path).unwrap();
+
+        assert_ne!(base, head);
+        assert_ne!(base, tail);
+        assert_ne!(head, tail);
+    }
+
+    #[test]
+    fn small_file_key_matches_composition() {
+        // 1 MiB < 8 MiB: all three slices are the full file, hashed three times, no dedup.
+        let (_dir, path) = patterned_file(MIB);
+        let k1 = content_key(&path).unwrap();
+        let k2 = content_key(&path).unwrap();
+        assert_eq!(k1, k2, "key must be stable across computations");
+
+        let bytes = fs::read(&path).unwrap();
+        let size = bytes.len() as u64;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&bytes); // head
+        hasher.update(&bytes); // middle
+        hasher.update(&bytes); // tail
+        hasher.update(&size.to_le_bytes());
+        let expected = hex128(hasher.finalize().as_bytes());
+        assert_eq!(k1, expected, "small-file triple-hash composition must match");
+    }
+
+    #[test]
+    fn overlapping_regimes_stable_and_middle_sensitive() {
+        for &size in &[10 * MIB, 20 * MIB] {
+            let (_dir, path) = patterned_file(size);
+            let k1 = content_key(&path).unwrap();
+            let k2 = content_key(&path).unwrap();
+            assert_eq!(k1, k2, "key must be stable across computations (size {size})");
+            flip_byte(&path, (size / 2) as u64);
+            let after = content_key(&path).unwrap();
+            assert_ne!(k1, after, "middle flip must change the key (size {size})");
+        }
+    }
 }
