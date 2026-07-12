@@ -1,5 +1,6 @@
-//! §9.2 / §7.3 real-pair import gates. Feature-gated by COUPLE_REALDATA_DIR (§9.4):
-//! skips (with a notice) when the 3.6 GB pair is absent. Run in release.
+//! §9.2 / §7.3 real-pair import gates.
+//! #[ignore]-gated (§9.4, F4 fail-loud): default runs print "SKIPPED (no realdata)"; explicit runs fail loud without COUPLE_REALDATA_DIR.
+//! Run in release.
 
 mod common;
 
@@ -45,11 +46,9 @@ fn mockup_spans(path: &std::path::Path, spb: u64) -> Vec<f64> {
 }
 
 #[test]
+#[ignore = "SKIPPED (no realdata): set COUPLE_REALDATA_DIR and run scripts/realdata-sweep.sh (or -- --include-ignored)"]
 fn real_pair_import_gates() {
-    let Some(dir) = common::realdata_dir() else {
-        eprintln!("SKIP: COUPLE_REALDATA_DIR not set");
-        return;
-    };
+    let dir = common::realdata_dir();
     let ctx = common::test_ctx(&cache_dir());
 
     // Camera (§7.3): duration epoch-inclusive, epoch from the AAC stream start_time.

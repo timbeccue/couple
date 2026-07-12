@@ -740,11 +740,9 @@ fn candidate_overflow_no_silent_eviction() {
 // ============================ realdata finish line ============================
 
 #[test]
+#[ignore = "SKIPPED (no realdata): set COUPLE_REALDATA_DIR and run scripts/realdata-sweep.sh (or -- --include-ignored)"]
 fn realdata_pair_confident_row() {
-    let Some(dir) = common::realdata_dir() else {
-        eprintln!("COUPLE_REALDATA_DIR unset/missing; skipping");
-        return;
-    };
+    let dir = common::realdata_dir();
     let tmp = tempfile::tempdir().unwrap();
     let cache = tmp.path().join("cache");
     let ctx = common::test_ctx(&cache);

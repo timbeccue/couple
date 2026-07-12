@@ -38,6 +38,10 @@ fixtures/golden/*
 fixtures/golden/*/*
 !fixtures/golden/*/*.json
 
+# realdata-sweep output (owner-local calibration reports; see PLAN-REALDATA-CALIBRATION.md)
+/realdata-report.md
+/realdata-report.json
+
 # Caches
 .couple-cache/
 *.cpk

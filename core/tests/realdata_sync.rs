@@ -1,5 +1,6 @@
 //! §9.4 real-data validation: full pipeline on the example_data pair, the F2 offset
-//! freeze procedure, and the §5.7 onset zone property. Gated by COUPLE_REALDATA_DIR.
+//! freeze procedure, and the §5.7 onset zone property.
+//! #[ignore]-gated: default runs print "SKIPPED (no realdata)"; run via scripts/realdata-sweep.sh or --include-ignored.
 
 mod common;
 
@@ -25,11 +26,9 @@ struct Expected {
 }
 
 #[test]
+#[ignore = "SKIPPED (no realdata): set COUPLE_REALDATA_DIR and run scripts/realdata-sweep.sh (or -- --include-ignored)"]
 fn real_pair_full_sync_and_freeze() {
-    let Some(dir) = common::realdata_dir() else {
-        eprintln!("SKIP: COUPLE_REALDATA_DIR not set");
-        return;
-    };
+    let dir = common::realdata_dir();
     let ctx = common::test_ctx(&cache_dir());
     let cam_id = common::import(&ctx, &dir.join("schumann-video.mp4"), TrackRole::Camera).unwrap();
     let ext_id = common::import(&ctx, &dir.join("schumann-audio.wav"), TrackRole::External).unwrap();
@@ -110,11 +109,9 @@ fn real_pair_full_sync_and_freeze() {
 /// onset is an attack-from-quiet — for ≥ 2 of the 3 zone winners, preceding level
 /// < 0.25·s_max and local peak ≥ 0.6·s_max.
 #[test]
+#[ignore = "SKIPPED (no realdata): set COUPLE_REALDATA_DIR and run scripts/realdata-sweep.sh (or -- --include-ignored)"]
 fn real_pair_onset_zone_property() {
-    let Some(dir) = common::realdata_dir() else {
-        eprintln!("SKIP: COUPLE_REALDATA_DIR not set");
-        return;
-    };
+    let dir = common::realdata_dir();
     let ctx = common::test_ctx(&cache_dir());
     let cam_id = common::import(&ctx, &dir.join("schumann-video.mp4"), TrackRole::Camera).unwrap();
     let cam = ctx.track(cam_id).unwrap();

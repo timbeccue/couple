@@ -825,6 +825,51 @@ directly and a batch-tool panic should stay a loud exit.
   "Code Signature Invalid" — stale kernel signature cache on the new artifact;
   `codesign -s - -f` on the .node fixed it and both harnesses then passed.)
 
+## 2026-07-11 — F4: real-data validation made fail-loud + one-command calibration sweep (proposal only)
+
+Finding F4: the realdata suites skipped SILENTLY GREEN without
+COUPLE_REALDATA_DIR, and the [TUNE] verdict lines (SPEC-V2 §V2.9 / V2-F2) have
+never met real sessions. This session ships the automatable half ONLY —
+measurement + a written proposal. ZERO threshold/gate-line/verdict-constant
+changes anywhere (verified: core/src/sync.rs, core/src/resolve.rs,
+core/src/fingerprint/params.rs, core/src/pairing_params.rs, all test assertion
+literals, example_data/expected.json and both shell mirrors are byte-untouched).
+
+- Fail-loud skips: the five COUPLE_REALDATA_DIR-gated tests
+  (core realdata_import, realdata_sync ×2, resolve::realdata_pair_confident_row;
+  cli pair_gates::realdata_pair_confident_row) are now
+  `#[ignore = "SKIPPED (no realdata): …"]` — the matching_evidence ROC-gate
+  idiom — so default `cargo test --release --workspace` prints a visible
+  per-test marker instead of a lying green (libtest shows ignore reasons in
+  default output; eprintln! was swallowed by capture). Run explicitly
+  (`--include-ignored`), a missing/incomplete dir PANICS "REALDATA MISSING"
+  instead of returning early. common::realdata_dir() now returns PathBuf and
+  fails loud. ci.yml UNCHANGED — the marker rides the existing cargo-test step.
+- SPEC-CHANGE (mechanism only; pending owner ack): SPEC §9.4's realdata suites
+  run via COUPLE_REALDATA_DIR + explicit `--include-ignored` (normally through
+  scripts/realdata-sweep.sh) instead of implicitly inside plain cargo test.
+  All §9.4 assertions/tolerances/freeze values untouched.
+- scripts/realdata-sweep.sh + scripts/realdata_sweep.py: the F4 owner sweep.
+  ONE command over COUPLE_REALDATA_DIR — discovers session dirs, `couple pair
+  --json` per session (full spectral evidenceMatrix + legacy z matrix),
+  `couple sync --json` per resolved couple, frozen §9.4 suites when the
+  schumann pair is present — and writes realdata-report.md/.json (gitignored):
+  measured offset/RMS/ppm/z-margin/coverage/triangle distributions vs the
+  CURRENT [TUNE] lines with would-flag counts, and non-selected `match` cells
+  called out as the §3.5 different-take hazard. Measures and reports only;
+  exits 2 with instructions when the dir is missing/empty. `--self-check`
+  synthesizes a 2-video/2-external session (couple fixture session) and
+  asserts the full pipeline end-to-end (verified this session: self-check OK,
+  2 couples synced, cross cells negative, all 7 report sections).
+- PLAN-REALDATA-CALIBRATION.md (root, live plan): the freeze/calibration
+  proposal — PROPOSAL AWAITING OWNER DATA + SIGN-OFF — mirroring
+  fixtures/matcher-corpus/CALIBRATION.md §6–7 methodology (partition/two-sided
+  margins/freeze/value-lock/holdout-once/contamination discipline), with the
+  SPEC-CHANGE entries DRAFTED verbatim and explicitly not enacted.
+- CLAUDE.md (doc map + build/test lines) edited in the WORKING TREE but left
+  UNSTAGED: the file carries an unrelated uncommitted `website/` hunk from
+  another session that a whole-file stage would sweep in.
+
 ## 2026-07-11 — Core hardening: epoch-lead bound, portable disk preflight (F3 a,c,d)
 
 F3 finding, core-internal — no FFI symbol, wire, or shell change; couple.h

@@ -518,17 +518,21 @@ fn margin_rule_prefers_ambiguous() {
 /// `Ambiguous` under profile 1) with refined lag −5536.4 ms (within 0.2 ms of the frozen truth), so
 /// the row is `confident` and the lag well inside the ±25 ms window. Gated on COUPLE_REALDATA_DIR.
 #[test]
+#[ignore = "SKIPPED (no realdata): set COUPLE_REALDATA_DIR and run scripts/realdata-sweep.sh (or -- --include-ignored)"]
 fn realdata_pair_confident_row() {
-    let Some(dir) = std::env::var_os("COUPLE_REALDATA_DIR").map(std::path::PathBuf::from) else {
-        eprintln!("COUPLE_REALDATA_DIR unset; skipping");
-        return;
-    };
+    let dir = std::env::var_os("COUPLE_REALDATA_DIR")
+        .map(std::path::PathBuf::from)
+        .expect(
+            "REALDATA MISSING: run explicitly (--include-ignored) with COUPLE_REALDATA_DIR \
+             set, or via scripts/realdata-sweep.sh",
+        );
     let video = dir.join("schumann-video.mp4");
     let audio = dir.join("schumann-audio.wav");
-    if !video.is_file() || !audio.is_file() {
-        eprintln!("real pair missing; skipping");
-        return;
-    }
+    assert!(
+        video.is_file() && audio.is_file(),
+        "REALDATA MISSING: schumann pair not present under {}",
+        dir.display()
+    );
     let tmp = tempfile::tempdir().unwrap();
     let session = tmp.path().join("session");
     std::fs::create_dir(&session).unwrap();
