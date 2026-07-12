@@ -845,7 +845,7 @@ literals, example_data/expected.json and both shell mirrors are byte-untouched).
   (`--include-ignored`), a missing/incomplete dir PANICS "REALDATA MISSING"
   instead of returning early. common::realdata_dir() now returns PathBuf and
   fails loud. ci.yml UNCHANGED — the marker rides the existing cargo-test step.
-- SPEC-CHANGE (mechanism only; pending owner ack): SPEC §9.4's realdata suites
+- SPEC-CHANGE (mechanism only; owner acked 2026-07-12): SPEC §9.4's realdata suites
   run via COUPLE_REALDATA_DIR + explicit `--include-ignored` (normally through
   scripts/realdata-sweep.sh) instead of implicitly inside plain cargo test.
   All §9.4 assertions/tolerances/freeze values untouched.
