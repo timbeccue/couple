@@ -108,8 +108,7 @@ export class PairSession extends Observable {
     this.syncStatus = 'idle';
     this.lastSyncFailed = false;
     this.playheadT = 0;
-    this.viewT0 = null; // fresh fitted view per load
-    this.viewT1 = null;
+    this.viewport = null; // fresh fitted view per load
     this.anchors = [];
     this.focusedAnchor = null;
     this.bump();
@@ -186,8 +185,7 @@ export class PairSession extends Observable {
   /** Playhead position in video (camera) time, seconds. Audio wiring is M4. */
   playheadT = 0;
   /** Main-stage visible window; `null` ⇒ fitted to the full union (`stageDomain`). */
-  private viewT0: number | null = null;
-  private viewT1: number | null = null;
+  private viewport: Range | null = null;
 
   // ---- Anchor + loupe state (M8 parity): shell render shadow; core owns
   // alignment (SPEC §4.5). Anchors stay in chronological order by `t` (UX §2.2). ----
@@ -243,22 +241,17 @@ export class PairSession extends Observable {
    * union, or the full union when fitted. */
   view(): Range {
     const domain = this.stageDomain();
-    if (this.viewT0 === null || this.viewT1 === null) return domain;
-    return clampView([this.viewT0, this.viewT1], domain) ?? domain;
+    if (this.viewport === null) return domain;
+    return clampView(this.viewport, domain) ?? domain;
   }
 
   /** True when the main stage is zoomed/panned in from the full union. */
   get viewZoomed(): boolean {
-    return this.viewT0 !== null && this.viewT1 !== null;
+    return this.viewport !== null;
   }
 
   private storeView(r: Range | null): void {
-    if (r === null) {
-      this.viewT0 = null;
-      this.viewT1 = null;
-    } else {
-      [this.viewT0, this.viewT1] = r;
-    }
+    this.viewport = r;
     this.bump();
   }
 
