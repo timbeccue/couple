@@ -380,10 +380,6 @@ impl Ctx {
                 let videos = [(slot_a, dur_a)];
                 let audios = [(slot_b, dur_b)];
                 let fmt = crate::fingerprint::FingerprintFormatV1::fixed();
-                // The legacy correlation is computed lazily, only when the orchestrator asks (a
-                // fallback cell, or shadow attachment) — a normal fingerprint cell pays no legacy
-                // cost (§5.2). Compute it once and memoize within this call.
-                let mut cached_legacy: Option<crate::pair::PairCorrelation> = None;
                 // BOUNDARY 10 (§12): parse the per-pair metadata TimeHint ONCE from the two tracks'
                 // probed MediaInfo (BWF/creation-time/device tags). Advisory + non-vetoing: the
                 // orchestrator threads it into consensus where it MAY seed a hypothesis / break an
@@ -397,16 +393,9 @@ impl Ctx {
                     &fmt,
                     params,
                     shadow,
-                    |_, _| {
-                        if cached_legacy.is_none() {
-                            cached_legacy = Some(crate::pair::pair_correlate(
-                                &ta.pyramid,
-                                &tb.pyramid,
-                                params,
-                            ));
-                        }
-                        cached_legacy.clone()
-                    },
+                    // The orchestrator requests legacy evidence at most once per cell: a
+                    // fallback or shadow attachment. Normal primary cells pay no legacy cost.
+                    |_, _| Some(crate::pair::pair_correlate(&ta.pyramid, &tb.pyramid, params)),
                     // BOUNDARY 7 (§11): fine-refine an accepted hypothesis with the EXISTING local
                     // aligner over the two pyramids this Ctx holds. The orchestrator only calls this
                     // for a Match / strong-Ambiguous spectral cell, so a non-match pays nothing.
@@ -562,30 +551,20 @@ impl Ctx {
                 // partial matrix (the orchestrator runs straight-line, so this is a clean boundary).
                 let n_rows = v_slots.len();
                 let mut cancelled = false;
-                // Legacy correlations are computed lazily per (vi, ai) only when the orchestrator
-                // needs one (a fallback cell or shadow attachment). A simple per-cell memo cache
-                // (keyed by (vi, ai)) avoids recomputing within a single batch.
-                let mut legacy_cache: std::collections::HashMap<
-                    (usize, usize),
-                    Option<crate::pair::PairCorrelation>,
-                > = std::collections::HashMap::new();
                 let (matrix, _stats) = crate::matching::match_candidates_fingerprint(
                     &v_slots,
                     &a_slots,
                     &fmt,
                     params,
                     shadow,
+                    // Each cell requests legacy evidence at most once, only for fallback or
+                    // shadow attachment; the normal primary path does not invoke this closure.
                     |vi, ai| {
-                        legacy_cache
-                            .entry((vi, ai))
-                            .or_insert_with(|| {
-                                Some(crate::pair::pair_correlate(
-                                    &vs[vi].pyramid,
-                                    &aus[ai].pyramid,
-                                    params,
-                                ))
-                            })
-                            .clone()
+                        Some(crate::pair::pair_correlate(
+                            &vs[vi].pyramid,
+                            &aus[ai].pyramid,
+                            params,
+                        ))
                     },
                     // BOUNDARY 7 (§11): fine-refine each accepted spectral cell with the existing
                     // local aligner over that cell's pyramids. Called per Match/strong-Ambiguous cell.

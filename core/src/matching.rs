@@ -546,7 +546,7 @@ where
             let (Some(video_fp), Some(audio_idx), Some(idx)) =
                 (v_slot.as_ref(), audio_col_to_index[ai], index.as_ref())
             else {
-                row.push(legacy_fallback(&mut legacy, vi, ai, overlap, shadow));
+                row.push(legacy_fallback(&mut legacy, vi, ai, overlap));
                 continue;
             };
 
@@ -649,7 +649,6 @@ fn legacy_fallback<F>(
     vi: usize,
     ai: usize,
     overlap: f64,
-    _shadow: bool,
 ) -> PairEvidence
 where
     F: FnMut(usize, usize) -> Option<PairCorrelation>,
@@ -1422,6 +1421,56 @@ mod tests {
             matrix2[0][0].classification,
             MatchClassification::Unavailable
         );
+    }
+
+    // A cell invokes the expensive legacy callback at most once: only a shadow attachment or
+    // fallback needs it, and the overlap floor wins even when a fingerprint is unavailable.
+    #[test]
+    fn batch_legacy_calls_are_lazy_and_once_per_cell() {
+        let fmt = FingerprintFormatV1::fixed();
+        let (video, audio) = same_master_pair(50, 200);
+        let videos = [(Some(&video), 30.0), (None, 30.0), (None, 0.5)];
+        let audios = [(Some(&audio), 30.0), (None, 30.0), (Some(&audio), 0.5)];
+
+        for shadow in [false, true] {
+            let params = PairingParams {
+                matcher_mode: if shadow {
+                    MatcherMode::FingerprintShadow
+                } else {
+                    MatcherMode::FingerprintPrimary
+                },
+                min_overlap_s: 1.0,
+                ..Default::default()
+            };
+            let mut calls = [[0; 3]; 3];
+            let (matrix, _) = match_candidates_fingerprint(
+                &videos,
+                &audios,
+                &fmt,
+                &params,
+                shadow,
+                |vi, ai| {
+                    calls[vi][ai] += 1;
+                    Some(legacy_corr(9.0, 100.0, true))
+                },
+                |_, _, _, _, _, _| crate::match_refine::RefineOutcome::not_attempted(),
+                |_, _| None,
+                |_| {},
+            );
+
+            assert_eq!(calls, [[usize::from(shadow), 1, 0], [1, 1, 0], [0, 0, 0]]);
+            assert_eq!(matrix[0][0].method, MatchMethod::SpectralLandmarkV1);
+            for (vi, row) in matrix.iter().enumerate() {
+                for (ai, cell) in row.iter().enumerate() {
+                    assert_eq!(cell.legacy.is_some(), calls[vi][ai] == 1);
+                    if vi == 2 || ai == 2 {
+                        assert_eq!(cell.classification, MatchClassification::InsufficientOverlap);
+                    } else if vi == 1 || ai == 1 {
+                        assert_eq!(cell.method, MatchMethod::EnvelopeV1);
+                    }
+                }
+            }
+        }
     }
 
     // A sub-`min_overlap_s` cell is InsufficientOverlap and never runs a matcher.
