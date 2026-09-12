@@ -514,9 +514,29 @@ pub fn offset_search(
         return Ok(Err(FailReason::NoPlausiblePeak { best_z: s1.best_z }));
     }
 
-    // Stages 2–5 (§5.3): 2400/480/96/24 spb over ±500/±80/±14/±3 ms, max NCC.
-    let mut lag_ms = coarse.lag_ms;
-    let mut fine_ncc = coarse.ncc;
+    let (lag_ms, fine_ncc) = refine_offset(
+        p_cam, p_ext, coarse.lag_ms, coarse.ncc, params, prog, cancel,
+    )?;
+
+    Ok(Ok(OffsetSearch {
+        coarse,
+        runner_up_z: s1.runner_up_z,
+        offset_stage_ms: lag_ms,
+        fine_ncc,
+    }))
+}
+
+/// Stages 2–5 (§5.3), shared by discovered and seeded offsets. If a stage cannot lock,
+/// retain its input lag and NCC; the caller supplies the initial NCC for its search path.
+fn refine_offset(
+    p_cam: &PyramidReader,
+    p_ext: &PyramidReader,
+    mut lag_ms: f64,
+    mut fine_ncc: f64,
+    params: &SyncParams,
+    prog: &mut ProgressEmitter,
+    cancel: &CancelToken,
+) -> Result<(f64, f64)> {
     for (i, (&spb, &span)) in [2400u32, 480, 96, 24]
         .iter()
         .zip(&params.stage_spans_ms)
@@ -531,12 +551,7 @@ pub fn offset_search(
         prog.emit(Phase::SyncRefine, (i + 1) as f64 / 4.0);
     }
 
-    Ok(Ok(OffsetSearch {
-        coarse,
-        runner_up_z: s1.runner_up_z,
-        offset_stage_ms: lag_ms,
-        fine_ncc,
-    }))
+    Ok((lag_ms, fine_ncc))
 }
 
 // ---------- drift pass + full pipeline (§5.5/§5.6) ----------
@@ -750,6 +765,19 @@ pub fn auto_sync_tracks(
     let drift = drift_pass(p_cam, p_ext, search.offset_stage_ms, params, prog, cancel)?;
     prog.emit(Phase::SyncFit, 1.0);
 
+    Ok(finish_auto_sync(search, drift, dur_cam, dur_ext, params, started))
+}
+
+/// Apply the full-sync status/suggestion gates and preserve the search's telemetry. The
+/// original start time and durations come from the entry point, before its offset search.
+fn finish_auto_sync(
+    search: OffsetSearch,
+    drift: DriftFit,
+    dur_cam: f64,
+    dur_ext: f64,
+    params: &SyncParams,
+    started: std::time::Instant,
+) -> SyncResult {
     // §5.5: the fit replaces the stage offset when drift is measurable.
     let (offset_ms, drift_ppm, drift_measurable, fit_rms_ms) = match drift.fit {
         Some(f) => (f.off_ms, f.ppm, true, Some(f.rms_ms)),
@@ -772,7 +800,7 @@ pub fn auto_sync_tracks(
         SyncStatus::LowConfidence
     };
 
-    Ok(SyncResult {
+    SyncResult {
         offset_ms,
         drift_ppm,
         drift_measurable,
@@ -786,7 +814,7 @@ pub fn auto_sync_tracks(
         status,
         suggested_drift_mode: suggested,
         compute_ms: started.elapsed().as_secs_f64() * 1000.0,
-    })
+    }
 }
 
 /// The §5.3 refinement ladder (stages 2–5) starting from `start_lag_ms`, returning an
@@ -808,24 +836,12 @@ fn seeded_offset_search(
 ) -> Result<OffsetSearch> {
     // Begin from the accepted seed offset instead of the stage-1 coarse lag. Stages 2–5 are the
     // identical ladder (2400/480/96/24 spb over ±500/±80/±14/±3 ms, max NCC) used by offset_search.
-    let mut lag_ms = seed.offset_ms;
     // Seed fine_ncc with the seed's drift-free expectation; the ladder overwrites it on the first
     // stage that locks. If NOTHING locks (degenerate audio) it stays 0 ⇒ LowConfidence, the honest
     // outcome — never a fabricated Synced.
-    let mut fine_ncc = 0.0;
-    for (i, (&spb, &span)) in [2400u32, 480, 96, 24]
-        .iter()
-        .zip(&params.stage_spans_ms)
-        .enumerate()
-    {
-        cancel.check()?;
-        if let Some((l, n)) = refine_stage(p_cam, p_ext, spb, lag_ms, span, params.parabolic_clamp)
-        {
-            lag_ms = l;
-            fine_ncc = n;
-        }
-        prog.emit(Phase::SyncRefine, (i + 1) as f64 / 4.0);
-    }
+    let (lag_ms, fine_ncc) = refine_offset(
+        p_cam, p_ext, seed.offset_ms, 0.0, params, prog, cancel,
+    )?;
 
     let coarse = StagePeak {
         lag_ms: seed.offset_ms,
@@ -872,9 +888,8 @@ pub fn auto_sync_tracks_seeded(
         return auto_sync_tracks(p_cam, p_ext, params, prog, cancel);
     };
 
-    // Seeded: skip stage-1 rediscovery; refine from the seed, then run the UNCHANGED tail. The body
-    // below mirrors `auto_sync_tracks` exactly EXCEPT the offset source — duplicated (not factored)
-    // so the proven `auto_sync_tracks` stays literally untouched.
+    // Seeded: skip stage-1 rediscovery; refine from the seed, then run the same drift pass
+    // and result assembly as `auto_sync_tracks`.
     let started = std::time::Instant::now();
     let dur_cam = p_cam.duration_s();
     let dur_ext = p_ext.duration_s();
@@ -884,43 +899,7 @@ pub fn auto_sync_tracks_seeded(
     let drift = drift_pass(p_cam, p_ext, search.offset_stage_ms, params, prog, cancel)?;
     prog.emit(Phase::SyncFit, 1.0);
 
-    // §5.5: the fit replaces the stage offset when drift is measurable. (IDENTICAL to auto_sync.)
-    let (offset_ms, drift_ppm, drift_measurable, fit_rms_ms) = match drift.fit {
-        Some(f) => (f.off_ms, f.ppm, true, Some(f.rms_ms)),
-        None => (search.offset_stage_ms, 0.0, false, None),
-    };
-    let overlap = overlap_info(dur_cam, dur_ext, offset_ms, drift_ppm);
-    let end_to_end_drift_ms = drift_ppm.abs() * overlap.seconds / 1000.0;
-    let suggested = if end_to_end_drift_ms > params.suggest_resample_ms {
-        DriftMode::Resample
-    } else {
-        DriftMode::None
-    };
-    // §5.6 status gates. UNCHANGED thresholds — keyed on the recomputed fine_ncc + drift windows.
-    let status = if search.fine_ncc >= params.synced_fine_ncc
-        && drift.accepted >= params.synced_min_windows
-        && fit_rms_ms.map(|r| r < params.synced_max_rms_ms).unwrap_or(false)
-    {
-        SyncStatus::Synced
-    } else {
-        SyncStatus::LowConfidence
-    };
-
-    Ok(SyncResult {
-        offset_ms,
-        drift_ppm,
-        drift_measurable,
-        coarse: search.coarse,
-        runner_up_z: search.runner_up_z,
-        fine_ncc: search.fine_ncc,
-        windows: drift.windows,
-        fit_rms_ms,
-        end_to_end_drift_ms,
-        overlap,
-        status,
-        suggested_drift_mode: suggested,
-        compute_ms: started.elapsed().as_secs_f64() * 1000.0,
-    })
+    Ok(finish_auto_sync(search, drift, dur_cam, dur_ext, params, started))
 }
 
 /// Offset-only auto-sync (`couple sync --offset-only`, Phase 2). The full pipeline
