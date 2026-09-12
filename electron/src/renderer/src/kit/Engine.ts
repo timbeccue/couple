@@ -2,6 +2,7 @@
 // CoupleKit/Engine.swift. Thread-safety is the core's concern; jobs report
 // from worker threads and surface here via the binding's ThreadsafeFunction.
 import { native } from './native';
+import { CoreError, coreErrorFromJSON } from './CoreError';
 import { Job } from './Job';
 import { TrackHandle } from './Track';
 import { SessionHandle } from './Session';
@@ -14,14 +15,7 @@ import {
   type TrackMeta,
 } from './Wire';
 
-export class CoreError extends Error {
-  readonly kind: string;
-  constructor(kind: string, message: string) {
-    super(message);
-    this.name = 'CoreError';
-    this.kind = kind;
-  }
-}
+export { CoreError } from './CoreError';
 
 export type TrackRole = 'camera' | 'external';
 
@@ -68,29 +62,12 @@ export class Engine {
    * (whose error is drained WORKER-side in couple-node — thread-local
    * LAST_ERROR never crosses threads). */
   static coreErrorFromJSON(json: string): CoreError {
-    try {
-      const obj = JSON.parse(json) as { error?: unknown; message?: string };
-      let kind = 'internal';
-      if (typeof obj.error === 'string') kind = obj.error;
-      else if (obj.error && typeof obj.error === 'object') {
-        kind = Object.keys(obj.error)[0] ?? 'internal';
-      }
-      return new CoreError(kind, obj.message ?? json);
-    } catch {
-      return new CoreError('internal', json);
-    }
+    return coreErrorFromJSON(json);
   }
 
   /** Decode a core JSON payload; null pointer ⇒ throw the thread-local error. */
   private decode<T>(s: string | null): T {
     if (s === null) throw this.takeError();
-    return JSON.parse(s) as T;
-  }
-
-  /** As `decode`, but the payload may be the literal `null` (e.g. measure misses). */
-  private decodeOptional<T>(s: string | null): T | null {
-    if (s === null) throw this.takeError();
-    if (s === 'null') return null;
     return JSON.parse(s) as T;
   }
 

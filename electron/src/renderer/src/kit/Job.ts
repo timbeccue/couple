@@ -3,7 +3,7 @@
 // phase settles `value` and frees the job handle.
 import { native, type ProgressCallback } from './native';
 import type { Engine } from './Engine';
-import { CoreError } from './Engine';
+import { CoreError, coreErrorFromJSON } from './CoreError';
 import type { ProgressUpdate } from './Wire';
 
 export class JobCancelledError extends Error {
@@ -84,16 +84,6 @@ export class Job<T> {
 
   private static decodeError(payloadJson: string | null): CoreError {
     if (!payloadJson) return new CoreError('internal', 'job failed');
-    try {
-      const obj = JSON.parse(payloadJson) as { error?: unknown; message?: string };
-      let kind = 'internal';
-      if (typeof obj.error === 'string') kind = obj.error;
-      else if (obj.error && typeof obj.error === 'object') {
-        kind = Object.keys(obj.error)[0] ?? 'internal';
-      }
-      return new CoreError(kind, obj.message ?? payloadJson);
-    } catch {
-      return new CoreError('internal', payloadJson);
-    }
+    return coreErrorFromJSON(payloadJson);
   }
 }

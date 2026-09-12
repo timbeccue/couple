@@ -17,23 +17,13 @@ enum PolicyEnvelope {
     /// the envelope is an error / the payload is missing / the string could not be read. The caller
     /// maps nil to its conservative fallback.
     static func decodeValue(_ p: UnsafeMutablePointer<CChar>?) -> [String: Any]? {
-        guard let s = Engine.takeString(p),
-              let data = s.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              obj["ok"] as? Bool == true
-        else { return nil }
-        return obj["value"] as? [String: Any]
+        decode(p) as? [String: Any]
     }
 
     /// As `decodeValue`, but for policies whose `value` is a JSON ARRAY (e.g. anchor times). Returns
     /// the success array, or nil on an error envelope / missing payload / read failure.
     static func decodeValueArray(_ p: UnsafeMutablePointer<CChar>?) -> [Any]? {
-        guard let s = Engine.takeString(p),
-              let data = s.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              obj["ok"] as? Bool == true
-        else { return nil }
-        return obj["value"] as? [Any]
+        decode(p) as? [Any]
     }
 
     /// As `decodeValue`, but for policies whose `value` is a SCALAR that may be JSON `null` (e.g.
@@ -42,8 +32,16 @@ enum PolicyEnvelope {
     /// conservative fallback (for "+ anchor": add nothing). `allowFragments` lets the top-level
     /// envelope object parse normally; the scalar lives inside it, so no fragment parsing is needed.
     static func decodeScalar(_ p: UnsafeMutablePointer<CChar>?) -> Any? {
-        guard let s = Engine.takeString(p),
-              let data = s.data(using: .utf8),
+        decode(p)
+    }
+
+    private static func decode(_ p: UnsafeMutablePointer<CChar>?) -> Any? {
+        value(fromJSON: Engine.takeString(p))
+    }
+
+    /// Parse without taking ownership of a C allocation; also exercises raw envelopes in tests.
+    static func value(fromJSON json: String?) -> Any? {
+        guard let data = json?.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               obj["ok"] as? Bool == true
         else { return nil }

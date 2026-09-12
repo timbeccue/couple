@@ -2,10 +2,46 @@
 // the frozen resolver defaults, the sync/async probe error surface (F5c), and
 // the empty-input short-circuit. No media is touched (a missing path is enough
 // to exercise the CoreError path).
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Engine, CoreError } from './Engine';
+import { CoreError as SharedCoreError } from './CoreError';
+import { native } from './native';
 
 describe('Engine', () => {
+  it('keeps the existing CoreError export identical to the shared class', () => {
+    expect(CoreError).toBe(SharedCoreError);
+  });
+
+  it.each([null, ''])('keeps the engine fallback for absent error payload %s', (payload) => {
+    const take = vi.spyOn(native, 'takeErrorJson').mockReturnValue(payload);
+    try {
+      expect(Engine.staticTakeError()).toMatchObject({
+        name: 'CoreError', kind: 'internal', message: 'unknown core error',
+      });
+    } finally {
+      take.mockRestore();
+    }
+  });
+
+  it.each([
+    ['string kind', '{"error":"decode","message":"cannot decode"}', 'decode', 'cannot decode'],
+    ['object kind', '{"error":{"io":"missing"},"message":"file missing"}', 'io', 'file missing'],
+    ['first object key', '{"error":{"io":{},"decode":{}}}', 'io', '{"error":{"io":{},"decode":{}}}'],
+    ['empty message', '{"error":"invalid","message":""}', 'invalid', ''],
+    ['missing message', '{"error":"invalid"}', 'invalid', '{"error":"invalid"}'],
+    ['missing kind', '{"message":"failure"}', 'internal', 'failure'],
+    ['empty kind object', '{"error":{},"message":"failure"}', 'internal', 'failure'],
+    ['null kind', '{"error":null,"message":"failure"}', 'internal', 'failure'],
+    ['malformed JSON', '{broken', 'internal', '{broken'],
+    ['null JSON', 'null', 'internal', 'null'],
+    ['string JSON', '"failure"', 'internal', '"failure"'],
+    ['empty payload', '', 'internal', ''],
+  ])('decodes %s without changing error details', (_name, payload, kind, message) => {
+    const error = Engine.coreErrorFromJSON(payload);
+    expect(error).toBeInstanceOf(CoreError);
+    expect(error).toMatchObject({ name: 'CoreError', kind, message });
+  });
+
   it('E1 resolveParamsDefaultJSON carries the frozen resolver defaults', () => {
     const engine = new Engine({});
     const json = engine.resolveParamsDefaultJSON();
