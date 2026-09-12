@@ -624,12 +624,12 @@ fn resolve_row_fp(
             .total_cmp(&a.1.score)
             .then_with(|| audio_views[a.0].name.cmp(&audio_views[b.0].name))
     });
+    let candidates: Vec<RowCandidate> = c.iter().map(|(ai, e)| mk(*ai, e)).collect();
 
     match c.len() {
         0 => Ok(row(RowState::NoMatch, None, Vec::new(), detail(None, 0, Vec::new(), None))),
         1 => {
-            let (ai, e) = c[0];
-            let sel = mk(ai, e);
+            let sel = candidates[0].clone();
             let state = if sel.coverage.fraction >= p.coverage_full {
                 RowState::Confident
             } else {
@@ -638,12 +638,7 @@ fn resolve_row_fp(
             Ok(row(state, Some(sel), Vec::new(), detail(None, 1, Vec::new(), None)))
         }
         _ => {
-            let covs: Vec<Coverage> = c
-                .iter()
-                .map(|(ai, e)| {
-                    coverage(video.duration_s, audio_views[*ai].duration_s, evidence_lag_drift(e).0)
-                })
-                .collect();
+            let covs: Vec<Coverage> = candidates.iter().map(|c| c.coverage).collect();
             let clusters = cluster_intervals(&covs, p.disjoint_tol_s);
 
             let mut triangles: Vec<TriangleCheck> = Vec::new();
@@ -705,45 +700,18 @@ fn resolve_row_fp(
             }
 
             if ambiguous {
-                let alternates: Vec<RowCandidate> = c.iter().map(|(ai, e)| mk(*ai, e)).collect();
                 return Ok(row(
                     RowState::Ambiguous,
                     None,
-                    alternates,
+                    candidates,
                     detail(margin_out, clusters.len(), triangles, None),
                 ));
             }
 
-            let (sel_pos, _) = winners
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| {
-                    let ca = &covs[a.0];
-                    let cb = &covs[b.0];
-                    ca.seconds
-                        .total_cmp(&cb.seconds)
-                        .then_with(|| c[a.0].1.score.total_cmp(&c[b.0].1.score))
-                        .then_with(|| audio_views[c[b.0].0].name.cmp(&audio_views[c[a.0].0].name))
-                })
-                .expect("non-empty winners");
-            let (sel_idx, sel_simul) = winners[sel_pos];
-            let sel = mk(c[sel_idx].0, c[sel_idx].1);
-            let alternates: Vec<RowCandidate> = c
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != sel_idx)
-                .map(|(_, (ai, e))| mk(*ai, e))
-                .collect();
-            let state = if clusters.len() > 1 {
-                RowState::Split
-            } else if sel_simul {
-                RowState::TwoSources
-            } else if sel.coverage.fraction >= p.coverage_full {
-                RowState::Confident
-            } else {
-                RowState::Partial
-            };
-            Ok(row(state, Some(sel), alternates, detail(margin_out, clusters.len(), triangles, None)))
+            Ok(assemble_winner_row(
+                &video.key, &video.name, video.duration_s, &candidates,
+                &clusters, &winners, &triangles, margin_out, p,
+            ))
         }
     }
 }
@@ -813,16 +781,13 @@ struct Pending {
     video_key: String,
     video_name: String,
     dur_video: f64,
-    /// candidates (audio index into the pool, measurement), z-desc/name order.
-    c: Vec<(usize, PairCorrelation)>,
-    covs: Vec<Coverage>,
+    /// Normalized candidates in z-desc/name order; coverage and identity travel together.
+    candidates: Vec<RowCandidate>,
     clusters: Vec<Vec<usize>>,
     decided: Vec<(usize, bool)>,
     undecided: Vec<Vec<usize>>,
     triangles: Vec<TriangleCheck>,
     margin: Option<f64>,
-    audio_keys: Vec<String>,
-    audio_names: Vec<String>,
 }
 
 /// One contested candidate pair needing a drift-fit RMS.
@@ -909,12 +874,12 @@ fn resolve_row_legacy(
             .total_cmp(&a.1.z)
             .then_with(|| audio_views[a.0].name.cmp(&audio_views[b.0].name))
     });
+    let candidates: Vec<RowCandidate> = c.iter().map(|(ai, m)| mk(*ai, m)).collect();
 
     match c.len() {
         0 => Ok(done(row(RowState::NoMatch, None, Vec::new(), detail(None, 0, Vec::new(), None)))),
         1 => {
-            let (ai, m) = &c[0];
-            let sel = mk(*ai, m);
+            let sel = candidates[0].clone();
             let state = if sel.coverage.fraction >= p.coverage_full {
                 RowState::Confident
             } else {
@@ -923,10 +888,7 @@ fn resolve_row_legacy(
             Ok(done(row(state, Some(sel), Vec::new(), detail(None, 1, Vec::new(), None))))
         }
         _ => {
-            let covs: Vec<Coverage> = c
-                .iter()
-                .map(|(ai, m)| coverage(video.duration_s, audio_views[*ai].duration_s, m.lag_ms))
-                .collect();
+            let covs: Vec<Coverage> = candidates.iter().map(|c| c.coverage).collect();
             let clusters = cluster_intervals(&covs, p.disjoint_tol_s);
 
             let mut triangles: Vec<TriangleCheck> = Vec::new();
@@ -985,11 +947,10 @@ fn resolve_row_legacy(
                         undecided.push(cluster.clone());
                     } else {
                         // CLI legacy: an undecided cluster goes straight to ambiguous.
-                        let alternates: Vec<RowCandidate> = c.iter().map(|(ai, m)| mk(*ai, m)).collect();
                         return Ok(done(row(
                             RowState::Ambiguous,
                             None,
-                            alternates,
+                            candidates,
                             detail(margin_out, clusters.len(), triangles, None),
                         )));
                     }
@@ -999,29 +960,22 @@ fn resolve_row_legacy(
             // Any unsettled contested cluster (escalation on) ⇒ provisional ambiguous carrying
             // the Pending context the post-batch escalation needs.
             if !undecided.is_empty() {
-                let alternates: Vec<RowCandidate> = c.iter().map(|(ai, m)| mk(*ai, m)).collect();
                 let amb = row(
                     RowState::Ambiguous,
                     None,
-                    alternates,
+                    candidates.clone(),
                     detail(margin_out, clusters.len(), triangles.clone(), None),
                 );
-                let audio_keys: Vec<String> = c.iter().map(|(ai, _)| audio_views[*ai].key.clone()).collect();
-                let audio_names: Vec<String> =
-                    c.iter().map(|(ai, _)| audio_views[*ai].name.clone()).collect();
                 let pending = Pending {
                     video_key: video.key.clone(),
                     video_name: video.name.clone(),
                     dur_video: video.duration_s,
-                    c,
-                    covs,
+                    candidates,
                     clusters,
                     decided: winners,
                     undecided,
                     triangles,
                     margin: margin_out,
-                    audio_keys,
-                    audio_names,
                 };
                 return Ok(RowOutcome { row: amb, pending: Some(pending) });
             }
@@ -1030,12 +984,9 @@ fn resolve_row_legacy(
                 &video.key,
                 &video.name,
                 video.duration_s,
-                &c,
-                &covs,
+                &candidates,
                 &clusters,
                 &winners,
-                &c.iter().map(|(ai, _)| audio_views[*ai].key.clone()).collect::<Vec<_>>(),
-                &c.iter().map(|(ai, _)| audio_views[*ai].name.clone()).collect::<Vec<_>>(),
                 &triangles,
                 margin_out,
                 p,
@@ -1045,46 +996,36 @@ fn resolve_row_legacy(
 }
 
 /// Build the final selected row from settled cluster winners (§3.3): disjoint clusters ⇒
-/// recorder restart ⇒ max coverage; ties by z then file name. Shared by pass-1 (no contest)
-/// and the RMS rescue path so both produce identical selection + state.
+/// recorder restart ⇒ max coverage; ties by z/score then file name. Shared by fingerprint,
+/// legacy pass-1 (no contest), and RMS rescue so each uses the same selection + state rules.
 #[allow(clippy::too_many_arguments)]
 fn assemble_winner_row(
     video_key: &str,
     video_name: &str,
     dur_video: f64,
-    c: &[(usize, PairCorrelation)],
-    covs: &[Coverage],
+    candidates: &[RowCandidate],
     clusters: &[Vec<usize>],
     winners: &[(usize, bool)],
-    audio_keys: &[String],
-    audio_names: &[String],
     triangles: &[TriangleCheck],
     margin: Option<f64>,
     p: &ResolveParams,
 ) -> ResolvedRow {
-    let mk = |i: usize| RowCandidate {
-        audio_key: audio_keys[i].clone(),
-        audio_name: audio_names[i].clone(),
-        z: c[i].1.z,
-        lag_ms: c[i].1.lag_ms,
-        coverage: covs[i],
-    };
     let (sel_pos, _) = winners
         .iter()
         .enumerate()
         .max_by(|(_, a), (_, b)| {
-            let ca = &covs[a.0];
-            let cb = &covs[b.0];
-            ca.seconds
-                .total_cmp(&cb.seconds)
-                .then_with(|| c[a.0].1.z.total_cmp(&c[b.0].1.z))
-                .then_with(|| audio_names[b.0].cmp(&audio_names[a.0]))
+            let ca = &candidates[a.0];
+            let cb = &candidates[b.0];
+            ca.coverage.seconds
+                .total_cmp(&cb.coverage.seconds)
+                .then_with(|| ca.z.total_cmp(&cb.z))
+                .then_with(|| cb.audio_name.cmp(&ca.audio_name))
         })
         .expect("non-empty winners");
     let (sel_idx, sel_simul) = winners[sel_pos];
-    let sel = mk(sel_idx);
+    let sel = candidates[sel_idx].clone();
     let alternates: Vec<RowCandidate> =
-        (0..c.len()).filter(|i| *i != sel_idx).map(mk).collect();
+        candidates.iter().enumerate().filter(|(i, _)| *i != sel_idx).map(|(_, c)| c.clone()).collect();
     let state = if clusters.len() > 1 {
         RowState::Split
     } else if sel_simul {
@@ -1171,22 +1112,19 @@ fn escalate(
     fit_by_cand: &HashMap<String, crate::sync::PairFit>,
     params: &ResolveParams,
 ) -> Option<ResolvedRow> {
-    let fit = |i: usize| fit_by_cand.get(&fit_key(&p.video_key, &p.audio_keys[i])).copied();
+    let fit = |i: usize| fit_by_cand.get(&fit_key(&p.video_key, &p.candidates[i].audio_key)).copied();
     let mut winners = p.decided.clone();
     for cluster in &p.undecided {
-        let pick = rms_escalate(cluster, &p.covs, &fit, params)?;
+        let pick = rms_escalate(cluster, &p.candidates, &fit, params)?;
         winners.push((pick, false));
     }
     Some(assemble_winner_row(
         &p.video_key,
         &p.video_name,
         p.dur_video,
-        &p.c,
-        &p.covs,
+        &p.candidates,
         &p.clusters,
         &winners,
-        &p.audio_keys,
-        &p.audio_names,
         &p.triangles,
         p.margin,
         params,
@@ -1199,7 +1137,7 @@ fn escalate(
 /// clean fit").
 fn rms_escalate(
     cluster: &[usize],
-    covs: &[Coverage],
+    candidates: &[RowCandidate],
     fit: &dyn Fn(usize) -> Option<crate::sync::PairFit>,
     params: &ResolveParams,
 ) -> Option<usize> {
@@ -1207,16 +1145,16 @@ fn rms_escalate(
         return None;
     }
     if params.rms_strong_form {
-        rms_escalate_strong(cluster, covs, fit, params)
+        rms_escalate_strong(cluster, candidates, fit, params)
     } else {
-        rms_escalate_conservative(cluster, covs, fit, params)
+        rms_escalate_conservative(cluster, candidates, fit, params)
     }
 }
 
 /// Conservative: confirm `cluster[0]` (best z) is the real take.
 fn rms_escalate_conservative(
     cluster: &[usize],
-    covs: &[Coverage],
+    candidates: &[RowCandidate],
     fit: &dyn Fn(usize) -> Option<crate::sync::PairFit>,
     params: &ResolveParams,
 ) -> Option<usize> {
@@ -1225,9 +1163,9 @@ fn rms_escalate_conservative(
     if (lf.windows as usize) < params.min_fit_windows || lf.rms_ms > params.rms_trust_floor_ms {
         return None;
     }
-    let leader_cov = covs[leader_idx].seconds;
+    let leader_cov = candidates[leader_idx].coverage.seconds;
     for &o in &cluster[1..] {
-        if !comparable_coverage(leader_cov, covs[o].seconds) {
+        if !comparable_coverage(leader_cov, candidates[o].coverage.seconds) {
             continue;
         }
         match fit(o) {
@@ -1250,7 +1188,7 @@ fn rms_escalate_conservative(
 /// others, regardless of z rank. Exactly one such candidate or None.
 fn rms_escalate_strong(
     cluster: &[usize],
-    covs: &[Coverage],
+    candidates: &[RowCandidate],
     fit: &dyn Fn(usize) -> Option<crate::sync::PairFit>,
     params: &ResolveParams,
 ) -> Option<usize> {
@@ -1267,12 +1205,12 @@ fn rms_escalate_strong(
     }
     let winner = cleans[0];
     let wf = fit(winner)?;
-    let winner_cov = covs[winner].seconds;
+    let winner_cov = candidates[winner].coverage.seconds;
     for &o in cluster {
         if o == winner {
             continue;
         }
-        if !comparable_coverage(winner_cov, covs[o].seconds) {
+        if !comparable_coverage(winner_cov, candidates[o].coverage.seconds) {
             continue;
         }
         match fit(o) {
@@ -1406,6 +1344,103 @@ fn chip_text(state: RowState, selected: &Option<RowCandidate>, dur_video: f64) -
 mod tests {
     use super::*;
     use crate::sync::PairFit;
+
+    fn assembly_fixture() -> Pending {
+        let candidate = |key: &str, name: &str, z, lag_ms, coverage| RowCandidate {
+            audio_key: key.into(), audio_name: name.into(), z, lag_ms, coverage,
+        };
+        Pending {
+            video_key: "video-key".into(),
+            video_name: "video.mp4".into(),
+            dur_video: 100.0,
+            candidates: vec![
+                candidate("zeta-key", "zeta.wav", 14.0, 100.0,
+                    Coverage { t0: 0.0, t1: 40.0, seconds: 40.0, fraction: 0.4 }),
+                candidate("alpha-key", "alpha.wav", 12.0, 200.0,
+                    Coverage { t0: 0.0, t1: 60.0, seconds: 60.0, fraction: 0.6 }),
+                candidate("beta-key", "beta.wav", 12.0, 300.0,
+                    Coverage { t0: 20.0, t1: 80.0, seconds: 60.0, fraction: 0.6 }),
+            ],
+            clusters: vec![vec![0], vec![1, 2]],
+            decided: vec![(0, true)],
+            undecided: vec![vec![1, 2]],
+            triangles: vec![TriangleCheck {
+                audio_a: "alpha.wav".into(), audio_b: "beta.wav".into(),
+                ab_z: 10.0, ab_lag_ms: 125.0, residual_ms: 25.0, simultaneous: false,
+            }],
+            margin: Some(2.0),
+        }
+    }
+
+    fn expected_split_row(selected: usize) -> serde_json::Value {
+        let candidates = [
+            serde_json::json!({"audioKey":"zeta-key","audioName":"zeta.wav","z":14.0,"lagMs":100.0,
+                "coverage":{"t0":0.0,"t1":40.0,"seconds":40.0,"fraction":0.4}}),
+            serde_json::json!({"audioKey":"alpha-key","audioName":"alpha.wav","z":12.0,"lagMs":200.0,
+                "coverage":{"t0":0.0,"t1":60.0,"seconds":60.0,"fraction":0.6}}),
+            serde_json::json!({"audioKey":"beta-key","audioName":"beta.wav","z":12.0,"lagMs":300.0,
+                "coverage":{"t0":20.0,"t1":80.0,"seconds":60.0,"fraction":0.6}}),
+        ];
+        let (chip, alternates) = match selected {
+            1 => ("split across files — audio covers 0:00–1:00 of 1:40", vec![&candidates[0], &candidates[2]]),
+            2 => ("split across files — audio covers 0:20–1:20 of 1:40", vec![&candidates[0], &candidates[1]]),
+            _ => panic!("fixture expects alpha or beta"),
+        };
+        serde_json::json!({
+            "videoKey":"video-key", "videoName":"video.mp4", "state":"split", "chip":chip,
+            "selected":candidates[selected], "alternates":alternates,
+            "resolution":{"margin":2.0,"clusters":2,"triangles":[{
+                "audioA":"alpha.wav","audioB":"beta.wav","abZ":10.0,
+                "abLagMs":125.0,"residualMs":25.0,"simultaneous":false
+            }]}
+        })
+    }
+
+    #[test]
+    fn winner_assembly_preserves_ties_state_precedence_and_full_row() {
+        let f = assembly_fixture();
+        let params = ResolveParams::default();
+        let assemble = |clusters: &[Vec<usize>], winners: &[(usize, bool)], p: &ResolveParams| {
+            assemble_winner_row(&f.video_key, &f.video_name, f.dur_video, &f.candidates,
+                clusters, winners, &f.triangles, f.margin, p)
+        };
+        // Coverage beats the higher-z first candidate; alphabetical name resolves the equal-z
+        // coverage tie even when winners are supplied in reverse order. Split beats simultaneity.
+        let row = assemble(&f.clusters, &[(2, false), (1, true), (0, true)], &params);
+        assert_eq!(serde_json::to_value(row).unwrap(), expected_split_row(1));
+        let one_cluster = vec![vec![0, 1, 2]];
+        for (simultaneous, coverage_full, state, chip) in [
+            (true, 0.6, RowState::TwoSources, "2 sources"),
+            (false, 0.6, RowState::Confident, "confident"),
+            (false, 0.95, RowState::Partial, "partial — audio covers 0:00–1:00 of 1:40"),
+        ] {
+            let p = ResolveParams { coverage_full, ..params.clone() };
+            let row = assemble(&one_cluster, &[(1, simultaneous)], &p);
+            assert_eq!(row.state, state);
+            assert_eq!(row.chip, chip);
+        }
+    }
+
+    #[test]
+    fn rms_rescues_preserve_full_rows_and_decline_comparable_fits() {
+        let f = assembly_fixture();
+        let params = ResolveParams::default();
+        let fit = |rms_ms| PairFit { off_ms: 500.0, ppm: 3.0, rms_ms, windows: 12 };
+        let mut fits = HashMap::from([
+            (fit_key("video-key", "alpha-key"), fit(0.5)),
+            (fit_key("video-key", "beta-key"), fit(12.0)),
+        ]);
+        let conservative = escalate(&f, &fits, &params).unwrap();
+        assert_eq!(serde_json::to_value(conservative).unwrap(), expected_split_row(1));
+        fits.insert(fit_key("video-key", "alpha-key"), fit(12.0));
+        fits.insert(fit_key("video-key", "beta-key"), fit(0.5));
+        assert!(escalate(&f, &fits, &params).is_none());
+        let strong = ResolveParams { rms_strong_form: true, ..params.clone() };
+        assert_eq!(serde_json::to_value(escalate(&f, &fits, &strong).unwrap()).unwrap(), expected_split_row(2));
+        fits.insert(fit_key("video-key", "alpha-key"), fit(0.5));
+        assert!(escalate(&f, &fits, &params).is_none());
+        assert!(escalate(&f, &fits, &strong).is_none());
+    }
 
     #[test]
     fn batch_fits_keeps_first_request_order_and_last_successful_fit() {
