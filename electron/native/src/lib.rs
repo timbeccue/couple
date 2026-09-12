@@ -134,6 +134,17 @@ fn release_user(user: *mut c_void) {
     drop(unsafe { Box::from_raw(user as *mut Tsfn) });
 }
 
+/// Transfer the callback to a core job, or release it if the core rejects the
+/// start. A successful job releases it only through the terminal trampoline.
+fn start_job(callback: JsFunction, start: impl FnOnce(*mut c_void) -> u64) -> Result<u64> {
+    let user = user_ptr(callback)?;
+    let id = start(user);
+    if id == 0 {
+        release_user(user);
+    }
+    Ok(id)
+}
+
 // ---------- lifecycle ----------
 
 #[napi]
@@ -221,13 +232,10 @@ pub fn probe_json_async(ctx: BigInt, path: String) -> AsyncTask<ProbeTask> {
 /// role: 0 = camera, 1 = external. Returns the job id (0n = error).
 #[napi]
 pub fn import_start(ctx: BigInt, path: String, role: i32, callback: JsFunction) -> Result<u64> {
-    let user = user_ptr(callback)?;
-    let p = cs(&path);
-    let id = unsafe { c::cpl_import_start(h(&ctx), p.as_ptr(), role, Some(trampoline), user) };
-    if id == 0 {
-        release_user(user);
-    }
-    Ok(id)
+    start_job(callback, |user| {
+        let p = cs(&path);
+        unsafe { c::cpl_import_start(h(&ctx), p.as_ptr(), role, Some(trampoline), user) }
+    })
 }
 
 #[napi]
@@ -383,15 +391,10 @@ pub fn autosync_start(
     params_json: Option<String>,
     callback: JsFunction,
 ) -> Result<u64> {
-    let user = user_ptr(callback)?;
-    let params = OptCStr::new(params_json);
-    let id = unsafe {
-        c::cpl_autosync_start(h(&ctx), h(&session), params.ptr(), Some(trampoline), user)
-    };
-    if id == 0 {
-        release_user(user);
-    }
-    Ok(id)
+    start_job(callback, |user| {
+        let params = OptCStr::new(params_json);
+        unsafe { c::cpl_autosync_start(h(&ctx), h(&session), params.ptr(), Some(trampoline), user) }
+    })
 }
 
 #[napi]
@@ -403,23 +406,20 @@ pub fn autosync_start_seeded(
     seed_drift_ppm: f64,
     callback: JsFunction,
 ) -> Result<u64> {
-    let user = user_ptr(callback)?;
-    let params = OptCStr::new(params_json);
-    let id = unsafe {
-        c::cpl_autosync_start_seeded(
-            h(&ctx),
-            h(&session),
-            params.ptr(),
-            seed_offset_ms,
-            seed_drift_ppm,
-            Some(trampoline),
-            user,
-        )
-    };
-    if id == 0 {
-        release_user(user);
-    }
-    Ok(id)
+    start_job(callback, |user| {
+        let params = OptCStr::new(params_json);
+        unsafe {
+            c::cpl_autosync_start_seeded(
+                h(&ctx),
+                h(&session),
+                params.ptr(),
+                seed_offset_ms,
+                seed_drift_ppm,
+                Some(trampoline),
+                user,
+            )
+        }
+    })
 }
 
 #[napi]
@@ -534,15 +534,10 @@ pub fn export_start(
     opts_json: String,
     callback: JsFunction,
 ) -> Result<u64> {
-    let user = user_ptr(callback)?;
-    let opts = cs(&opts_json);
-    let id = unsafe {
-        c::cpl_export_start(h(&ctx), h(&session), opts.as_ptr(), Some(trampoline), user)
-    };
-    if id == 0 {
-        release_user(user);
-    }
-    Ok(id)
+    start_job(callback, |user| {
+        let opts = cs(&opts_json);
+        unsafe { c::cpl_export_start(h(&ctx), h(&session), opts.as_ptr(), Some(trampoline), user) }
+    })
 }
 
 // ---------- pairing / matching ----------
@@ -658,25 +653,22 @@ pub fn match_candidates_graph_start(
     pairing_params_json: Option<String>,
     callback: JsFunction,
 ) -> Result<u64> {
-    let user = user_ptr(callback)?;
-    let (vs, aus) = (ids(&videos), ids(&audios));
-    let params = OptCStr::new(pairing_params_json);
-    let id = unsafe {
-        c::cpl_match_candidates_graph_start(
-            h(&ctx),
-            vs.as_ptr(),
-            vs.len(),
-            aus.as_ptr(),
-            aus.len(),
-            params.ptr(),
-            Some(trampoline),
-            user,
-        )
-    };
-    if id == 0 {
-        release_user(user);
-    }
-    Ok(id)
+    start_job(callback, |user| {
+        let (vs, aus) = (ids(&videos), ids(&audios));
+        let params = OptCStr::new(pairing_params_json);
+        unsafe {
+            c::cpl_match_candidates_graph_start(
+                h(&ctx),
+                vs.as_ptr(),
+                vs.len(),
+                aus.as_ptr(),
+                aus.len(),
+                params.ptr(),
+                Some(trampoline),
+                user,
+            )
+        }
+    })
 }
 
 #[napi]
@@ -748,25 +740,22 @@ pub fn resolve_start(
     params_json: Option<String>,
     callback: JsFunction,
 ) -> Result<u64> {
-    let user = user_ptr(callback)?;
-    let (vs, aus) = (ids(&videos), ids(&audios));
-    let params = OptCStr::new(params_json);
-    let id = unsafe {
-        c::cpl_resolve_start(
-            h(&ctx),
-            vs.as_ptr(),
-            vs.len(),
-            aus.as_ptr(),
-            aus.len(),
-            params.ptr(),
-            Some(trampoline),
-            user,
-        )
-    };
-    if id == 0 {
-        release_user(user);
-    }
-    Ok(id)
+    start_job(callback, |user| {
+        let (vs, aus) = (ids(&videos), ids(&audios));
+        let params = OptCStr::new(params_json);
+        unsafe {
+            c::cpl_resolve_start(
+                h(&ctx),
+                vs.as_ptr(),
+                vs.len(),
+                aus.as_ptr(),
+                aus.len(),
+                params.ptr(),
+                Some(trampoline),
+                user,
+            )
+        }
+    })
 }
 
 // ---------- pure policies ----------
