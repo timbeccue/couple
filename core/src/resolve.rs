@@ -331,35 +331,6 @@ impl Ctx {
 
 // ============================ resolve entry points ============================
 
-/// Matching results produced for the same ordered track IDs and pairing parameters
-/// passed to [`Ctx::resolve_with_matrix`]. Fingerprint results must come from
-/// [`Ctx::match_candidates_graph`]; raw or shadow evidence is not interchangeable.
-pub enum ResolveMatrix<'a> {
-    Legacy(&'a [Vec<PairCorrelation>]),
-    Fingerprint(&'a [Vec<PairEvidence>]),
-}
-
-impl ResolveMatrix<'_> {
-    fn validate(&self, matcher: MatcherChoice, videos: usize, audios: usize) -> Result<()> {
-        fn has_shape<T>(matrix: &[Vec<T>], videos: usize, audios: usize) -> bool {
-            matrix.len() == videos && matrix.iter().all(|row| row.len() == audios)
-        }
-        let valid_shape = match self {
-            Self::Legacy(matrix) if !matcher.resolves_with_fingerprints() => {
-                has_shape(matrix, videos, audios)
-            }
-            Self::Fingerprint(matrix) if matcher.resolves_with_fingerprints() => {
-                has_shape(matrix, videos, audios)
-            }
-            _ => return Err(CoupleError::invalid("resolution matrix does not match matcher")),
-        };
-        if !valid_shape {
-            return Err(CoupleError::invalid("resolution matrix dimensions do not match tracks"));
-        }
-        Ok(())
-    }
-}
-
 impl Ctx {
     /// Full §3.3 resolution over imported tracks (IMPORTED-TRACK ONLY — callers exclude
     /// audio-less videos; a shell wraps those as inert no-match rows). Builds the matrix
@@ -390,62 +361,6 @@ impl Ctx {
         prog: &mut ProgressEmitter,
         cancel: &CancelToken,
     ) -> Result<Vec<ResolvedRow>> {
-        let (video_views, audio_views) = self.resolve_views(videos, audios, p)?;
-
-        if p.matcher.resolves_with_fingerprints() {
-            // Graph-adjusted classification is the identity authority. Keep its
-            // fingerprint/correlation/graph progress before the row pass.
-            let matrix = if videos.is_empty() || audios.is_empty() {
-                Vec::new()
-            } else {
-                self.match_candidates_graph_prog(videos, audios, &p.pairing, prog, cancel)?
-            };
-            self.resolve_fingerprint(audios, &video_views, &audio_views, p, &matrix, prog, cancel)
-        } else {
-            // The legacy matrix is rayon-parallel; retain its coarse 0→1 bracket.
-            prog.emit(Phase::MatchCorrelate, 0.0);
-            let matrix = if videos.is_empty() || audios.is_empty() {
-                vec![Vec::new(); videos.len()]
-            } else {
-                self.pair_candidates(videos, audios, &p.pairing)?
-            };
-            cancel.check()?;
-            prog.emit(Phase::MatchCorrelate, 1.0);
-            self.resolve_legacy(videos, audios, &video_views, &audio_views, p, &matrix, prog, cancel)
-        }
-    }
-
-    /// Resolve imported tracks using matching results already computed for a report.
-    /// The caller must supply the SAME ordered IDs and `p.pairing` used to build the
-    /// matrix. This Rust-only seam checks matcher and dimensions; it leaves verification,
-    /// independent audio↔audio triangle matching, and RMS escalation with the resolver.
-    pub fn resolve_with_matrix(
-        &self,
-        videos: &[TrackId],
-        audios: &[TrackId],
-        p: &ResolveParams,
-        matrix: ResolveMatrix<'_>,
-    ) -> Result<Vec<ResolvedRow>> {
-        let (video_views, audio_views) = self.resolve_views(videos, audios, p)?;
-        matrix.validate(p.matcher, videos.len(), audios.len())?;
-        let mut prog = ProgressEmitter::new(0, noop_progress());
-        let cancel = CancelToken::new();
-        match matrix {
-            ResolveMatrix::Fingerprint(cells) => {
-                self.resolve_fingerprint(audios, &video_views, &audio_views, p, cells, &mut prog, &cancel)
-            }
-            ResolveMatrix::Legacy(cells) => {
-                self.resolve_legacy(videos, audios, &video_views, &audio_views, p, cells, &mut prog, &cancel)
-            }
-        }
-    }
-
-    fn resolve_views(
-        &self,
-        videos: &[TrackId],
-        audios: &[TrackId],
-        p: &ResolveParams,
-    ) -> Result<(Vec<TrackView>, Vec<TrackView>)> {
         // Validate the core-owned pairing params once before any work.
         p.pairing.validate()?;
 
@@ -460,7 +375,11 @@ impl Ctx {
             .map(|&id| self.track_view(id))
             .collect::<Result<_>>()?;
 
-        Ok((video_views, audio_views))
+        if p.matcher.resolves_with_fingerprints() {
+            self.resolve_fingerprint(videos, audios, &video_views, &audio_views, p, prog, cancel)
+        } else {
+            self.resolve_legacy(videos, audios, &video_views, &audio_views, p, prog, cancel)
+        }
     }
 
     // ---------------- fingerprint path (the default, §13.4) ----------------
@@ -468,14 +387,23 @@ impl Ctx {
     #[allow(clippy::too_many_arguments)]
     fn resolve_fingerprint(
         &self,
+        videos: &[TrackId],
         audios: &[TrackId],
         video_views: &[TrackView],
         audio_views: &[TrackView],
         p: &ResolveParams,
-        matrix: &[Vec<PairEvidence>],
         prog: &mut ProgressEmitter,
         cancel: &CancelToken,
     ) -> Result<Vec<ResolvedRow>> {
+        // The GRAPH-ADJUSTED matrix under the core default (FingerprintPrimary + profile 2):
+        // `classification` is the identity authority; this carries the
+        // MatchFingerprint/MatchCorrelate/MatchGraph progress.
+        let matrix = if videos.is_empty() || audios.is_empty() {
+            Vec::new()
+        } else {
+            self.match_candidates_graph_prog(videos, audios, &p.pairing, prog, cancel)?
+        };
+
         let mut ab_memo: HashMap<(usize, usize), PairEvidence> = HashMap::new();
         let mut rows: Vec<ResolvedRow> = Vec::with_capacity(video_views.len());
         for (vi, v) in video_views.iter().enumerate() {
@@ -501,25 +429,35 @@ impl Ctx {
         video_views: &[TrackView],
         audio_views: &[TrackView],
         p: &ResolveParams,
-        cells: &[Vec<PairCorrelation>],
         prog: &mut ProgressEmitter,
         cancel: &CancelToken,
     ) -> Result<Vec<ResolvedRow>> {
         let sp = &p.pairing;
 
+        // Candidate matrix (§3.2): stage-1 between every imported (video, audio). The legacy
+        // matrix is rayon-parallel; bracket it with a coarse MatchCorrelate 0→1.
+        prog.emit(Phase::MatchCorrelate, 0.0);
+        let cells = if videos.is_empty() || audios.is_empty() {
+            vec![Vec::new(); videos.len()]
+        } else {
+            self.pair_candidates(videos, audios, sp)?
+        };
+        cancel.check()?;
+        prog.emit(Phase::MatchCorrelate, 1.0);
+
         // Per-video candidate cells (audio index, measurement). Candidacy is the loose
         // Stage-A pre-filter when `verify_active`, else the default z-gate against the
         // resolver's own `z_min` (byte-identical to today).
         let mut per_video: Vec<Vec<(usize, PairCorrelation)>> = vec![Vec::new(); video_views.len()];
-        for (vi, row) in cells.iter().enumerate() {
-            for (ai, m) in row.iter().enumerate() {
+        for (vi, row) in cells.into_iter().enumerate() {
+            for (ai, m) in row.into_iter().enumerate() {
                 let candidate = if p.verify_active {
                     m.prefilter_candidate
                 } else {
                     !m.insufficient_overlap && m.z >= p.z_min
                 };
                 if candidate {
-                    per_video[vi].push((ai, m.clone()));
+                    per_video[vi].push((ai, m));
                 }
             }
         }

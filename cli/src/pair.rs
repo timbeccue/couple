@@ -338,16 +338,16 @@ pub fn run_pair(
     let cells = ctx.pair_candidates(&importable, &audio_ids, &sp)?;
     // The legacy candidate `matrix` field (the per-cell `candidate` boolean is read by
     // gate4/gate7). RESOLUTION no longer reads `per_video` — it is the core resolver's job
-    // (`ctx.resolve_with_matrix` below); this loop only builds the display matrix.
+    // (`ctx.resolve` below); this loop only builds the display matrix.
     let mut matrix: Vec<MatrixCell> = Vec::new();
     {
-        let mut row_iter = cells.iter();
+        let mut row_iter = cells.into_iter();
         for (vi, id) in video_ids.iter().enumerate() {
             if id.is_none() {
                 continue;
             }
             let row = row_iter.next().expect("matrix row per imported video");
-            for (ai, m) in row.iter().enumerate() {
+            for (ai, m) in row.into_iter().enumerate() {
                 // `candidate` = "passed the pre-filter" (ruling D4 — its meaning/shape is
                 // unchanged for a given input, so gate6 stays trivially safe). Flag ON: the
                 // loose Stage-A pre-filter — core's `prefilter_candidate` (ncc ≥ refine_ncc_min,
@@ -363,7 +363,7 @@ pub fn run_pair(
                 matrix.push(MatrixCell {
                     video: videos[vi].file.clone(),
                     audio: audios[ai].file.clone(),
-                    m: m.clone(),
+                    m,
                     candidate,
                 });
             }
@@ -387,12 +387,13 @@ pub fn run_pair(
     // attached for comparison. In `legacy` mode this is skipped ⇒ `evidenceMatrix` is None and the
     // output is byte-identical to the legacy surface.
     //
-    // Retain the matrices for resolution after the display/debug work. Fingerprint
-    // resolution consumes this graph-adjusted evidence; shadow resolution still uses legacy cells.
+    // NOTE (perf follow-up): in fingerprint mode the GRAPH-ADJUSTED matrix is computed here for the
+    // `evidenceMatrix` display AND AGAIN inside `ctx.resolve` (which builds its own matrix to resolve
+    // the rows). This double-compute is correct + byte-identical; a later phase can thread one matrix
+    // through both. Sharing it now would change the resolver's public entry point, out of scope here.
     //
     // `importable` (videos with an audio stream) maps row-for-row onto the matrix; audio-less videos
     // are absent (their row is an honest `no match`, woven in shell-side after `ctx.resolve`).
-    let mut spectral_cells = None;
     let evidence_matrix: Option<Vec<Vec<EvidenceCell>>> = if matches!(
         matcher, MatcherChoice::Shadow | MatcherChoice::Fingerprint
     ) {
@@ -410,9 +411,6 @@ pub fn run_pair(
             shadow_params.matcher_mode = MatcherMode::FingerprintShadow;
             ctx.match_candidates(&importable, &audio_ids, &shadow_params)?
         };
-        if matcher == MatcherChoice::Fingerprint {
-            spectral_cells = Some(ev.clone());
-        }
         // Re-attach the pool (video, audio) names, walking `video_ids` so audio-less videos are
         // skipped exactly like the importable list was built.
         let mut cells: Vec<Vec<EvidenceCell>> = Vec::with_capacity(ev.len());
@@ -447,7 +445,7 @@ pub fn run_pair(
     // 4. Resolution (§3.3) — now the CORE resolver's job (PLAN-CORE-SHELL-BOUNDARY Phase B). The
     // §3.3 coverage clustering / disjoint discrimination / §3.4 triangle / §3.5 margin rule / row
     // states all moved to `couple_core::resolve`; this layer maps the CLI params in, calls
-    // `ctx.resolve_with_matrix`, and projects the result back onto the CLI wire `Row`.
+    // `ctx.resolve`, and projects the result back onto the CLI wire `Row`.
     let t_resolve = std::time::Instant::now();
 
     // Build `ResolveParams` from the CLI `PairParams`. `rms_escalation = false` is CRITICAL: the CLI
@@ -467,16 +465,9 @@ pub fn run_pair(
         ..couple_core::ResolveParams::default()
     };
 
-    // Resolution is IMPORTED-TRACK ONLY — it sees only videos with an analyzable audio stream
+    // `ctx.resolve` is IMPORTED-TRACK ONLY — it sees only videos with an analyzable audio stream
     // (`importable`), one resolved row per importable video in order. Audio-less videos are absent.
-    let resolution_matrix = if matcher == MatcherChoice::Fingerprint {
-        couple_core::ResolveMatrix::Fingerprint(
-            spectral_cells.as_ref().expect("fingerprint display matrix was computed"),
-        )
-    } else {
-        couple_core::ResolveMatrix::Legacy(&cells)
-    };
-    let resolved = ctx.resolve_with_matrix(&importable, &audio_ids, &resolve_params, resolution_matrix)?;
+    let resolved = ctx.resolve(&importable, &audio_ids, &resolve_params)?;
 
     // WEAVE the core rows back onto the FULL video list IN ORDER: an audio-less video (has_audio ==
     // Some(false)) gets an inert `no match` row constructed shell-side (matching the resolver's own
