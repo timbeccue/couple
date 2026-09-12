@@ -1,9 +1,8 @@
 //! `couple pair <dir>` — the headless v2 pairing surface (SPEC-V2 §3/§4).
 //!
-//! Core supplies mechanical measurements (`pair_candidates`); THIS layer owns
-//! resolution — coverage intervals, disjoint/overlapping discrimination, the §3.4
-//! audio×audio simultaneity check (triangle closure), the §3.5 margin rule, and the
-//! §3.3 row states — because resolution is shell logic the user can override.
+//! Core owns candidate measurements and row resolution. This layer assembles the
+//! imported media pool, passes CLI overrides to the resolver, and projects its
+//! rows and diagnostic matrices into the command-line report.
 //!
 //! Honesty posture (V2-F2): when conflicting candidates aren't separable, the row is
 //! `ambiguous` with NO selection — never a coin-flip. Timestamps are surfaced as
@@ -28,52 +27,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Which recording-identity matcher `couple pair` runs (PLAN-SPECTRAL-FINGERPRINT-MATCHING §14.3 /
-/// §16.1). Boundary 13 made `Fingerprint` the DEFAULT resolving authority (the §13.4 resolver
-/// migration): rows are resolved from core `PairEvidence` (the graph-adjusted matrix), with
-/// `classification` the identity authority — NO acceptance threshold is re-derived in the shell
-/// (invariant 8). `Legacy` is the DEVELOPER OVERRIDE (`--matcher legacy`, §16.1): it keeps the
-/// proven envelope resolution + resolved rows BYTE-IDENTICAL for ≥ 1 release. `Shadow` resolves
-/// with legacy but ALSO attaches the spectral matrix for observation (calibration read-out).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MatcherChoice {
-    /// The boundary-13 DEVELOPER OVERRIDE: today's envelope resolution, byte-identical output, no
-    /// spectral computation (§16.1).
-    Legacy,
-    /// Resolve with LEGACY but ALSO compute the spectral matrix and include both matrices in --json
-    /// (observational; the resolved rows stay legacy — for calibration comparison).
-    Shadow,
-    /// The DEFAULT (boundary 13): resolve rows from the core graph-adjusted `PairEvidence` matrix —
-    /// `classification` is the identity authority, `score` the deterministic order; coverage
-    /// clustering + override stay shell policy (§13.4).
-    Fingerprint,
-}
-
-impl MatcherChoice {
-    /// Parse the `--matcher` value. Unknown values are rejected with a clear message.
-    pub fn parse(s: &str) -> Result<Self> {
-        match s {
-            "legacy" => Ok(Self::Legacy),
-            "shadow" => Ok(Self::Shadow),
-            "fingerprint" => Ok(Self::Fingerprint),
-            other => Err(CoupleError::invalid(format!(
-                "--matcher must be legacy|shadow|fingerprint, got {other}"
-            ))),
-        }
-    }
-
-    /// True when the spectral `PairEvidence` matrix must be computed (Shadow displays it alongside
-    /// the legacy resolution; Fingerprint resolves FROM it).
-    fn computes_evidence(self) -> bool {
-        matches!(self, Self::Shadow | Self::Fingerprint)
-    }
-
-    /// True when the resolved rows come from the spectral `PairEvidence` matrix (the boundary-13
-    /// default). `Legacy`/`Shadow` keep the legacy resolver as the row authority.
-    fn resolves_with_fingerprints(self) -> bool {
-        matches!(self, Self::Fingerprint)
-    }
-}
+// The CLI parser and resolver share the same matcher choices and errors.
+pub use couple_core::MatcherChoice;
 
 /// Resolution constants (SPEC-V2 §9). All [TUNE] values are surfaced verbatim in the
 /// --json output so the future corpus calibration has the raw numbers (V2-F2).
@@ -439,8 +394,10 @@ pub fn run_pair(
     //
     // `importable` (videos with an audio stream) maps row-for-row onto the matrix; audio-less videos
     // are absent (their row is an honest `no match`, woven in shell-side after `ctx.resolve`).
-    let evidence_matrix: Option<Vec<Vec<EvidenceCell>>> = if matcher.computes_evidence() {
-        let ev = if matcher.resolves_with_fingerprints() {
+    let evidence_matrix: Option<Vec<Vec<EvidenceCell>>> = if matches!(
+        matcher, MatcherChoice::Shadow | MatcherChoice::Fingerprint
+    ) {
+        let ev = if matcher == MatcherChoice::Fingerprint {
             // The DEFAULT (§16.1): the GRAPH-ADJUSTED matrix under the real params (FingerprintPrimary
             // + profile 2). §16.2 fallback (artifact build/read failure, unsupported fingerprint
             // version, or a forced legacy override) is handled INSIDE core (`match_candidates_graph`
@@ -497,11 +454,7 @@ pub fn run_pair(
     // `--params` path already wrote every threshold into `params`, so we copy fields directly.
     let resolve_params = couple_core::ResolveParams {
         pairing: params.pairing.clone(),
-        matcher: match matcher {
-            MatcherChoice::Legacy => couple_core::MatcherChoice::Legacy,
-            MatcherChoice::Shadow => couple_core::MatcherChoice::Shadow,
-            MatcherChoice::Fingerprint => couple_core::MatcherChoice::Fingerprint,
-        },
+        matcher,
         z_min: params.z_min,
         z_margin: params.z_margin,
         triangle_tol_ms: params.triangle_tol_ms,
