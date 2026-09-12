@@ -40,7 +40,7 @@ pub use error::{CoupleError, Result};
 pub use matching::{MatchClassification, MatchMethod, PairEvidence};
 pub use pairing_params::{MatcherMode, PairingParams};
 pub use resolve::{
-    CandidateOverflow, Coverage, MatcherChoice, ResolutionDetail, ResolveParams, ResolvedRow,
+    CandidateOverflow, Coverage, MatcherChoice, ResolutionDetail, ResolveMatrix, ResolveParams, ResolvedRow,
     RowCandidate, RowState, TriangleCheck,
 };
 pub use job::{CancelToken, JobId, Phase, Progress, ProgressFn};
