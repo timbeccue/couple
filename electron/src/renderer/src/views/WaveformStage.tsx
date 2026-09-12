@@ -1,8 +1,7 @@
-// WaveformStage.tsx — the read-only dual-lane waveform editor (SPEC §11.2 / UX
-// §1.6), M3 scope: display + navigation only, no alignment editing yet. A port of
-// the drawing half of mac/Sources/Couple/Views/WaveformStage.swift: camera lane on
-// top (teal), external lane below (amber) drawn through the live mapping, with an
-// overview strip over the whole union and a zoomable/pannable main stage. Envelope
+// WaveformStage.tsx — the dual-lane waveform editor (SPEC §11.2 / UX §1.6),
+// a port of mac/Sources/Couple/Views/WaveformStage.swift: camera lane on top
+// (teal), external lane below (amber) drawn through the live mapping, with one
+// zoomable/pannable strip for navigation, alignment editing, and anchors. Envelope
 // columns come from TrackHandle.band into caller-owned Int8Arrays reused across
 // frames (the call has a 50µs budget — never allocate per frame). Presentation
 // only; no decision logic lives here (PLAN-CORE-SHELL-BOUNDARY §1).
@@ -129,9 +128,7 @@ function drawTicks(
   ctx.stroke();
 }
 
-/** Paint the dual-lane stage over [d0, d1] (video time). Shared by the overview
- * strip and the main stage; `viewport` draws the main window's rectangle on the
- * overview. */
+/** Paint the dual-lane stage over [d0, d1] (video time). */
 function paintStage(
   ctx: CanvasRenderingContext2D,
   cssW: number,
@@ -140,7 +137,6 @@ function paintStage(
   d0: number,
   d1: number,
   buf: BandBuffers,
-  viewport: [number, number] | null,
   laneAudio: LaneAudio,
   playing: boolean
 ): void {
@@ -182,17 +178,6 @@ function paintStage(
   ctx.fillText('V · CAMERA', 4, BADGE_GUTTER_H + 4);
   ctx.fillStyle = 'rgba(224, 166, 60, 0.7)';
   ctx.fillText('A · EXTERNAL', 4, BADGE_GUTTER_H + laneH + 4);
-
-  // Main-window rectangle on the overview (only when zoomed in).
-  if (viewport) {
-    const rx0 = ((viewport[0] - d0) / span) * cssW;
-    const rx1 = ((viewport[1] - d0) / span) * cssW;
-    ctx.fillStyle = 'rgba(74, 158, 218, 0.12)';
-    ctx.fillRect(rx0, BADGE_GUTTER_H, rx1 - rx0, waveH);
-    ctx.strokeStyle = 'rgba(74, 158, 218, 0.6)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(rx0 + 0.5, BADGE_GUTTER_H + 0.5, rx1 - rx0 - 1, waveH - 1);
-  }
 
   // Playhead (UX §1.6): always visible once a session exists — bright while
   // playing, grey when parked — with a grab-handle triangle at the gutter edge
@@ -278,7 +263,6 @@ function Stage({
       d0,
       d1,
       buf,
-      null,
       {
         camGain: audition.camGain,
         extGain: audition.extGain,

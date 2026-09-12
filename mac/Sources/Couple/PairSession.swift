@@ -14,20 +14,11 @@ enum SlotKind: String {
 
 enum SlotState {
     case empty
-    case probing(filename: String)
-    case importing(filename: String, phase: String, fraction: Double)
     case loaded(TrackHandle)
 
     var track: TrackHandle? {
         if case .loaded(let t) = self { return t }
         return nil
-    }
-
-    var isBusy: Bool {
-        switch self {
-        case .probing, .importing: return true
-        default: return false
-        }
     }
 }
 
@@ -154,17 +145,6 @@ final class PairSession {
     /// Alignment inputs are disabled while auto-sync runs (UX §3).
     var inputsEnabled: Bool { session != nil && !isSyncRunning }
 
-    var pairName: String {
-        let c = camera.track.map { URL(fileURLWithPath: $0.meta.info.path).deletingPathExtension().lastPathComponent }
-        let e = external.track.map { URL(fileURLWithPath: $0.meta.info.path).deletingPathExtension().lastPathComponent }
-        switch (c, e) {
-        case let (c?, e?): return "\(c) × \(e)"
-        case let (c?, nil): return c
-        case let (nil, e?): return e
-        default: return "—"
-        }
-    }
-
     var overlap: ClosedRange<Double>? {
         guard let cam = camera.track, let ext = external.track else { return nil }
         return mapping.overlap(camDur: cam.durationS, extDur: ext.durationS)
@@ -230,10 +210,6 @@ final class PairSession {
         } catch {
             loadError = "session: \((error as? CoreError)?.message ?? error.localizedDescription)"
         }
-    }
-
-    func slot(_ kind: SlotKind) -> SlotState {
-        kind == .camera ? camera : external
     }
 
     private func resetAlignment() {
@@ -738,12 +714,6 @@ final class PairSession {
         return false
     }
 
-    var suggestedExportFilename: String {
-        guard let cam = camera.track else { return "synced" }
-        let base = URL(fileURLWithPath: cam.meta.info.path).deletingPathExtension().lastPathComponent
-        return "\(base)-synced.\(exportFileExtension)"
-    }
-
     var exportFileExtension: String {
         switch exportFormat {
         case .wav: return "wav"
@@ -851,21 +821,6 @@ final class PairSession {
         guard let session, let cam = camera.track, let ext = external.track,
               let state = try? session.state() else { return }
         SessionStore.save(camera: cam.meta, external: ext.meta, alignment: state)
-    }
-
-    private func offerRestoreIfAvailable() {
-        guard let cam = camera.track, let ext = external.track,
-              let saved = SessionStore.load(cameraKey: cam.meta.contentKey,
-                                            externalKey: ext.meta.contentKey) else { return }
-        restorable = saved
-        let when = saved.savedAt.prefix(16).replacingOccurrences(of: "T", with: " ")
-        toasts.show(Toast(
-            style: .info, title: "Saved session found for this pair",
-            detail: "\(when) · offset \(String(format: "%+.2f", saved.alignment.offsetMs)) ms"
-                + (saved.alignment.verified ? " · verified" : ""),
-            actionLabel: "Restore",
-            action: { [weak self] in self?.applyRestored() }
-        ), seconds: 15)
     }
 
     /// Apply this pair's saved per-pair alignment (SessionStore) if present — the
