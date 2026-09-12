@@ -1033,3 +1033,65 @@ used the new ones. Verified: --self-check OK; full sweep re-run annotates
 ## 2026-07-12 — F3b: middle 8 MiB slice in the cache content key
 
 SPEC-CHANGE (2026-07-12): SPEC §6.3 contentKey = BLAKE3(first 8 MiB ‖ middle 8 MiB ‖ last 8 MiB ‖ u64 size), hex128. Middle slice len = min(size, 8 MiB) at offset (size − len)/2 (floor; overlap allowed, matching the head/tail clamp idiom). F3b from the 2026-07-11 review; approved by owner 2026-07-12; middle 8 MiB slice, not mtime, self-invalidating key, no version bump: a file edited only in the middle previously reused stale PCM/pyramids. Old-key entries stay inside the v1 tree where LRU GC evicts them first (never touched again ⇒ oldest lastUsed); a root bump would orphan them outside GC's reach. Accepted consequences: one-time re-decode of imported media on next use; autosaves keyed by old contentKeys aren't offered. Shells unaffected (key is opaque through FFI; couple.h byte-identical). Gates: workspace tests green (4 new key unit tests in cache.rs), golden rows byte-identical (projection excludes keys by design).
+
+## 2026-09-11 — Behavior-preserving maintenance pass
+
+Implemented the twelve maintenance-review items in sixteen isolated code commits.
+No specification, thresholds, wire/persistence schemas, C ABI, or UI affordances
+were intentionally changed. The separate lifecycle/undo/multi-context correctness
+concerns identified during review remain outside this maintenance scope.
+
+| Review item | Cleanup | Commit |
+| --- | --- | --- |
+| 1 | Remove unused Swift editor scaffolding and Electron minimap branch | `da9225e` |
+| 2 | Share Electron error parsing and Swift policy-envelope decoding | `6683c95` |
+| 3 | Disarm import/export cleanup guards without leaking their path allocations | `9108b66` |
+| 4 | Reuse the core matcher enum in the CLI | `51d58eb` |
+| 5 | Share Swift single/batch export-option encoding | `f943978` |
+| 6a | Make the already-required Swift app engine nonoptional | `e02a349` |
+| 6b | Store the Electron viewport as one optional range | `29d09fa` |
+| 6c | Type activity-policy request payloads | `91097fc` |
+| 7, Swift | Centralize job-start callback ownership | `8d9598e` |
+| 7, Electron | Centralize native job-start callback ownership | `70d9238` |
+| 8a | Remove redundant legacy-correlation caches | `0dc5391` |
+| 8b | Simplify ordered fit-request bookkeeping | `fabd069` |
+| 9 | Reuse pivot-drift arithmetic for anchor drags | `85325c5` |
+| 10 | Share sync refinement and result assembly | `9834496` |
+| 11 | Normalize resolver candidates and share selected-row assembly | `bd28653` |
+| 12 | Reuse CLI matching matrices through a core-owned Rust seam | `404b9ee` |
+
+The matrix seam validates matcher kind and dimensions; callers supply the same
+ordered imported tracks and pairing parameters used to build the matrix. Existing
+C/progress entrypoints still build their own matrices. Shadow rows still use legacy
+correlations, fingerprint rows still use graph-adjusted evidence, and independent
+audio/audio triangle checks remain independent. The CLI preserves display/debug
+ordering and skips its second matrix computation. No benchmark speedup is claimed.
+
+Validation:
+
+- `cargo test --offline --release --workspace -- --test-threads=1`: 458 passed,
+  zero failed, 11 ignored across 27 targets. The ignores were six owner-data
+  cases, four explicit long/performance cases, and the separately run ROC gate.
+- Five resolver decision goldens and the explicit synthetic ROC gate passed.
+- Compared against the immutable pre-maintenance executable (`5f48940`): all 15
+  complete matching/sync cases and 18 CLI edge cases match, including errors,
+  exit codes, audio-less videos, and empty axes. Only top-level wall-clock timing
+  fields were normalized.
+- Twenty RMS-on scenarios (36 complete rows) match the capture made immediately
+  before candidate normalization, byte-for-byte with no fields excluded.
+- Rebuilt CLI, FFI, and native Electron binding; generated `ffi/couple.h` is
+  byte-identical to the original header.
+- Swift release and dev-harness builds pass; 127 Swift tests pass against a fresh
+  test build linked to the final static library.
+- Electron: 83 tests, typecheck, native/production builds, smoke, and all five
+  cross-shell parity scenarios pass.
+- Added focused pre/post characterization for error envelopes, callback ownership,
+  viewport and pivot behavior, legacy callback counts, fit ordering, and RMS row
+  projection; matrix reuse tests compare complete rows across matcher modes,
+  verifier/overflow/RMS settings, empty axes, and invalid matrix inputs.
+
+Verification boundary: owner-only real-data suites and the explicitly ignored
+long/performance tests were not exercised. The synthetic ROC gate was run explicitly.
+The Swift GUI export harness could not launch through sandboxed LaunchServices;
+both app variants compile, and sixteen before/after export-option combinations
+matched. Existing unrelated compiler warnings remain. No dependency versions changed.
