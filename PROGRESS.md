@@ -1095,3 +1095,23 @@ long/performance tests were not exercised. The synthetic ROC gate was run explic
 The Swift GUI export harness could not launch through sandboxed LaunchServices;
 both app variants compile, and sixteen before/after export-option combinations
 matched. Existing unrelated compiler warnings remain. No dependency versions changed.
+
+### Follow-up — Revert matrix reuse and trim maintenance tests
+
+Reverted item 12 in `38cf3eb`: matrix reuse introduced a caller provenance obligation
+without measured benefit. Resolution again constructs its own matching matrices.
+All other production simplifications remain; production source matches `bd28653`.
+
+Removed 287 net lines of newly added tests/harness code: 89 with the reverted API
+and 198 by consolidating ownership setup, removing duplicate parser/policy checks,
+trimming unchanged UI behavior permutations, and replacing duplicated full-row JSON
+fixtures with focused selection assertions. Preexisting tests remain. The retained
+tests cover callback ownership, error boundaries, fit ordering, resolver choices,
+and viewport/pivot behavior. Test/harness growth is now 572 lines versus 859;
+production code is 191 lines smaller than the pre-maintenance baseline.
+
+Follow-up validation: four resolver unit tests, all 124 Swift tests, all 64 Electron
+tests, Electron typecheck, and fresh CLI/FFI/native builds pass. Repeated all 33 CLI
+comparisons and 20 RMS scenarios against the baselines described above: no changes.
+The C header remains byte-identical. The full Rust suite was not repeated for this
+test-only pruning; the earlier verification and its boundaries are recorded above.

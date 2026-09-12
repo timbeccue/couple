@@ -2,9 +2,8 @@
 // binding, so every assertion is CORE's own decision (no re-encoded table).
 // Also pins the CONSERVATIVE fallbacks: a malformed request must degrade to the
 // protected / empty plan, never a silent optimistic default.
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import * as Policies from './Policies';
-import { native } from './native';
 
 describe('matchQuality', () => {
   it('P1 automatic selection carries the resolver auto-verdict', () => {
@@ -113,77 +112,5 @@ describe('conservative fallbacks', () => {
       affectedCouples: 0,
       affectedApproved: 0,
     });
-  });
-});
-
-describe('activity request wire contract', () => {
-  const cases: Array<{
-    name: string;
-    request: Policies.ActivityRequest;
-    line: Record<string, unknown>;
-  }> = [
-    {
-      name: 'standalone import',
-      request: { elapsedMs: 250, importing: { phase: 'decoding', fraction: 0.5, index: 2, total: 3 } },
-      line: { kind: 'import', index: 2, total: 3 },
-    },
-    {
-      name: 'pairing with default flags',
-      request: { elapsedMs: 250, pairing: { videoCount: 2, audioCount: 3 } },
-      line: { kind: 'pairingComparing', videoCount: 2, audioCount: 3 },
-    },
-    {
-      name: 'queued sync',
-      request: { elapsedMs: 250, syncing: { index: 2, total: 3 } },
-      line: { kind: 'syncing', index: 2, total: 3 },
-    },
-    {
-      name: 'export with default preflight flag',
-      request: { elapsedMs: 250, exporting: { index: 2, total: 3, rowFraction: 0.5 } },
-      line: { kind: 'export', index: 2, total: 3 },
-    },
-    {
-      name: 'nested ingest matching',
-      request: {
-        elapsedMs: 250,
-        ingest: { matching: { phase: 'comparing', fraction: 0.5 }, stagesPlanned: { matchStage: true } },
-      },
-      line: { kind: 'ingestMatching' },
-    },
-    {
-      name: 'failure message',
-      request: { elapsedMs: 0, failure: 'Could not export take 2.' },
-      line: { kind: 'failure', message: 'Could not export take 2.' },
-    },
-  ];
-
-  it.each(cases)('passes $name through the real policy binding', ({ request, line }) => {
-    expect(Policies.activitySummary(request)?.line).toMatchObject(line);
-  });
-
-  it('preserves omitted fields and explicit nulls without inserting defaults into JSON', () => {
-    const wire = vi.spyOn(native, 'policyActivity'); // call through to the real binding
-    const omitted: Policies.ActivityRequest = { elapsedMs: 250 };
-    const nullable: Policies.ActivityRequest = {
-      elapsedMs: 250, importing: null, pairing: null, syncing: null,
-      exporting: null, ingest: null, failure: null, phaseFloor: null,
-    };
-    try {
-      expect(Policies.activitySummary(omitted)).toBeNull();
-      expect(Policies.activitySummary(nullable)).toBeNull();
-      expect(wire.mock.calls.map(([json]) => JSON.parse(json))).toEqual([omitted, nullable]);
-    } finally {
-      wire.mockRestore();
-    }
-  });
-
-  it('keeps the idle fallback for a malformed nested signal', () => {
-    expect(Policies.activitySummary({
-      elapsedMs: 250,
-      ingest: {
-        matching: { phase: 'unknown' as never, fraction: 0.5 },
-        stagesPlanned: { matchStage: true },
-      },
-    })).toBeNull();
   });
 });

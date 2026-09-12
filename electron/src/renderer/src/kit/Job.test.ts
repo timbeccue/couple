@@ -8,15 +8,11 @@ import { native, type ProgressCallback } from './native';
 describe('Job terminal errors', () => {
   it.each([
     ['string kind', '{"error":"decode","message":"cannot decode"}', 'decode', 'cannot decode'],
-    ['object kind', '{"error":{"io":"missing"},"message":"file missing"}', 'io', 'file missing'],
-    ['malformed JSON', '{broken', 'internal', '{broken'],
-    ['null JSON', 'null', 'internal', 'null'],
     ['null payload', null, 'internal', 'job failed'],
     ['empty payload', '', 'internal', 'job failed'],
   ])('frees the handle and rejects with %s', async (_name, payload, kind, message) => {
     const engine = new Engine();
-    // Inject only the job source: it lets the test deliver exact wire payloads
-    // without asking a media job to manufacture malformed errors.
+    // Inject the job source to exercise the wrapper's fallback and ownership.
     const free = vi.spyOn(native, 'jobFree').mockImplementation(() => {});
     const decode = vi.fn((value: string) => value);
     let callback!: ProgressCallback;
