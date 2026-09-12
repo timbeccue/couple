@@ -520,7 +520,7 @@ pub fn export(
     cmd.args(["-progress", "pipe:2"]);
     cmd.arg(&tmp);
 
-    let cleanup = TmpCleanup { path: tmp.clone() };
+    let cleanup = TmpCleanup { path: tmp.clone(), armed: true };
     let mut consumer = Consumer::spawn(cmd)?;
     let mut reader = SourceReader::spawn(ffmpeg_bin, external_path, &plan)?;
 
@@ -554,7 +554,7 @@ pub fn export(
 
     std::fs::rename(&tmp, &opts.output_path)
         .map_err(|e| CoupleError::internal(format!("rename output: {e}")))?;
-    std::mem::forget(cleanup);
+    cleanup.disarm();
 
     Ok(ExportReport {
         output_path: opts.output_path.display().to_string(),
@@ -711,10 +711,19 @@ fn write_zeros(consumer: &mut Consumer, frames: u64, channels: usize, wire: Wire
 
 struct TmpCleanup {
     path: PathBuf,
+    armed: bool,
+}
+
+impl TmpCleanup {
+    fn disarm(mut self) {
+        self.armed = false;
+    }
 }
 
 impl Drop for TmpCleanup {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        if self.armed {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }

@@ -303,7 +303,7 @@ fn decode_into_cache(
         created_by: format!("couple-core {}", env!("CARGO_PKG_VERSION")),
     };
     write_atomic(&entry.meta_path(), &serde_json::to_vec_pretty(&cmeta).unwrap())?;
-    std::mem::forget(cleanup); // cache entry is now valid
+    cleanup.disarm(); // cache entry is now valid
     prog.emit(Phase::Finalize, 1.0);
     Ok(())
 }
@@ -463,10 +463,16 @@ fn drop_pcm_tmp(p: &Path) {
     let _ = std::fs::remove_file(p);
 }
 
-/// Removes the (partial) cache entry dir on drop unless defused via mem::forget.
+/// Removes the (partial) cache entry dir on drop unless disarmed.
 struct TempCleanup {
     dir: PathBuf,
     armed: bool,
+}
+
+impl TempCleanup {
+    fn disarm(mut self) {
+        self.armed = false;
+    }
 }
 
 impl Drop for TempCleanup {
