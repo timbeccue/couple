@@ -551,7 +551,7 @@ impl Ctx {
         // ONE batch fit for every contested pair (PLAN-RMS-TIEBREAKER §4.4). De-dups identical
         // (video, audio, lag~0.1 ms) pairs so a pair shared by two rows fits once.
         prog.emit(Phase::Resolve, 0.0);
-        let fit_by_cand = batch_fits(self, &fit_reqs, sp)?;
+        let fit_by_cand = batch_fits(&fit_reqs, |pairs| self.pair_fit_batch(pairs, sp))?;
         let rows: Vec<ResolvedRow> = outcomes
             .into_iter()
             .map(|o| finalize(o, &fit_by_cand, p))
@@ -1133,36 +1133,30 @@ fn fit_key(video_key: &str, audio_key: &str) -> String {
 /// audioKey) → PairFit map. De-dups identical (video, audio, lag~0.1 ms) pairs WITHIN this
 /// resolve so a pair shared by two rows is fitted once.
 fn batch_fits(
-    ctx: &Ctx,
     requests: &[FitRequest],
-    sp: &PairingParams,
+    fit_batch: impl FnOnce(&[(TrackId, TrackId, f64)]) -> Result<Vec<Option<crate::sync::PairFit>>>,
 ) -> Result<HashMap<String, crate::sync::PairFit>> {
     if requests.is_empty() {
         return Ok(HashMap::new());
     }
     // De-dup key: (video_key, audio_key, round(lag*10)).
-    let mut order: Vec<(String, String, i64)> = Vec::new();
+    let mut order: Vec<&FitRequest> = Vec::new();
     let mut seen: std::collections::HashSet<(String, String, i64)> = std::collections::HashSet::new();
-    let mut req_by_key: HashMap<(String, String, i64), &FitRequest> = HashMap::new();
     for r in requests {
         let k = (r.video_key.clone(), r.audio_key.clone(), (r.lag_ms * 10.0).round() as i64);
-        if seen.insert(k.clone()) {
-            order.push(k.clone());
-            req_by_key.insert(k, r);
+        if seen.insert(k) {
+            order.push(r);
         }
     }
     let pairs: Vec<(TrackId, TrackId, f64)> = order
         .iter()
-        .map(|k| {
-            let r = req_by_key[k];
-            (r.video_id, r.audio_id, r.lag_ms)
-        })
+        .map(|r| (r.video_id, r.audio_id, r.lag_ms))
         .collect();
-    let fits = ctx.pair_fit_batch(&pairs, sp)?;
+    let fits = fit_batch(&pairs)?;
     let mut fit_by_cand: HashMap<String, crate::sync::PairFit> = HashMap::new();
-    for (k, fit) in order.iter().zip(fits) {
+    for (r, fit) in order.iter().zip(fits) {
         if let Some(f) = fit {
-            fit_by_cand.insert(fit_key(&k.0, &k.1), f);
+            fit_by_cand.insert(fit_key(&r.video_key, &r.audio_key), f);
         }
     }
     Ok(fit_by_cand)
@@ -1405,5 +1399,52 @@ fn chip_text(state: RowState, selected: &Option<RowCandidate>, dur_video: f64) -
             fmt_mmss(dur_video)
         ),
         _ => state.chip().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sync::PairFit;
+
+    #[test]
+    fn batch_fits_keeps_first_request_order_and_last_successful_fit() {
+        let request = |audio_key: &str, video_id, audio_id, lag_ms| FitRequest {
+            video_key: "video".into(),
+            audio_key: audio_key.into(),
+            video_id,
+            audio_id,
+            lag_ms,
+        };
+        let requests = [
+            request("a", 1, 2, 1.041),
+            request("a", 11, 12, 1.049), // same rounded bucket; first handles/lag win
+            request("b", 3, 4, -0.06),
+            request("b", 13, 14, -0.09), // same negative rounded bucket
+            request("a", 5, 6, 1.06),   // new rounded bucket, same final candidate key
+            request("a", 7, 8, 1.16),
+            request("b", 9, 10, -0.04), // rounds to zero, distinct from -0.06
+        ];
+        let fit = |off_ms| PairFit { off_ms, ppm: 2.0, rms_ms: 0.5, windows: 12 };
+        let first = fit(10.0);
+        let other = fit(20.0);
+        let last = fit(30.0);
+        let fits = batch_fits(&requests, |pairs| {
+            assert_eq!(
+                pairs,
+                &[(1, 2, 1.041), (3, 4, -0.06), (5, 6, 1.06), (7, 8, 1.16), (9, 10, -0.04)]
+            );
+            Ok(vec![Some(first), Some(other), Some(last), None, None])
+        }).unwrap();
+
+        assert_eq!(fits.len(), 2);
+        assert_eq!(fits[&fit_key("video", "a")], last);
+        assert_eq!(fits[&fit_key("video", "b")], other);
+    }
+
+    #[test]
+    fn batch_fits_empty_requests_skip_fitting() {
+        let fits = batch_fits(&[], |_| panic!("empty requests must not run the fitter")).unwrap();
+        assert!(fits.is_empty());
     }
 }
