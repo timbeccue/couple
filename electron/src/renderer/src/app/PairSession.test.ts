@@ -76,3 +76,87 @@ describe('PairSession viewport', () => {
     expect(changed).toHaveBeenCalledTimes(2); // teardown, then completed load
   });
 });
+
+function pivotPair(times = [10, 20, 30]) {
+  const engine = new Engine();
+  engines.push(engine);
+  const pair = new PairSession(engine);
+  const state = { offsetMs: 125, driftPpm: 40 };
+  const calls: string[] = [];
+  const session = {
+    state: () => state,
+    setDriftPpmLive: (v: number) => { calls.push('drift'); state.driftPpm = v; },
+    setOffsetMs: (v: number) => { calls.push('offset'); state.offsetMs = v; },
+    commitDrift: vi.fn(),
+    measureLocal: vi.fn(),
+  };
+  pair.session = session as unknown as SessionHandle;
+  pair.anchors = times.map(t => ({
+    t, winMs: 500, auto: true, measurement: null, measurementCenter: null,
+  }));
+  pair.subscribe(() => calls.push('notify'));
+  return { pair, state, calls, session };
+}
+
+describe('PairSession pivot drag', () => {
+  it.each([
+    { index: 0, reference: 2, delta: 8 },
+    { index: 1, reference: 0, delta: -8 },
+    { index: 2, reference: 0, delta: 0 },
+  ])('uses the same pivot for anchor $index and a stage drag', ({ index, reference, delta }) => {
+    const stage = pivotPair();
+    const anchor = pivotPair();
+    const atT = anchor.pair.anchors[index].t;
+    const refT = anchor.pair.anchors[reference].t;
+    const refLag = anchor.pair.mapping().localLagMs(refT);
+    const atLag = anchor.pair.mapping().localLagMs(atT);
+    const timer = vi.spyOn(globalThis, 'setTimeout');
+
+    stage.pair.pivotDriftDrag(atT, refT, delta);
+    anchor.pair.pivotAnchorDrag(index, delta);
+
+    expect(anchor.state).toEqual(stage.state);
+    expect(anchor.pair.mapping().localLagMs(refT)).toBeCloseTo(refLag, 10);
+    expect(anchor.pair.mapping().localLagMs(atT)).toBeCloseTo(atLag + delta, 10);
+    for (const result of [stage, anchor]) {
+      expect(result.calls).toEqual(['drift', 'offset', 'notify']);
+      expect(result.session.commitDrift).not.toHaveBeenCalled();
+      expect(result.session.measureLocal).not.toHaveBeenCalled();
+    }
+    expect(timer).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { span: 4.999, index: 0, moves: false },
+    { span: 4.999, index: 1, moves: false },
+    { span: 5, index: 0, moves: true },
+    { span: 5, index: 1, moves: true },
+  ])('preserves the strict lever guard for span $span, anchor $index', ({ span, index, moves }) => {
+    const stage = pivotPair([10, 10 + span]);
+    const anchor = pivotPair([10, 10 + span]);
+    const atT = anchor.pair.anchors[index].t;
+    const refT = anchor.pair.anchors[1 - index].t;
+    stage.pair.pivotDriftDrag(atT, refT, 8);
+    anchor.pair.pivotAnchorDrag(index, 8);
+    expect(anchor.state).toEqual(stage.state);
+    expect(stage.calls).toEqual(moves ? ['drift', 'offset', 'notify'] : []);
+    expect(anchor.calls).toEqual(stage.calls);
+    if (!moves) expect(anchor.state).toEqual({ offsetMs: 125, driftPpm: 40 });
+  });
+
+  it.each(['no session', 'syncing'])('leaves both drag routes inert with %s', condition => {
+    const { pair, calls } = pivotPair();
+    if (condition === 'no session') pair.session = null;
+    else pair.syncStatus = 'syncing';
+    pair.pivotDriftDrag(20, 10, 8);
+    pair.pivotAnchorDrag(1, 8);
+    expect(calls).toEqual([]);
+  });
+
+  it('ignores an invalid anchor without writing or notifying', () => {
+    const { pair, calls } = pivotPair();
+    pair.pivotAnchorDrag(-1, 8);
+    pair.pivotAnchorDrag(3, 8);
+    expect(calls).toEqual([]);
+  });
+});

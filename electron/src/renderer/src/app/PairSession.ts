@@ -635,13 +635,7 @@ export class PairSession extends Observable {
   pivotAnchorDrag(i: number, deltaLMs: number): void {
     if (!this.inputsEnabled || !this.anchors[i]) return;
     const r = this.pivotReference(i);
-    const dt = this.anchors[i].t - this.anchors[r].t;
-    if (Math.abs(dt) < 5) return;
-    const slope = deltaLMs / dt;
-    const m = this.mapping();
-    this.session?.setDriftPpmLive(m.driftPpm + slope * 1000);
-    this.session?.setOffsetMs(m.offsetMs - this.anchors[r].t * slope);
-    this.bump();
+    this.pivotDriftDrag(this.anchors[i].t, this.anchors[r].t, deltaLMs);
   }
 
   /** ⇥ align: zero this anchor's measured Δ (pivot math; plain offset when it IS
