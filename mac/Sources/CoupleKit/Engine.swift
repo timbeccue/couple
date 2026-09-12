@@ -86,14 +86,9 @@ public final class Engine: @unchecked Sendable {
 
     /// Start an import job (§4.3); the job's value is the imported TrackHandle.
     public func importStart(_ path: String, role: TrackRole) throws -> Job<TrackMeta> {
-        let box = JobBox()
-        let user = Unmanaged.passRetained(box).toOpaque()
-        let id = cpl_import_start(ctx, path, role == .camera ? 0 : 1, jobTrampoline, user)
-        guard id != 0 else {
-            Unmanaged<JobBox>.fromOpaque(user).release()
-            throw takeError()
+        try startJob { user in
+            cpl_import_start(ctx, path, role == .camera ? 0 : 1, jobTrampoline, user)
         }
-        return Job(engine: self, box: box, id: id)
     }
 
     public func track(_ meta: TrackMeta) -> TrackHandle {
@@ -264,22 +259,17 @@ public final class Engine: @unchecked Sendable {
     public func matchCandidatesGraphStart(
         videos: [TrackHandle], audios: [TrackHandle], paramsJSON: String? = nil
     ) throws -> Job<[[PairEvidence]]> {
-        let box = JobBox()
-        let user = Unmanaged.passRetained(box).toOpaque()
-        let vs = videos.map(\.id)
-        let aus = audios.map(\.id)
-        let id = vs.withUnsafeBufferPointer { vp in
-            aus.withUnsafeBufferPointer { ap in
-                cpl_match_candidates_graph_start(
-                    ctx, vp.baseAddress, UInt(vp.count), ap.baseAddress, UInt(ap.count),
-                    paramsJSON, jobTrampoline, user)
+        try startJob { user in
+            let vs = videos.map(\.id)
+            let aus = audios.map(\.id)
+            return vs.withUnsafeBufferPointer { vp in
+                aus.withUnsafeBufferPointer { ap in
+                    cpl_match_candidates_graph_start(
+                        ctx, vp.baseAddress, UInt(vp.count), ap.baseAddress, UInt(ap.count),
+                        paramsJSON, jobTrampoline, user)
+                }
             }
         }
-        guard id != 0 else {
-            Unmanaged<JobBox>.fromOpaque(user).release()
-            throw takeError()
-        }
-        return Job(engine: self, box: box, id: id)
     }
 
     // ---------- row resolution (PLAN-CORE-SHELL-BOUNDARY §3.1) ----------
@@ -325,22 +315,17 @@ public final class Engine: @unchecked Sendable {
     /// synchronously inside the `withUnsafeBufferPointer` closures, so the buffers need not outlive
     /// this call.
     public func resolveStart(videos: [TrackHandle], audios: [TrackHandle], paramsJSON: String?) throws -> Job<[ResolvedRow]> {
-        let box = JobBox()
-        let user = Unmanaged.passRetained(box).toOpaque()
-        let vs = videos.map(\.id)
-        let aus = audios.map(\.id)
-        let id = vs.withUnsafeBufferPointer { vp in
-            aus.withUnsafeBufferPointer { ap in
-                cpl_resolve_start(
-                    ctx, vp.baseAddress, UInt(vp.count), ap.baseAddress, UInt(ap.count),
-                    paramsJSON, jobTrampoline, user)
+        try startJob { user in
+            let vs = videos.map(\.id)
+            let aus = audios.map(\.id)
+            return vs.withUnsafeBufferPointer { vp in
+                aus.withUnsafeBufferPointer { ap in
+                    cpl_resolve_start(
+                        ctx, vp.baseAddress, UInt(vp.count), ap.baseAddress, UInt(ap.count),
+                        paramsJSON, jobTrampoline, user)
+                }
             }
         }
-        guard id != 0 else {
-            Unmanaged<JobBox>.fromOpaque(user).release()
-            throw takeError()
-        }
-        return Job(engine: self, box: box, id: id)
     }
 
     /// §13.4 audio-audio SIMULTANEITY check over affine evidence (`cpl_triangle_closes`) — the SAME

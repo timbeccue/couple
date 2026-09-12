@@ -72,19 +72,14 @@ public final class SessionHandle: @unchecked Sendable {
     /// gate — pass `SyncSeedPolicy.plan(...)`'s decision, never an invented value. nil
     /// is the unseeded sync, byte-identical to before the seed existed.
     public func autoSyncStart(seed: SyncSeedPlan? = nil) throws -> Job<SyncResult> {
-        let box = JobBox()
-        let user = Unmanaged.passRetained(box).toOpaque()
-        let jobId = if let seed {
-            cpl_autosync_start_seeded(engine.ctx, id, nil, seed.offsetMs, seed.driftPpm,
-                                      jobTrampoline, user)
-        } else {
-            cpl_autosync_start(engine.ctx, id, nil, jobTrampoline, user)
+        try engine.startJob { user in
+            if let seed {
+                return cpl_autosync_start_seeded(engine.ctx, id, nil, seed.offsetMs, seed.driftPpm,
+                                               jobTrampoline, user)
+            } else {
+                return cpl_autosync_start(engine.ctx, id, nil, jobTrampoline, user)
+            }
         }
-        guard jobId != 0 else {
-            Unmanaged<JobBox>.fromOpaque(user).release()
-            throw engine.takeError()
-        }
-        return Job(engine: engine, box: box, id: jobId)
     }
 
     /// measure_local (§5.4): nil = no confident measurement (silence/degenerate peak).

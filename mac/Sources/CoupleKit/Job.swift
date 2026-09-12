@@ -19,6 +19,23 @@ public enum JobError: Error, Sendable {
     case badPayload
 }
 
+extension Engine {
+    /// The nonescaping start closure passes `user` to core with `jobTrampoline`.
+    /// Core takes the retained box on a terminal callback; a zero ID means no callback.
+    func startJob<Output: Decodable & Sendable>(
+        _ start: (UnsafeMutableRawPointer) -> UInt64
+    ) throws -> Job<Output> {
+        let box = JobBox()
+        let user = Unmanaged.passRetained(box).toOpaque()
+        let id = start(user)
+        guard id != 0 else {
+            Unmanaged<JobBox>.fromOpaque(user).release()
+            throw takeError()
+        }
+        return Job(engine: self, box: box, id: id)
+    }
+}
+
 /// One in-flight core job. `progress` may be consumed by at most one listener;
 /// `value()` awaits the terminal event and decodes the "done" payload.
 public final class Job<Output: Decodable & Sendable>: @unchecked Sendable {

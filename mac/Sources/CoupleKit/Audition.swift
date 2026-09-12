@@ -75,14 +75,9 @@ extension SessionHandle {
 extension SessionHandle {
     /// Start an export job (§4.9); value = ExportReport JSON (decoded loosely).
     public func exportStart(optionsJSON: String) throws -> Job<ExportReport> {
-        let box = JobBox()
-        let user = Unmanaged.passRetained(box).toOpaque()
-        let jobId = cpl_export_start(engine.ctx, id, optionsJSON, jobTrampoline, user)
-        guard jobId != 0 else {
-            Unmanaged<JobBox>.fromOpaque(user).release()
-            throw engine.takeError()
+        try engine.startJob { user in
+            cpl_export_start(engine.ctx, id, optionsJSON, jobTrampoline, user)
         }
-        return Job(engine: engine, box: box, id: jobId)
     }
 }
 

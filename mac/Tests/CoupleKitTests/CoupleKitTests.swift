@@ -664,6 +664,15 @@ struct CoupleKitTests {
         #expect(r.allSatisfy { $0.state == .noMatch })
         #expect(r.allSatisfy { $0.selected == nil && $0.alternates.isEmpty })
 
+        // Job wrappers preserve the same row order/shape after the borrowed ID buffers expire.
+        let asyncRows = try await engine.resolveStart(
+            videos: [camH, extH], audios: [], paramsJSON: nil).value()
+        #expect(asyncRows.map(\.videoKey) == r.map(\.videoKey))
+        #expect(asyncRows.allSatisfy { $0.state == .noMatch && $0.selected == nil && $0.alternates.isEmpty })
+        let graph = try await engine.matchCandidatesGraphStart(videos: [camH, extH], audios: []).value()
+        #expect(graph.count == 2)
+        #expect(graph.allSatisfy { $0.isEmpty })
+
         // A partial ResolveParams override (camelCase) parses (serde fills the rest) and still resolves.
         let rows2 = engine.resolve(videos: [camH], audios: [],
                                    paramsJSON: #"{"matcher":"legacy","verifyActive":false}"#)
