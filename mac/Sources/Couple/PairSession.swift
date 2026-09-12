@@ -727,16 +727,8 @@ final class PairSession {
 
     func runExport(to url: URL) {
         guard let session, verified, !isExporting else { return }
-        let opts: [String: Any] = [
-            "kind": exportFormat == .wav ? "wav" : "mux",
-            "outputPath": url.path,
-            "keepCameraAudio": keepCameraAudio && exportFormat != .wav,
-            "container": exportFormat == .mov ? "mov" : exportFormat == .mp4 ? "mp4" : "auto",
-            "faststart": false,
-            "overwrite": true, // the save panel already confirmed replacement
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: opts),
-              let json = String(data: data, encoding: .utf8) else { return }
+        guard let json = Self.exportOptionsJSON(to: url, format: exportFormat,
+                                               keepCameraAudio: keepCameraAudio) else { return }
         do {
             let job = try session.exportStart(optionsJSON: json)
             exportJob = job
@@ -781,14 +773,8 @@ final class PairSession {
         var errorDescription: String? { message }
     }
 
-    /// Awaited export for the batch coordinator (§6). Identical options and
-    /// pipeline to the single export above — so a batch is byte-identical to the
-    /// Phase-4 CLI export, couple by couple — but serialized via `await`.
-    /// format/keepCameraAudio come from the couple's effective settings; drift
-    /// mode lives in the core session and is honored unchanged.
-    func exportAwait(to url: URL, format: ExportFormat, keepCameraAudio: Bool,
-                     onProgress: @escaping (Double) -> Void) async throws {
-        guard let session, verified else { throw ExportError(message: "not approved") }
+    private static func exportOptionsJSON(to url: URL, format: ExportFormat,
+                                          keepCameraAudio: Bool) -> String? {
         let opts: [String: Any] = [
             "kind": format == .wav ? "wav" : "mux",
             "outputPath": url.path,
@@ -797,8 +783,20 @@ final class PairSession {
             "faststart": false,
             "overwrite": true,
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: opts),
-              let json = String(data: data, encoding: .utf8) else {
+        guard let data = try? JSONSerialization.data(withJSONObject: opts) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// Awaited export for the batch coordinator (§6). Identical options and
+    /// pipeline to the single export above — so a batch is byte-identical to the
+    /// Phase-4 CLI export, couple by couple — but serialized via `await`.
+    /// format/keepCameraAudio come from the couple's effective settings; drift
+    /// mode lives in the core session and is honored unchanged.
+    func exportAwait(to url: URL, format: ExportFormat, keepCameraAudio: Bool,
+                     onProgress: @escaping (Double) -> Void) async throws {
+        guard let session, verified else { throw ExportError(message: "not approved") }
+        guard let json = Self.exportOptionsJSON(to: url, format: format,
+                                               keepCameraAudio: keepCameraAudio) else {
             throw ExportError(message: "bad export options")
         }
         let job = try session.exportStart(optionsJSON: json)
