@@ -120,7 +120,8 @@ final class IngestController {
     /// importable videos ⇒ no job (every row inert), `matchingActivity` stays nil.
     func resolveQueue(partOfImport: Bool = false) async {
         let pool = model.pool
-        guard let engine = model.engine, !pool.videos.isEmpty || !pool.audios.isEmpty else { return }
+        guard !pool.videos.isEmpty || !pool.audios.isEmpty else { return }
+        let engine = model.engine
         // A resolve over an already-populated queue is an UPDATE (the strip reads
         // "Updating matches after import..."); the first resolve is the analysis pass.
         resolveIsUpdate = !model.couples.isEmpty
@@ -217,7 +218,7 @@ final class IngestController {
                 mergeResolution(into: existing, row: row)
                 order.append(existing)
             } else {
-                let couple = CoupleRow(video: videoEntry, row: row, engine: model.engine!,
+                let couple = CoupleRow(video: videoEntry, row: row, engine: model.engine,
                                     toasts: model.toasts, audition: model.audition)
                 order.append(couple)
                 ensureSession(for: couple)

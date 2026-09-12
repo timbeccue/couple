@@ -1380,7 +1380,8 @@ final class DebugDrive {
     /// is questionable; and a manual pick is PROMOTED to green only once its pair's
     /// evidence clears the classifier. Run headless via COUPLE_QUALITY_TEST=1.
     private func qualityTest() async {
-        guard let model, let engine = model.engine else { print("QUALITY-TEST: no engine"); return }
+        guard let model else { print("QUALITY-TEST: no engine"); return }
+        let engine = model.engine
         var pass = 0, fail = 0
         func check(_ name: String, _ ok: Bool) {
             if ok { pass += 1 } else { fail += 1 }
@@ -1467,7 +1468,8 @@ final class DebugDrive {
     /// call the SAME `requestRepairDrop`, so identical state yields identical results.
     /// Run headless via COUPLE_REPAIRDROP_TEST=1 (needs no files).
     private func repairDropTest() async {
-        guard let model, let engine = model.engine else { print("REPAIRDROP-TEST: no engine"); return }
+        guard let model else { print("REPAIRDROP-TEST: no engine"); return }
+        let engine = model.engine
         var pass = 0, fail = 0
         func check(_ name: String, _ ok: Bool) {
             if ok { pass += 1 } else { fail += 1 }
@@ -1654,7 +1656,8 @@ final class DebugDrive {
     /// Per (video, audio): z, lag_ms, overlap_s, locked/expected, lock_fraction, rms_ms,
     /// ppm, clamped, is_match.
     private func verifyDump() async {
-        guard let model, let engine = model.engine else { print("VERIFY-DUMP: no engine"); return }
+        guard let model else { print("VERIFY-DUMP: no engine"); return }
+        let engine = model.engine
         // Wait for the pool import + resolution to settle (the dump needs handles).
         for _ in 0..<1800 {
             if !model.resolving && (!model.pool.videos.isEmpty || !model.pool.audios.isEmpty) { break }
@@ -1718,7 +1721,8 @@ final class DebugDrive {
     /// runloop (pool import + handles) — it does NOT run to completion in a headless agent shell; the
     /// pure projection's automated coverage is `ShadowTelemetry` in CoupleKitTests (`swift test`).
     private func shadowDump() async {
-        guard let model, let engine = model.engine else { print("SHADOW-DUMP: no engine"); return }
+        guard let model else { print("SHADOW-DUMP: no engine"); return }
+        let engine = model.engine
         // Wait for the pool import + resolution to settle (the dump needs handles).
         for _ in 0..<1800 {
             if !model.resolving && (!model.pool.videos.isEmpty || !model.pool.audios.isEmpty) { break }

@@ -22,8 +22,7 @@ import SwiftUI
 @MainActor
 @Observable
 final class AppModel {
-    let engine: Engine?
-    let engineError: String?
+    let engine: Engine
     let toasts = ToastCenter()
     let pool: MediaPool
     /// One audio engine / output / fullscreen window across N couples (§5.3),
@@ -132,18 +131,14 @@ final class AppModel {
     @ObservationIgnored var overviewRect: CGRect = .zero
 
     init() {
-        var engine: Engine?
-        var engineError: String?
+        let engine: Engine
         do {
             engine = try Engine()
         } catch {
-            engineError = (error as? CoreError)?.message ?? error.localizedDescription
+            let engineError = (error as? CoreError)?.message ?? error.localizedDescription
+            fatalError("couple-core context failed: \(engineError)")
         }
         self.engine = engine
-        self.engineError = engineError
-        guard let engine else {
-            fatalError("couple-core context failed: \(engineError ?? "?")")
-        }
         self.pool = MediaPool(engine: engine, toasts: toasts)
         self.placeholderPair = PairSession(engine: engine, toasts: toasts, audition: audition)
         // F5d: the resolver-constant presentation mirrors (PairParams.zMin/.zMargin) read
@@ -411,7 +406,6 @@ final class AppModel {
             // pick — never the click, the sync, or approval. Independent of the
             // alignment fit below (a clean RMS does not imply a match).
             let confident = await Task.detached(priority: .userInitiated) { () -> Bool in
-                guard let engine else { return false }
                 return Resolver.manualPairIsConfident(video: cam, audio: audioHandle,
                                                        engine: engine, params: params)
             }.value
@@ -533,8 +527,9 @@ final class AppModel {
     /// round-tripped questionable manual pick that DOES match still shows green
     /// without forcing a full re-sync. No-op when the pair's handles are gone.
     private func reevaluateManualMatch(_ couple: CoupleRow) {
-        guard let engine, let cam = couple.video.handle,
+        guard let cam = couple.video.handle,
               let key = couple.selectedAudioKey, let audio = pool.entry(key: key)?.handle else { return }
+        let engine = self.engine
         let params = self.params
         Task {
             let confident = await Task.detached(priority: .userInitiated) {
