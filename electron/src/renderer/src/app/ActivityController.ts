@@ -9,7 +9,7 @@
 // determinate bar never goes backwards — then it ASSEMBLES the localized line
 // from the structured decision core returns (all copy stays shell-side).
 import * as Policies from '../kit/Policies';
-import type { ActivityDecision } from '../kit/Policies';
+import type { ActivityDecision, ActivityIngest, ActivityRequest, ActivitySignals } from '../kit/Policies';
 import type { AppModel } from './AppModel';
 import { Observable } from './observable';
 
@@ -133,7 +133,7 @@ export class ActivityController extends Observable {
 
   /** Run the pure policy with the current debounce elapsed + monotonic floor,
    * carry the floor forward, and store the rendered line. */
-  private publish(signals: Record<string, unknown>, elapsed: number): void {
+  private publish(signals: ActivitySignals, elapsed: number): void {
     // Which phase does the winning line belong to (past debounce, no floor)? The
     // floor tracks it and resets when the phase changes.
     const winning = Policies.activitySummary({ ...signals, elapsedMs: DEBOUNCE_MS, debounceMs: DEBOUNCE_MS });
@@ -141,7 +141,7 @@ export class ActivityController extends Observable {
       this.floorPhaseKey = winning?.phaseKey ?? null;
       this.phaseFloor = 0;
     }
-    const req: Record<string, unknown> = { ...signals, elapsedMs: elapsed, debounceMs: DEBOUNCE_MS };
+    const req: ActivityRequest = { ...signals, elapsedMs: elapsed, debounceMs: DEBOUNCE_MS };
     if (this.floorPhaseKey !== null) req.phaseFloor = this.phaseFloor;
 
     const decision = Policies.activitySummary(req);
@@ -155,9 +155,9 @@ export class ActivityController extends Observable {
    * a real signal; nothing is fabricated). Filenames ride alongside for the render. */
   private names: DisplayNames = {};
 
-  private buildRequest(): Record<string, unknown> {
+  private buildRequest(): ActivitySignals {
     const m = this.model;
-    const req: Record<string, unknown> = {};
+    const req: ActivitySignals = {};
     this.names = {};
     if (this.failureMessage !== null) req.failure = this.failureMessage;
 
@@ -181,7 +181,7 @@ export class ActivityController extends Observable {
 
     if (m.ingest.ingestInFlight) {
       // UNIFIED ingest: import → match → sync is ONE 0→100% bar.
-      const ingest: Record<string, unknown> = { stagesPlanned: m.ingest.ingestStages };
+      const ingest: ActivityIngest = { stagesPlanned: m.ingest.ingestStages };
       if (importing) ingest.importing = importing;
       if (match) ingest.matching = { phase: match.phase, fraction: match.fraction };
       if (sync) ingest.syncing = sync;
@@ -222,7 +222,7 @@ export class ActivityController extends Observable {
     return req;
   }
 
-  private static hasActiveWork(req: Record<string, unknown>): boolean {
+  private static hasActiveWork(req: ActivitySignals): boolean {
     return (
       req.importing != null ||
       req.pairing != null ||

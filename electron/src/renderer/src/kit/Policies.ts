@@ -158,6 +158,65 @@ export function shadowRows(req: {
 
 // ---------- activity strip ----------
 
+/** Wire request DTOs mirror core/src/policy/activity.rs. Optional fields stay
+ * omitted unless the caller supplies them; nullable fields mirror Rust Option. */
+export interface ActivityImporting {
+  phase: 'probing' | 'decoding' | 'waveform' | 'finishing';
+  fraction: number;
+  index?: number | null;
+  total?: number | null;
+}
+
+export interface ActivityPairing {
+  videoCount: number;
+  audioCount: number;
+  resolving?: boolean;
+  afterImport?: boolean;
+  importTail?: boolean;
+}
+
+export interface ActivitySyncing {
+  index: number;
+  total: number;
+}
+
+export interface ActivityExporting {
+  index: number;
+  total: number;
+  rowFraction: number;
+  preflight?: boolean;
+}
+
+export interface ActivityIngest {
+  importing?: ActivityImporting | null;
+  matching?: {
+    phase: 'fingerprinting' | 'comparing' | 'crosschecking';
+    fraction: number;
+  } | null;
+  syncing?: ActivitySyncing | null;
+  stagesPlanned: {
+    importStage?: boolean;
+    matchStage?: boolean;
+    syncStage?: boolean;
+  };
+}
+
+/** Live signals before the controller adds elapsed time and its phase floor. */
+export interface ActivitySignals {
+  importing?: ActivityImporting | null;
+  pairing?: ActivityPairing | null;
+  syncing?: ActivitySyncing | null;
+  exporting?: ActivityExporting | null;
+  ingest?: ActivityIngest | null;
+  failure?: string | null;
+}
+
+export interface ActivityRequest extends ActivitySignals {
+  elapsedMs: number;
+  debounceMs?: number;
+  phaseFloor?: number | null;
+}
+
 export interface ActivityDecision {
   line: Record<string, unknown> & { kind: string };
   fraction: number | null;
@@ -165,7 +224,7 @@ export interface ActivityDecision {
   phaseKey: string | null;
 }
 
-export function activitySummary(req: Record<string, unknown>): ActivityDecision | null {
+export function activitySummary(req: ActivityRequest): ActivityDecision | null {
   // Conservative fallback: no line (idle) — never a wrong-but-confident line.
   return call<{ summary: ActivityDecision | null }>(native.policyActivity, req, { summary: null })
     .summary;
