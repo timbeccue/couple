@@ -64,7 +64,9 @@ rename them.
   side is the authority.
 - `scripts/`, `fixtures/` (test corpora; media gitignored, manifests tracked),
   `example_data/` (owner-local media, optional), `design/` (mockups v1+v2 — both
-  live; v2 is queue-scope, not a replacement).
+  live; v2 is queue-scope, not a replacement; `logo/` = final logo SVGs + `Couple.icns`,
+  regen per `design/logo/README.md` — the app icon ships from `mac/Resources/AppIcon.icns`,
+  wired in `make-app.sh`).
 - `website/` — product marketing page (`index.html`, static; only external dep is
   Google Fonts). Kept from the 2026-07-04 prototype round (the "product frame"
   variant; other prototypes discarded). Preview: `python3 -m http.server 8642`

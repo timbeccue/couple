@@ -34,6 +34,7 @@ rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 
 cp .build/release/Couple "$APP/Contents/MacOS/Couple"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 if [ "$MAKE_DIST" = "1" ]; then
     HELPER_DIR="$(Scripts/fetch-ffmpeg.sh)" # verifies pin, static-ness, launch
@@ -67,6 +68,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>com.timbeccue.couple</string>
     <key>CFBundleExecutable</key><string>Couple</string>
     <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>

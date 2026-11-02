@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<!-- Couple logo prototype B (round 2): Pair Dots — teal + amber circles overlapping; the overlap is
+     the website's cream. The bare mark (circles + lens, no plate) also works as favicon/wordmark dot. -->
+<defs>
+<linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#1d2127"/>
+<stop offset="1" stop-color="#0e1014"/>
+</linearGradient>
+<filter id="soft6" x="-30%" y="-30%" width="160%" height="160%">
+<feGaussianBlur stdDeviation="6"/>
+</filter>
+</defs>
+<ellipse cx="256" cy="410" rx="148" ry="13" fill="#000000" opacity="0.5" filter="url(#soft6)"/>
+<rect x="96" y="76" width="320" height="320" rx="72" fill="url(#plate)"/>
+<rect x="97.5" y="77.5" width="317" height="317" rx="70.5" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1.5"/>
+<circle cx="218" cy="236" r="62" fill="#4fd9c4"/>
+<circle cx="294" cy="236" r="62" fill="#f0b35e"/>
+<path d="M256 187 A62 62 0 0 1 256 285 A62 62 0 0 1 256 187 Z" fill="#f4eedc"/>
+</svg>

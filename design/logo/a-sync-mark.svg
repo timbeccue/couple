@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<!-- Couple logo prototype A (round 2): Sync Mark — the app's teal/amber waveform pair, aligned.
+     Colors from mac/Sources/Couple/Theme.swift (camera teal, external amber) on the app's dark panel. -->
+<defs>
+<linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#1d2127"/>
+<stop offset="1" stop-color="#0e1014"/>
+</linearGradient>
+<filter id="soft6" x="-30%" y="-30%" width="160%" height="160%">
+<feGaussianBlur stdDeviation="6"/>
+</filter>
+</defs>
+<ellipse cx="256" cy="410" rx="148" ry="13" fill="#000000" opacity="0.5" filter="url(#soft6)"/>
+<rect x="96" y="76" width="320" height="320" rx="72" fill="url(#plate)"/>
+<rect x="97.5" y="77.5" width="317" height="317" rx="70.5" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1.5"/>
+<line x1="256" y1="114" x2="256" y2="358" stroke="#ffffff" stroke-opacity="0.14" stroke-width="2"/>
+<g fill="#4fd9c4">
+<rect x="123" y="172" width="13" height="16" rx="6"/>
+<rect x="146" y="163" width="13" height="34" rx="6"/>
+<rect x="169" y="151" width="13" height="58" rx="6"/>
+<rect x="192" y="138" width="13" height="84" rx="6"/>
+<rect x="215" y="156" width="13" height="48" rx="6"/>
+<rect x="238" y="130" width="13" height="100" rx="6"/>
+<rect x="261" y="147" width="13" height="66" rx="6"/>
+<rect x="284" y="132" width="13" height="96" rx="6"/>
+<rect x="307" y="153" width="13" height="54" rx="6"/>
+<rect x="330" y="142" width="13" height="76" rx="6"/>
+<rect x="353" y="160" width="13" height="40" rx="6"/>
+<rect x="376" y="170" width="13" height="20" rx="6"/>
+</g>
+<g fill="#f0b35e">
+<rect x="123" y="284" width="13" height="16" rx="6"/>
+<rect x="146" y="275" width="13" height="34" rx="6"/>
+<rect x="169" y="263" width="13" height="58" rx="6"/>
+<rect x="192" y="250" width="13" height="84" rx="6"/>
+<rect x="215" y="268" width="13" height="48" rx="6"/>
+<rect x="238" y="242" width="13" height="100" rx="6"/>
+<rect x="261" y="259" width="13" height="66" rx="6"/>
+<rect x="284" y="244" width="13" height="96" rx="6"/>
+<rect x="307" y="265" width="13" height="54" rx="6"/>
+<rect x="330" y="254" width="13" height="76" rx="6"/>
+<rect x="353" y="272" width="13" height="40" rx="6"/>
+<rect x="376" y="282" width="13" height="20" rx="6"/>
+</g>
+</svg>

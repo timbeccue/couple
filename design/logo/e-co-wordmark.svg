@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 730 200">
+<!-- Couple logo prototype E (round 2, rev 4): interlocked C+O wordmark, mask-built weave.
+     The over/under gaps are mask cutouts that follow the ring geometry, so the mark is
+     background-independent and crisp at any zoom (no color-matched patches).
+     "UPLE" renders in the viewer's system font; convert to outlines for production. -->
+<defs>
+<mask id="cutTeal" maskUnits="userSpaceOnUse" x="0" y="0" width="730" height="200">
+<rect x="0" y="0" width="730" height="200" fill="#ffffff"/>
+<path d="M138.2 55.7 A45 45 0 0 0 101.7 92.2" fill="none" stroke="#000000" stroke-width="44"/>
+</mask>
+<mask id="cutAmber" maskUnits="userSpaceOnUse" x="0" y="0" width="730" height="200">
+<rect x="0" y="0" width="730" height="200" fill="#ffffff"/>
+<path d="M117.7 124.5 A45 45 0 0 1 76.1 144.8" fill="none" stroke="#000000" stroke-width="44" stroke-linecap="round"/>
+</mask>
+</defs>
+<path d="M117.7 75.5 A45 45 0 1 0 117.7 124.5" fill="none" stroke="#4fd9c4" stroke-width="28" stroke-linecap="round" mask="url(#cutTeal)"/>
+<circle cx="146" cy="100" r="45" fill="none" stroke="#f0b35e" stroke-width="28" mask="url(#cutAmber)"/>
+<text x="223" y="157" font-family="ui-rounded, -apple-system, 'Helvetica Neue', sans-serif" font-weight="700" font-size="158" letter-spacing="10" fill="#ebeced">UPLE</text>
+</svg>
