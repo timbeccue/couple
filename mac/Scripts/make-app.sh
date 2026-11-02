@@ -1,18 +1,24 @@
 #!/bin/sh
 # Assemble Couple.app (SPEC §11.5) and optionally a DMG.
-#   Scripts/make-app.sh [--dmg] [--sign "Developer ID Application: …"]
+#   Scripts/make-app.sh [--dist] [--dmg] [--sign "Developer ID Application: …"]
 # Default signing is ad-hoc (-). Notarization is an owner step (needs a
 # Developer ID + notarytool credentials); the bundle layout is already
 # hardened-runtime-compatible. ffmpeg/ffprobe are copied into Contents/Helpers/
-# (core resolves ../Helpers first) — ship the pinned LGPL build there for
-# distribution; the dev build copies whatever COUPLE_FFMPEG/$PATH provides.
+# (core resolves ../Helpers first):
+#   --dist  bundles the pinned static build via Scripts/fetch-ffmpeg.sh
+#           (self-contained; survives `brew upgrade`; see that script's
+#           license note) and refuses non-static helpers. Use with --dmg.
+#   default (dev) copies whatever COUPLE_FFMPEG/$PATH provides and only
+#           warns if that copy links non-system dylibs.
 set -e
 cd "$(dirname "$0")/.."
 
 SIGN_ID="-"
 MAKE_DMG=0
+MAKE_DIST=0
 while [ $# -gt 0 ]; do
     case "$1" in
+        --dist) MAKE_DIST=1 ;;
         --dmg) MAKE_DMG=1 ;;
         --sign) shift; SIGN_ID="$1" ;;
     esac
@@ -29,10 +35,27 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 
 cp .build/release/Couple "$APP/Contents/MacOS/Couple"
 
-FFMPEG="${COUPLE_FFMPEG:-$(command -v ffmpeg)}"
-FFPROBE="$(dirname "$FFMPEG")/ffprobe"
+if [ "$MAKE_DIST" = "1" ]; then
+    HELPER_DIR="$(Scripts/fetch-ffmpeg.sh)" # verifies pin, static-ness, launch
+    FFMPEG="$HELPER_DIR/ffmpeg"
+    FFPROBE="$HELPER_DIR/ffprobe"
+else
+    FFMPEG="${COUPLE_FFMPEG:-$(command -v ffmpeg)}"
+    FFPROBE="$(dirname "$FFMPEG")/ffprobe"
+fi
 cp "$FFMPEG" "$APP/Contents/Helpers/ffmpeg"
 cp "$FFPROBE" "$APP/Contents/Helpers/ffprobe"
+
+# A helper that links anything outside /System and /usr/lib is hostage to the
+# machine it was copied from (a Homebrew copy dies on the next brew upgrade).
+for tool in ffmpeg ffprobe; do
+    nonsys="$(otool -L "$APP/Contents/Helpers/$tool" | tail -n +2 | awk '{print $1}' | grep -Ev '^(/usr/lib/|/System/)' || true)"
+    if [ -n "$nonsys" ]; then
+        echo "warning: bundled $tool links non-system libraries; it will break if they move:"
+        echo "$nonsys"
+        echo "(build with --dist for a self-contained bundle)"
+    fi
+done
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

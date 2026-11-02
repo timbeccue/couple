@@ -1134,3 +1134,20 @@ process lifetime, so the steady-state cost is one extra spawn per tool path
 unaffected (couple.h unchanged). Two unit tests in `core/src/ffmpeg.rs` (unix):
 broken configured tool falls through to PATH; no-fallback case names the
 launch failure.
+
+## 2026-11-01 — `make-app.sh --dist`: pinned static ffmpeg for bundles
+
+Follow-through on the dyld failure above: the fragile part was *what* got
+bundled, not bundling itself. New `mac/Scripts/fetch-ffmpeg.sh` downloads a
+pinned ffmpeg/ffprobe 9.0.2 static pair (macOS arm64, ffmpeg.martin-riedl.de
+build 1789931890_9.0.2), verifies sha256 against in-repo pins, requires
+`otool -L` to show only `/System` + `/usr/lib`, and requires both tools to run
+`-version`; cached under `mac/vendor/ffmpeg/<build-id>/` (gitignored).
+`make-app.sh --dist` bundles that pair; the default dev build still copies
+`COUPLE_FFMPEG`/`$PATH` but now warns when the copy links non-system dylibs.
+
+License note (recorded in the script header): the pinned build bundles
+x264/x265, i.e. GPL-configured — fine for owner use; before public
+distribution swap the pin for an LGPL-configured static build (any URL +
+sha256 works) or meet GPL terms. SPEC §11.5's "ship the pinned LGPL build"
+intent stands; this wires the mechanism and pins what exists today.

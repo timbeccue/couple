@@ -77,6 +77,13 @@ rename them.
 - `cargo build --release -p couple-ffi` — must run **before** any swift build.
 - `cd mac && swift build -c release` — ship variant (DebugDrive stubbed).
 - `cd mac && swift build -c release -Xswiftc -DCOUPLE_DEVHARNESS` — dev harness.
+- `cd mac && Scripts/make-app.sh [--dist] [--dmg]` — assemble `mac/dist/Couple.app`.
+  `--dist` bundles the pinned static ffmpeg via `Scripts/fetch-ffmpeg.sh`
+  (sha256-pinned, otool-verified self-contained; GPL-configured — see the
+  script's license note before public distribution; cache `mac/vendor/`,
+  gitignored). Default dev build copies `COUPLE_FFMPEG`/`$PATH` ffmpeg and
+  warns if it links non-system dylibs (a Homebrew copy breaks on `brew
+  upgrade` — the 2026-11-01 "unsupported format" failure).
 - `cd mac && swift test`
 - ROC gate (weekly/on-demand, plus auto on push/PR touching matcher paths — .github/workflows/roc-gate.yml):
   `cargo test --release -p couple-core --test matching_evidence -- --ignored synthetic_corpus_roc_gates_hold`

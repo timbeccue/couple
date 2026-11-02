@@ -57,6 +57,8 @@ fixtures/golden/*/*
 # Swift (mac/)
 mac/.build/
 mac/dist/
+# Pinned static ffmpeg cache (Scripts/fetch-ffmpeg.sh; re-downloadable, verified by sha256 pins)
+mac/vendor/
 # Incremental build artifacts SwiftPM leaks into mac/ root
 mac/*.o
 mac/*.d
