@@ -2,9 +2,51 @@
 
 use crate::error::{CoupleError, Result};
 use crate::media::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock, PoisonError};
+
+/// A candidate that exists can still fail to start — e.g. a bundled copy of a
+/// Homebrew ffmpeg whose versioned Cellar dylibs a later `brew upgrade`
+/// removed. Returning it would surface every import as "unsupported format",
+/// so a candidate must also launch (`-version` exits 0) before resolution
+/// accepts it; a broken one is skipped and resolution falls through.
+/// Paths that passed once are cached for the life of the process.
+fn launches(path: &Path) -> bool {
+    static OK: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
+    let ok = OK.get_or_init(|| Mutex::new(BTreeSet::new()));
+    if ok.lock().unwrap_or_else(PoisonError::into_inner).contains(path) {
+        return true;
+    }
+    let success = Command::new(path)
+        .arg("-version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if success {
+        ok.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(path.to_path_buf());
+    }
+    success
+}
+
+/// Accept `cand` only if it exists and launches; otherwise record why in `searched`.
+fn usable(cand: PathBuf, searched: &mut Vec<String>) -> Option<PathBuf> {
+    if !cand.is_file() {
+        searched.push(cand.display().to_string());
+        return None;
+    }
+    if launches(&cand) {
+        return Some(cand);
+    }
+    searched.push(format!("{} (present but failed to launch)", cand.display()));
+    None
+}
 
 /// Resolution order (§3.3): explicit config > COUPLE_FFMPEG env > bundled helper > $PATH.
 pub fn resolve_tool(name: &str, configured: Option<&Path>) -> Result<PathBuf> {
@@ -12,10 +54,9 @@ pub fn resolve_tool(name: &str, configured: Option<&Path>) -> Result<PathBuf> {
 
     if let Some(p) = configured {
         let p = if p.is_dir() { p.join(name) } else { p.to_path_buf() };
-        if p.is_file() {
+        if let Some(p) = usable(p, &mut searched) {
             return Ok(p);
         }
-        searched.push(p.display().to_string());
     }
 
     if let Ok(env) = std::env::var("COUPLE_FFMPEG") {
@@ -28,19 +69,17 @@ pub fn resolve_tool(name: &str, configured: Option<&Path>) -> Result<PathBuf> {
         } else {
             env.parent().map(|d| d.join(name)).unwrap_or(env.clone())
         };
-        if cand.is_file() {
+        if let Some(cand) = usable(cand, &mut searched) {
             return Ok(cand);
         }
-        searched.push(cand.display().to_string());
     }
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             for cand in [dir.join(name), dir.join("../Helpers").join(name)] {
-                if cand.is_file() {
+                if let Some(cand) = usable(cand, &mut searched) {
                     return Ok(cand);
                 }
-                searched.push(cand.display().to_string());
             }
         }
     }
@@ -49,7 +88,10 @@ pub fn resolve_tool(name: &str, configured: Option<&Path>) -> Result<PathBuf> {
         for dir in std::env::split_paths(&paths) {
             let cand = dir.join(name);
             if cand.is_file() {
-                return Ok(cand);
+                if launches(&cand) {
+                    return Ok(cand);
+                }
+                searched.push(format!("{} (present but failed to launch)", cand.display()));
             }
         }
         searched.push("$PATH".into());
@@ -225,4 +267,40 @@ pub fn stderr_tail(stderr: &[u8]) -> String {
     let lines: Vec<&str> = s.lines().collect();
     let n = lines.len().saturating_sub(6);
     lines[n..].join("\n")
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// An executable that exists but cannot run usefully — stands in for a
+    /// bundled ffmpeg whose dylibs were removed by a Homebrew upgrade.
+    fn broken_tool(dir: &Path, name: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let p = dir.join(name);
+        std::fs::write(&p, "#!/bin/sh\nexit 7\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    }
+
+    #[test]
+    fn broken_configured_tool_falls_through_to_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let broken = broken_tool(dir.path(), "ffmpeg");
+        let resolved = resolve_tool("ffmpeg", Some(dir.path())).expect("ffmpeg on PATH");
+        assert_ne!(resolved, broken, "resolver returned the non-launching candidate");
+        assert!(launches(&resolved));
+    }
+
+    #[test]
+    fn broken_tool_with_no_fallback_reports_launch_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let broken = broken_tool(dir.path(), "couple-test-no-such-tool");
+        let err = resolve_tool("couple-test-no-such-tool", Some(&broken)).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("failed to launch"),
+            "error should say the candidate was present but broken: {msg}"
+        );
+    }
 }

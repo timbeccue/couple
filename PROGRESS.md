@@ -1115,3 +1115,22 @@ tests, Electron typecheck, and fresh CLI/FFI/native builds pass. Repeated all 33
 comparisons and 20 RMS scenarios against the baselines described above: no changes.
 The C header remains byte-identical. The full Rust suite was not repeated for this
 test-only pruning; the earlier verification and its boundaries are recorded above.
+
+## 2026-11-01 — ffmpeg resolution skips candidates that cannot launch
+
+Field failure: `mac/dist/Couple.app` bundled the dev Homebrew ffmpeg 8.0.1 in
+`Contents/Helpers/` (make-app.sh copies whatever `COUPLE_FFMPEG`/`$PATH`
+provides); a later `brew upgrade` to 9.0.2 deleted the 8.0.1 Cellar dylibs the
+copy hard-codes, so the bundled helper died in dyld and every import surfaced
+as "unsupported format" with the raw dyld tried-paths as the reason.
+
+SPEC-CHANGE (2026-11-01): §3.3 binary resolution — a candidate must not only
+exist but also launch (`<tool> -version` exits 0) to be selected; a present but
+non-launching candidate is skipped (recorded in `FfmpegMissing.searched` as
+"present but failed to launch") and resolution falls through to the next tier,
+typically a working `$PATH` install. Paths that pass once are cached for the
+process lifetime, so the steady-state cost is one extra spawn per tool path
+(~10 ms, §3.3 already deems spawn cost irrelevant at job granularity). Shells
+unaffected (couple.h unchanged). Two unit tests in `core/src/ffmpeg.rs` (unix):
+broken configured tool falls through to PATH; no-fallback case names the
+launch failure.
