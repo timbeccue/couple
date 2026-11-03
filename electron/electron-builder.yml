@@ -25,4 +25,5 @@ linux:
     - AppImage
     - deb
   category: Video
+  maintainer: Tim Beccue <timothybeccue@gmail.com>
 npmRebuild: false

@@ -2,7 +2,7 @@
 
 use couple_core::{Band, CancelToken, Ctx, ProgressFn};
 use indicatif::{ProgressBar, ProgressStyle};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -35,7 +35,7 @@ pub struct Reporter {
 
 impl Reporter {
     pub fn new(quiet: bool, ndjson: bool, label: &Path) -> Self {
-        let tty = unsafe { libc::isatty(libc::STDERR_FILENO) } == 1;
+        let tty = std::io::stderr().is_terminal();
         let bar = if quiet || ndjson || !tty {
             None
         } else {

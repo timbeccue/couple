@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Electron shell for Couple over the couple-ffi C ABI (PLAN-CORE-SHELL-BOUNDARY Phase G)",
+  "homepage": "https://github.com/timbeccue/couple",
   "scripts": {
     "build:native": "node scripts/build-native.mjs",
     "smoke": "node scripts/smoke.mjs",
