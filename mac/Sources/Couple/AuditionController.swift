@@ -58,6 +58,32 @@ final class AuditionController {
         didSet { stream?.setMode(monitorMode) }
     }
 
+    // A/B memory handed back by `policy::monitor` on every decision (the solo
+    // heard last; the both-mode used last). Core decides; this only stores.
+    @ObservationIgnored private var lastSide: MonitorMode?
+    @ObservationIgnored private var lastBoth: MonitorMode?
+
+    /// A lane silenced by an A/B solo (not by its own mute). Drives the lane
+    /// dim + the grey speaker in the lane controls.
+    var camSilenced: Bool { monitorMode == .external }
+    var extSilenced: Bool { monitorMode == .camera }
+
+    /// Picker selection (any of the 4 segments) — routed through the policy so
+    /// the memory stays in step with what is heard.
+    func selectMonitor(_ mode: MonitorMode) { applyMonitor(.select, chosen: mode) }
+    /// `a`: camera ⇄ external (from both: the side heard last; camera first).
+    func flipMonitor() { applyMonitor(.flip) }
+    /// `b`: back to the both-mode used last (overlay first); no-op while on both.
+    func restoreBothMonitor() { applyMonitor(.both) }
+
+    private func applyMonitor(_ action: MonitorPolicy.Action, chosen: MonitorMode? = nil) {
+        let plan = MonitorPolicy.plan(action, current: monitorMode, chosen: chosen,
+                                      lastSide: lastSide, lastBoth: lastBoth)
+        lastSide = plan.lastSide
+        lastBoth = plan.lastBoth
+        if plan.next != monitorMode { monitorMode = plan.next }
+    }
+
     // Per-track monitor volume/mute (UX: lane controls next to the overview
     // waveforms). Mute sends gain 0 to the core; the slider value survives.
     var camGain: Double = 1 { didSet { pushGains() } }

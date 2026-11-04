@@ -114,3 +114,36 @@ describe('conservative fallbacks', () => {
     });
   });
 });
+
+describe('monitorPlan (A/B solos, UX-DECISIONS 2026-11-03)', () => {
+  it('first flip from both goes to camera and remembers the mode left', () => {
+    expect(Policies.monitorPlan({ action: 'flip', current: 'overlay' })).toEqual({
+      next: 'camera',
+      lastSide: 'camera',
+      lastBoth: 'overlay',
+    });
+  });
+
+  it('flip alternates sides; both restores the mode left; flip resumes the last side', () => {
+    const p1 = Policies.monitorPlan({ action: 'flip', current: 'pan' });
+    const p2 = Policies.monitorPlan({ action: 'flip', current: p1.next, lastSide: p1.lastSide, lastBoth: p1.lastBoth });
+    expect(p2.next).toBe('external');
+    const p3 = Policies.monitorPlan({ action: 'both', current: p2.next, lastSide: p2.lastSide, lastBoth: p2.lastBoth });
+    expect(p3.next).toBe('pan');
+    const p4 = Policies.monitorPlan({ action: 'flip', current: p3.next, lastSide: p3.lastSide, lastBoth: p3.lastBoth });
+    expect(p4.next).toBe('external');
+  });
+
+  it('select adopts the choice', () => {
+    expect(Policies.monitorPlan({ action: 'select', current: 'overlay', chosen: 'external' })).toEqual({
+      next: 'external',
+      lastSide: 'external',
+      lastBoth: 'overlay',
+    });
+  });
+
+  it('malformed request keeps the current mode (conservative fallback)', () => {
+    // @ts-expect-error — deliberately malformed action
+    expect(Policies.monitorPlan({ action: 'junk', current: 'pan', lastBoth: 'pan' }).next).toBe('pan');
+  });
+});

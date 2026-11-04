@@ -814,6 +814,12 @@ pub fn policy_sync_seed(json: String) -> Option<String> {
     take(unsafe { c::cpl_policy_sync_seed(j.as_ptr()) })
 }
 
+#[napi]
+pub fn policy_monitor(json: String) -> Option<String> {
+    let j = cs(&json);
+    take(unsafe { c::cpl_policy_monitor(j.as_ptr()) })
+}
+
 // ---------- cache ----------
 
 #[napi]

@@ -11,14 +11,47 @@ public enum MonitorMode: Int32, CaseIterable, Sendable {
     /// Difference monitor (cam − ext): exact-cancellation test oracle only —
     /// excluded from `allCases` so the UI never offers it.
     case null = 2
+    /// A/B solo (UX-DECISIONS 2026-11-03): only the camera track, in both ears.
+    case camera = 3
+    /// A/B solo: only the external track, in both ears.
+    case external = 4
 
-    public static var allCases: [MonitorMode] { [.pan, .overlay] }
+    /// Picker order: the two solos bracket the two both-modes, so the ends are
+    /// the A/B sides and `a` hops between them.
+    public static var allCases: [MonitorMode] { [.camera, .pan, .overlay, .external] }
 
     public var label: String {
         switch self {
         case .pan: return "Pan L/R"
         case .overlay: return "Overlay"
         case .null: return "Null"
+        case .camera: return "Camera"
+        case .external: return "External"
+        }
+    }
+
+    /// True for the two A/B solos (one track audible).
+    public var isSolo: Bool { self == .camera || self == .external }
+
+    /// Wire name shared with core serde (`policy::monitor` requests).
+    public var wireName: String {
+        switch self {
+        case .pan: return "pan"
+        case .overlay: return "overlay"
+        case .null: return "null"
+        case .camera: return "camera"
+        case .external: return "external"
+        }
+    }
+
+    public init?(wireName: String) {
+        switch wireName {
+        case "pan": self = .pan
+        case "overlay": self = .overlay
+        case "null": self = .null
+        case "camera": self = .camera
+        case "external": self = .external
+        default: return nil
         }
     }
 }

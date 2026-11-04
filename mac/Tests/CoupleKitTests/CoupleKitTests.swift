@@ -2192,3 +2192,37 @@ struct CoupleKitTests {
         #expect(SyncSeedPolicy.planFromEnvelope(["seed": ["offsetMs": "junk"]]) == nil)
     }
 }
+
+// ---- MonitorPolicy (A/B solos, UX-DECISIONS 2026-11-03; decision in core policy::monitor) ----
+
+struct MonitorPolicyTests {
+    @Test func firstFlipFromBothGoesToCameraAndRemembersTheMode() {
+        let p = MonitorPolicy.plan(.flip, current: .overlay, lastSide: nil, lastBoth: nil)
+        #expect(p == MonitorPlan(next: .camera, lastSide: .camera, lastBoth: .overlay))
+    }
+
+    @Test func flipAlternatesAndBothRestoresTheModeLeft() {
+        let p1 = MonitorPolicy.plan(.flip, current: .pan, lastSide: nil, lastBoth: nil)
+        #expect(p1.next == .camera)
+        let p2 = MonitorPolicy.plan(.flip, current: p1.next, lastSide: p1.lastSide, lastBoth: p1.lastBoth)
+        #expect(p2.next == .external)
+        let p3 = MonitorPolicy.plan(.both, current: p2.next, lastSide: p2.lastSide, lastBoth: p2.lastBoth)
+        #expect(p3.next == .pan)
+        // Resumes on the side heard last.
+        let p4 = MonitorPolicy.plan(.flip, current: p3.next, lastSide: p3.lastSide, lastBoth: p3.lastBoth)
+        #expect(p4.next == .external)
+    }
+
+    @Test func selectAdoptsTheChoice() {
+        let p = MonitorPolicy.plan(.select, current: .overlay, chosen: .external, lastSide: nil, lastBoth: nil)
+        #expect(p == MonitorPlan(next: .external, lastSide: .external, lastBoth: .overlay))
+        #expect(MonitorMode.allCases == [.camera, .pan, .overlay, .external])
+    }
+
+    @Test func errorEnvelopeKeepsTheCurrentMode() {
+        // Conservative fallback (PLAN §3.2): a nil/malformed value never changes what is heard.
+        let keep = MonitorPlan(next: .pan, lastSide: .camera, lastBoth: .pan)
+        #expect(MonitorPolicy.planFromEnvelope(nil, fallback: keep) == keep)
+        #expect(MonitorPolicy.planFromEnvelope(["next": "junk"], fallback: keep) == keep)
+    }
+}

@@ -125,6 +125,14 @@ final class InputRouter {
         case "l": // loupes (§V2.4)
             model.loupesShown.toggle()
             return true
+        case "a": // A/B: camera ⇄ external solo (UX-DECISIONS 2026-11-03)
+            guard pair.session != nil else { return false }
+            pair.audition.flipMonitor()
+            return true
+        case "b": // back to hearing both (the pan/overlay mode used last)
+            guard pair.session != nil else { return false }
+            pair.audition.restoreBothMonitor()
+            return true
         default:
             return false
         }

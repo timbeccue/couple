@@ -338,6 +338,12 @@
   background: rgba(224, 92, 92, 0.16);
 }
 
+/* Silenced by the A/B solo (WaveformStage.swift LaneAudioControls `silenced`):
+   a grey slash, deliberately not the mute state. */
+.lane-mute.silenced {
+  color: var(--text-dim);
+}
+
 /* ---------- anchor pins on the overview strip ---------- */
 
 .anchor-pin {

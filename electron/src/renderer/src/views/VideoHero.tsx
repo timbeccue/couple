@@ -16,6 +16,13 @@ const HARD_SEEK_S = 0.25;
 const SLEW_GAIN = 1.0; // rate delta per second of skew…
 const SLEW_MAX = 0.05; // …clamped to ±5%
 const ANCHOR_COLORS = ['#a68cfa', '#fa7085', '#61a6fa', '#a3e636'];
+const MONITOR_LABEL: Record<MonitorMode, string> = {
+  camera: 'Camera',
+  pan: 'Pan L/R',
+  overlay: 'Overlay',
+  external: 'External',
+  null: 'Null', // test oracle; never rendered
+};
 
 function timecode(t: number): string {
   const s = Math.max(0, t);
@@ -167,16 +174,24 @@ export function VideoHero({ couple }: { couple: CoupleRow }): React.JSX.Element 
           </button>
         ))}
         <div className="seg">
-          {/* Null is a test oracle only — excluded from the UI, matching
-              CoupleKit MonitorMode.allCases ([.pan, .overlay]). */}
-          {(['pan', 'overlay'] as MonitorMode[]).map((m) => (
+          {/* Camera · Pan L/R · Overlay · External — the ends are the A/B solos
+              (UX-DECISIONS 2026-11-03; `a` flips, `b` restores both). Null is a
+              test oracle only, matching CoupleKit MonitorMode.allCases. */}
+          {(['camera', 'pan', 'overlay', 'external'] as MonitorMode[]).map((m) => (
             <button
               key={m}
               className={audition.mode === m ? 'on' : undefined}
               disabled={!couple.hasSession}
-              onClick={() => audition.setMode(m)}
+              title={
+                m === 'camera' || m === 'external'
+                  ? 'Hear this track only (a flips, b = both)'
+                  : m === 'pan'
+                    ? 'Camera left, external right'
+                    : 'Both mixed'
+              }
+              onClick={() => audition.selectMode(m)}
             >
-              {m === 'pan' ? 'Pan L/R' : 'Overlay'}
+              {MONITOR_LABEL[m]}
             </button>
           ))}
         </div>

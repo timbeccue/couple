@@ -4,6 +4,7 @@
 // slaved to this clock by VideoHero (playbackRate micro-slew), the Electron
 // stand-in for the mac shell's AVPlayer-slaved-to-audio-clock.
 import { AuditionStream, type MonitorMode } from '../kit/Audition';
+import { monitorPlan } from '../kit/Policies';
 import { Observable } from './observable';
 import type { CoupleRow } from './CoupleRow';
 
@@ -19,6 +20,10 @@ export class AuditionController extends Observable {
   extGain = 1;
   camMuted = false;
   extMuted = false;
+  // A/B memory handed back by policy::monitor on every decision (the solo heard
+  // last; the both-mode used last). Core decides; this only stores.
+  private lastSide: MonitorMode | null = null;
+  private lastBoth: MonitorMode | null = null;
   /** Last seek/pause position (video time) — the paused-frame anchor the hero
    * shows while the clock is stopped (clock() is NaN when not pumping). */
   lastSeekT: number | null = null;
@@ -89,6 +94,40 @@ export class AuditionController extends Observable {
     this.mode = mode;
     this.stream?.setMode(mode);
     this.bump();
+  }
+
+  /** A lane silenced by an A/B solo (not by its own mute): lane dim + grey speaker. */
+  get camSilenced(): boolean {
+    return this.mode === 'external';
+  }
+  get extSilenced(): boolean {
+    return this.mode === 'camera';
+  }
+
+  /** Picker selection — through the policy so the memory tracks what is heard. */
+  selectMode(mode: MonitorMode): void {
+    this.applyMonitor('select', mode);
+  }
+  /** `a`: camera ⇄ external (from both: the side heard last; camera first). */
+  flipMonitor(): void {
+    this.applyMonitor('flip');
+  }
+  /** `b`: back to the both-mode used last (overlay first); no-op while on both. */
+  restoreBothMonitor(): void {
+    this.applyMonitor('both');
+  }
+
+  private applyMonitor(action: 'flip' | 'both' | 'select', chosen: MonitorMode | null = null): void {
+    const plan = monitorPlan({
+      action,
+      current: this.mode,
+      chosen,
+      lastSide: this.lastSide,
+      lastBoth: this.lastBoth,
+    });
+    this.lastSide = plan.lastSide;
+    this.lastBoth = plan.lastBoth;
+    if (plan.next !== this.mode) this.setMode(plan.next);
   }
 
   /** Push the effective (mute-applied) gains to the core mixer. */

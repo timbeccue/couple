@@ -1151,3 +1151,210 @@ x264/x265, i.e. GPL-configured — fine for owner use; before public
 distribution swap the pin for an LGPL-configured static build (any URL +
 sha256 works) or meet GPL terms. SPEC §11.5's "ship the pinned LGPL build"
 intent stands; this wires the mechanism and pins what exists today.
+
+## 2026-11-03 — A/B monitor: Camera / External solos in the HUD picker
+
+Owner request: a one-click way to compare the camera audio with the coupled
+external audio (previously mute one lane, unmute the other). Interactive
+mockup of three placements → owner chose extending the monitor picker
+(UX-DECISIONS 2026-11-03 entry).
+
+SPEC-CHANGE (2026-11-03): §4.8 `MonitorMode` gains two variants,
+`CameraOnly` (wire `"camera"`, ABI code 3) and `ExternalOnly` (`"external"`,
+code 4): L = R = g_cam·cam, resp. L = R = g_ext·ext (the Pan L/R channel in
+both ears; user gains/mutes multiply in as before). Existing codes 0–2 and
+their matrices are unchanged; the crossfade `prev_flags` byte widens its
+monitor field from 2 to 3 bits (integer-shift moves from bit 2 to bit 3 —
+internal). `cpl_audition_open` / `cpl_audition_set_mode` accept the new codes.
+ADDITIVE — `cpl_abi_version` stays 1. Core test
+`audition::solo_modes_are_the_pan_channels_in_both_ears`.
+
+- New pure policy `core/src/policy/monitor.rs` (`cpl_policy_monitor`): flip /
+  both / select → next mode + the two memories (last solo, last both-mode);
+  unit + proptest contract. Mirrors: `CoupleKit/MonitorPolicy.swift`
+  (4 tests under `swift test`), `electron kit/Policies.monitorPlan`
+  (4 vitest cases through the real binding).
+- Swift shell: `MonitorMode.allCases` = [camera, pan, overlay, external]
+  (picker order); `AuditionController.selectMonitor/flipMonitor/
+  restoreBothMonitor` + `camSilenced/extSilenced`; HUD picker widened to
+  236 pt; lanes dim when silenced; lane speaker chip grey-slash state;
+  InputRouter `a` / `b`; footer hint. Electron shell: same surface
+  (`AuditionController.ts`, `VideoHero.tsx`, `WaveformStage.tsx`,
+  `editor.css .lane-mute.silenced`, `App.tsx` keys + hint).
+- Dev harness: `COUPLE_MONITOR_TEST=1` (with `COUPLE_PAIR_DIR`) drives the
+  picker + `a`/`b` keys through the live policy and InputRouter, checks lane
+  silence feedback, and shoots `10-ab-camera-only.png` / `11-ab-external-only.png`
+  into `COUPLE_SHOT_DIR`.
+- SHELL-UI-PARITY.md: video-hero, per-lane, and keymap lines updated.
+
+## 2026-11-03 — Dist bundle ships an LGPL ffmpeg built from pinned source
+
+Closes the license note from the 2026-11-01 entry. Couple shells out to
+ffmpeg/ffprobe over argv/pipes (never links libav*), stream-copies video on
+export and encodes audio with AudioToolbox / native `aac` / PCM, so nothing
+GPL (x264/x265) or nonfree is needed — but the pinned martin-riedl.de build
+was GPL-configured while the bundle's `NSHumanReadableCopyright` claimed LGPL.
+No public static macOS build we could vouch for is LGPL-configured, so
+`mac/Scripts/fetch-ffmpeg.sh` now **compiles** ffmpeg 9.0.2 from the
+ffmpeg.org tarball (sha256-pinned; GPG-verified against the FFmpeg release
+signing key when `gpg` is present) with `--disable-autodetect` and no external
+libraries; links only /System and /usr/lib, so the unmodified tarball plus the
+configure line *is* the corresponding source. Same stdout contract as before
+(one line, the helper dir); cached under `mac/vendor/ffmpeg/<ver>-lgpl-<arch>/`
+with `licenses/{COPYING.LGPLv2.1,LICENSE.md}` and a `SOURCE.txt` (tarball
+URL, sha256, key, configure line). New gate `check_lgpl`: `ffmpeg -L` must
+report the LGPL and the configuration must contain neither `--enable-gpl` nor
+`--enable-nonfree`. SPEC §11.5's "ship the pinned LGPL build" is now met.
+
+- `make-app.sh --dist` copies the license texts + `SOURCE.txt` to
+  `Contents/Resources/Licenses/ffmpeg/`, writes an accurate copyright string,
+  and signs the helpers *without* `disable-library-validation` (static build
+  loads nothing foreign). Dev builds keep the entitlement (Homebrew dylibs)
+  and now label the bundle "Development build … not for distribution".
+- New `docs/LICENSING.md`: the LGPL rule, how it is enforced, the per-release
+  obligations (attach the source tarball to each public release; three-year
+  window), Electron bundling rules (lgpl variants only), open items
+  (Rust/Swift/npm notices via `cargo about`; Acknowledgements view in both
+  shells). CLAUDE.md doc map + build section updated.
+
+## 2026-11-03 — Tag-triggered Electron release pipeline
+
+Made the Electron app downloadable from GitHub. Nothing publishes on its own:
+the owner pushes a `v*` tag, and even then the result is a draft release.
+
+- **`.github/workflows/release.yml` (new).** On a pushed `v*` tag: build the
+  napi binding + renderer on macos-15 / windows-latest / ubuntu-latest, run the
+  binding smoke test, package with electron-builder, and attach the installers
+  to a **draft** GitHub Release (`gh release create --draft`; a re-run refreshes
+  the assets with `--clobber`). `workflow_dispatch` from a branch is a dry run
+  (workflow artifacts only, no release). The tag is validated as
+  `vMAJOR.MINOR.PATCH[-pre]` and stamped into `electron/package.json` with
+  `npm version --no-git-tag-version`, so no bump commit is needed.
+- **Versionless installer names.** `artifactName:
+  ${productName}-${os}-${arch}.${ext}` in `electron/electron-builder.yml` →
+  `Couple-mac-arm64.dmg`, `Couple-win-x64.exe`, `Couple-linux-x64.AppImage`,
+  `Couple-linux-x64.deb`, so `releases/latest/download/<name>` links never go
+  stale. Verified locally (mac).
+- **ffmpeg on macOS is bundled** from `mac/Scripts/fetch-ffmpeg.sh` (the same
+  pinned build as the Swift `--dist` bundle; since the 2026-11-03 LGPL entry
+  above that is the from-source LGPL build, and the workflow copies the whole
+  helper dir — binaries, `SOURCE.txt`, `licenses/` — so Acknowledgements shows
+  the texts) into `electron/resources/ffmpeg/darwin/`, which
+  `electron-builder.yml` already picked up as `extraResources`. Reason: the
+  core's discovery chain ends at `$PATH`, and a Finder-launched app's PATH
+  excludes `/opt/homebrew/bin`, so an unbundled mac build could not find a
+  Homebrew ffmpeg at all. Windows/Linux bundling: next entry (2026-11-04).
+- **`README.md` (new, root).** Plain download section with per-platform links,
+  the unsigned-app first-launch steps (macOS Privacy & Security "Open Anyway" /
+  `xattr -dr com.apple.quarantine`; Windows SmartScreen; Linux AppImage/.deb),
+  requirements, build-from-source pointer, and the maintainer release how-to.
+- `electron/package.json`: added `author` and `repository` (electron-builder
+  warned about the missing author).
+- Not done: code signing/notarization (Apple Developer account + Windows cert),
+  Intel mac build (runner is arm64 only), website download buttons (still `#`;
+  the website's "Download for Mac" refers to the Swift app).
+
+## 2026-11-04 — Dependency notices + Acknowledgements view (LICENSING §3 closed)
+
+Closes both open items from the 2026-11-03 entry.
+
+- `scripts/third-party-notices.sh` (→ `scripts/third_party_notices.py`)
+  generates the committed `third-party/` folder: `rust-crates.txt` (180
+  crates over normal dependency edges from `cargo metadata`; dev/build deps
+  excluded; crate license files inline, canonical MIT/Apache-2.0 text from
+  `scripts/license-texts/` for the 21 crates that ship none; NOTICE files
+  carried verbatim — none today), `npm-packages.txt` (react, react-dom,
+  scheduler + the Electron runtime), `swift-packages.txt` (asserts
+  `mac/Package.swift` has no external packages), `components.json` (the list
+  the views render). SPDX expressions are evaluated against a permissive-only
+  allowed set; unknown or copyleft (incl. MPL) fails the run. `--check` fails
+  on a stale folder. Not `cargo about`: it reads the same registry sources
+  without another tool to install.
+- `make-app.sh` copies `third-party/` into `Contents/Resources/Licenses/`
+  (dev and dist; dist runs `--check` first); `electron-builder.yml` copies it
+  to `resources/Licenses/` via extraResources.
+- About + Acknowledgements in both shells (SHELL-UI-PARITY "App-level"):
+  Swift `Window` scenes `about` / `acknowledgements` (CommandGroup replaces
+  `.appInfo`; Help ▸ Acknowledgements), `Licenses.swift` loader; Electron
+  explicit application menu in `main/index.ts` (About → renderer overlay,
+  Help ▸ Acknowledgements), `app/Licenses.ts`, `views/AboutView.tsx` +
+  `AcknowledgementsView.tsx` + `about.css`. Loaders parse the `==== name
+  version` sections of the notices files and the ffmpeg folder
+  (`COPYING.LGPLv2.1`, `LICENSE.md`, `SOURCE.txt`; version from SOURCE.txt's
+  first line). `COUPLE_LICENSES_DIR` overrides the folder; Electron harness
+  `COUPLE_ACK_TEST=1` opens the view at startup for `COUPLE_SHOT_PATH`.
+- docs/LICENSING.md §3 rewritten as the record of the pipeline; CLAUDE.md
+  (doc map, layout, build commands, env) updated.
+
+
+## 2026-11-04 — Windows and Linux installers bundle ffmpeg too
+
+Closes the "Windows/Linux ffmpeg bundling" item from the 2026-11-03 release
+entry. Testers on those platforms no longer install ffmpeg.
+
+- **`electron/scripts/fetch-ffmpeg.mjs` (new, Node, runs on all three
+  runners).** Downloads the pinned BtbN FFmpeg-Builds `-lgpl` static build for
+  the target platform — release `autobuild-2026-10-31-12-59` (a month-end
+  build; BtbN prunes dailies but keeps those), ffmpeg `n9.0.2-39-g7adfbe40dc`
+  (release/9.0, same line as the mac pin), one asset + sha256 per platform
+  computed from an inspected download, never the remote checksum file —
+  extracts `bin/ffmpeg(.exe)` + `bin/ffprobe(.exe)`, and lays out
+  `electron/resources/ffmpeg/<win32|linux>/` with `SOURCE.txt` (release URL,
+  asset, sha256, ffmpeg commit, builder tag) and `licenses/{COPYING.LGPLv3,
+  LICENSE.md}` (the archive's `LICENSE.txt` is byte-identical to ffmpeg's
+  `COPYING.LGPLv3`, pinned; `LICENSE.md` fetched from the same ffmpeg commit,
+  pinned). Gates: the configure line embedded in each binary must contain
+  neither `--enable-gpl` nor `--enable-nonfree` (checked on any host, by
+  reading the binary); when the host can run the binary, `-version` must
+  succeed and `-L` must report the LGPL. `--platform win32|linux` overrides
+  the host so both pins can be exercised from a Mac (run checks skipped).
+  Cache `electron/vendor/ffmpeg/<tag>/` (gitignored). stdout = the destination
+  dir, progress on stderr, like the mac script.
+- **These builds are LGPL v3** (BtbN passes `--enable-version3`), not v2.1
+  like the compiled mac build. `SOURCE.txt`'s first line says "LGPL v3 or
+  later"; both license loaders (`app/Licenses.ts`, `Licenses.swift`) now take
+  the license name from that line and also look for `COPYING.LGPLv3`, so
+  Acknowledgements states the right license per platform. docs/LICENSING.md
+  §2 and SHELL-UI-PARITY.md updated.
+- **`release.yml`**: new "Bundle ffmpeg (Windows/Linux …)" step on the
+  non-mac runners before "Typecheck + renderer build". The macOS step now
+  copies the whole helper dir (`SOURCE.txt` + `licenses/` too, as main's
+  from-source script emits them), not just the two binaries. Header comment
+  and the draft-release notes' Requirements updated; README Requirements now
+  says nothing to install on any platform.
+- Verified on this Mac: `--platform linux` and `--platform win32` both
+  download, hash-match, extract to the expected binaries, pass the
+  configure-line check and produce the layout above. The `-version`/`-L` run
+  checks will first execute on the real runners (next `workflow_dispatch`
+  dry run).
+
+## 2026-11-04 — Release dry run: ffmpeg source mirrored in-repo, inputs cached
+
+First `workflow_dispatch` dry run of `release.yml` (run 41795729422): Windows
+and Linux built and packaged with the bundled ffmpeg; macOS failed before
+building anything — ffmpeg.org's HTTPS endpoint was down and the tarball
+download timed out. The release build should not depend on a volunteer-run
+site being up, and LICENSING §1 already required keeping the exact tarball
+under our control. So:
+
+- **`ffmpeg-source-9.0.2` prerelease** in this repo (not marked latest, so
+  `releases/latest/download/...` keeps pointing at app builds) carries the
+  sha256-verified `ffmpeg-9.0.2.tar.xz` (and its `.asc` once ffmpeg.org is
+  reachable again). It is both the LGPL source-retention copy and the build
+  input.
+- **`mac/Scripts/fetch-ffmpeg.sh`** fetches the mirror first and ffmpeg.org
+  second, with curl retries and a connect timeout; the sha256 pin applies
+  either way. In CI (`$CI` set) the mirror is required — a pin bump that has
+  not uploaded its tarball fails with the `gh release create` line to run.
+  The FFmpeg release signing key is now committed
+  (`mac/Scripts/ffmpeg-release-signing-key.asc`, fetched from
+  keyserver.ubuntu.com by fingerprint) and its fingerprint is checked against
+  the pin before use; the `.asc` is tried from both sources and, if neither
+  answers, the signature check is skipped with a note (sha256 still gates).
+  `SOURCE.txt` lists both URLs.
+- **`release.yml`** caches `mac/vendor/ffmpeg` and the staged
+  `electron/vendor/ffmpeg` output (archives excluded) with `actions/cache`,
+  keyed on the two fetch scripts, so macOS stops recompiling ffmpeg on every
+  run and Windows/Linux stop re-downloading 150 MB each.
+- docs/LICENSING.md §1 (obligation 3 and the pin-bump recipe) and CLAUDE.md
+  updated.

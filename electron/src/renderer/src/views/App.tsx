@@ -13,8 +13,10 @@ import { CenterColumn } from './CenterColumn';
 import { ExportRail } from './ExportRail';
 import { ActivityStrip } from './ActivityStrip';
 import { ToastStack } from './ToastStack';
+import { AboutView } from './AboutView';
+import { AcknowledgementsView } from './AcknowledgementsView';
 
-const { webUtils } = (window as unknown as { require: NodeRequire }).require(
+const { webUtils, ipcRenderer } = (window as unknown as { require: NodeRequire }).require(
   'electron'
 ) as typeof import('electron');
 
@@ -39,6 +41,22 @@ let startupRan = false;
 export function App(): React.JSX.Element {
   useModel(appModel);
   const [dropActive, setDropActive] = useState(false);
+  // About / Acknowledgements overlays, opened from the application menu (main
+  // process) — the About panel is the way into Acknowledgements (docs/LICENSING §3).
+  // COUPLE_ACK_TEST opens Acknowledgements at startup for a harness screenshot.
+  const [panel, setPanel] = useState<'about' | 'acknowledgements' | null>(() =>
+    env.COUPLE_ACK_TEST ? 'acknowledgements' : null
+  );
+  useEffect(() => {
+    const showAbout = () => setPanel('about');
+    const showAck = () => setPanel('acknowledgements');
+    ipcRenderer.on('couple:show-about', showAbout);
+    ipcRenderer.on('couple:show-acknowledgements', showAck);
+    return () => {
+      ipcRenderer.removeListener('couple:show-about', showAbout);
+      ipcRenderer.removeListener('couple:show-acknowledgements', showAck);
+    };
+  }, []);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -133,6 +151,18 @@ export function App(): React.JSX.Element {
           e.preventDefault();
           break;
         }
+        case 'a': {
+          // A/B: camera ⇄ external solo (UX-DECISIONS 2026-11-03; InputRouter.swift "a").
+          const c = appModel.selected;
+          if (c && c.hasSession) appModel.audition.flipMonitor();
+          break;
+        }
+        case 'b': {
+          // Back to hearing both (the pan/overlay mode used last).
+          const c = appModel.selected;
+          if (c && c.hasSession) appModel.audition.restoreBothMonitor();
+          break;
+        }
         case 'Escape':
           appModel.audition.pause();
           break;
@@ -169,7 +199,7 @@ export function App(): React.JSX.Element {
             color: 'rgba(216, 218, 222, 0.32)',
           }}
         >
-          j/k move · v approve (=queue) · ⏎/⚙ sync tools · l/◫ loupes · esc collapse
+          j/k move · v approve (=queue) · ⏎/⚙ sync tools · l/◫ loupes · a camera/external · b both · esc collapse
           <span style={{ marginLeft: 24 }}>
             ←/→ offset 1 ms · ⇧ 10 · ⌥ 0.1 · [ ] drift · drag loupe = offset · ⇧-drag = pivot
           </span>
@@ -179,6 +209,10 @@ export function App(): React.JSX.Element {
         </span>
       </div>
       <ToastStack />
+      {panel === 'about' && (
+        <AboutView onClose={() => setPanel(null)} onAcknowledgements={() => setPanel('acknowledgements')} />
+      )}
+      {panel === 'acknowledgements' && <AcknowledgementsView onClose={() => setPanel(null)} />}
     </div>
   );
 }

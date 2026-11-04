@@ -32,6 +32,11 @@ rename them.
   core; presentation lives in the shell"). Phases A–F shipped; Phase G (new
   shells) started 2026-07-04 via the `electron/` shell. Stays in root while
   Phase G is in progress.
+- `docs/LICENSING.md` — third-party licensing record: the ffmpeg LGPL rule
+  (what a distributable build may contain, how `fetch-ffmpeg.sh` enforces it),
+  the obligations each release must meet, Electron bundling rules, and the
+  dependency-notice pipeline (`scripts/third-party-notices.sh` →
+  `third-party/` → bundle `Licenses/` → Acknowledgements view).
 - `docs/archive/` — shipped plans, historical only; kept because code cites them.
 - `fixtures/matcher-corpus/CALIBRATION.md` — derivation of frozen matcher
   thresholds. §1–5 are self-marked superseded; §6–7 (profile 2) is the live
@@ -57,16 +62,24 @@ rename them.
   `COUPLE_SHOT_PATH`/`COUPLE_SHOT_DELAY_MS`, `COUPLE_AUTOQUIT_MS`, `COUPLE_HUD`,
   `COUPLE_USER_DATA` (persistence root override), plus a `COUPLE_*_TEST` family
   (PLAY, EXPORT, NUDGE, ANCHOR, PERSIST, RESTORE, UNDO, QUALITY, REMOVE,
-  POOL_PREVIEW, POOL_INFO) mirroring the mac harness idiom.
+  POOL_PREVIEW, POOL_INFO, ACK = open Acknowledgements at startup) mirroring
+  the mac harness idiom.
 - `mac/` — Swift package: `CoupleKit` (FFI binding + policy mirrors), `Couple`
   (SwiftUI app), `CCouple` (C shim), `Tests/`. Swift mirrors Rust policies
   file-for-file (`RowMergePolicy.swift` ↔ `policy/row_merge.rs`, etc.); the Rust
   side is the authority.
+- `third-party/` — generated dependency license notices (`components.json`,
+  `rust-crates.txt`, `npm-packages.txt`, `swift-packages.txt`), committed;
+  regenerate with `scripts/third-party-notices.sh` after a `Cargo.lock` or
+  `package-lock.json` change. Both bundles copy it to their `Licenses/` folder.
 - `scripts/`, `fixtures/` (test corpora; media gitignored, manifests tracked),
   `example_data/` (owner-local media, optional), `design/` (mockups v1+v2 — both
   live; v2 is queue-scope, not a replacement; `logo/` = final logo SVGs + `Couple.icns`,
   regen per `design/logo/README.md` — the app icon ships from `mac/Resources/AppIcon.icns`,
   wired in `make-app.sh`).
+- `README.md` — public landing for the GitHub repo: Electron download links
+  (`releases/latest/download/...`), first-launch caveats, requirements, release
+  how-to.
 - `website/` — product marketing page (`index.html`, static; only external dep is
   Google Fonts). Kept from the 2026-07-04 prototype round (the "product frame"
   variant; other prototypes discarded). Preview: `python3 -m http.server 8642`
@@ -76,17 +89,51 @@ rename them.
 
 - `cargo test --release --workspace` — integration suites require `--release`.
 - `scripts/golden-pair-rows.sh` — resolver-decision golden diff vs `fixtures/golden/rows/` (CI runs it in the test job). Intended decision change: `COUPLE_UPDATE_GOLDEN=1 scripts/golden-pair-rows.sh`, review diff, commit.
+- `scripts/third-party-notices.sh [--check]` — regenerate `third-party/` from
+  `cargo metadata` + `npm ls` (needs `electron/node_modules`); fails on an
+  unknown or copyleft license (allowed set in `scripts/third_party_notices.py`;
+  rule in `docs/LICENSING.md` §3). `--check` fails if the committed output is
+  stale; `make-app.sh --dist` runs it.
+- `scripts/shell-drift-check.sh <base-ref>` — warn-only (CI `shell-drift` job, and
+  pre-push once `scripts/install-hooks.sh` has run): flags a change that touches
+  one shell's views (`mac/Sources/Couple/Views/` vs
+  `electron/src/renderer/src/views/`) without the other or `SHELL-UI-PARITY.md`.
+  Opt out for an intentionally one-sided change with a
+  `Shell-parity: n/a <reason>` line in a commit message.
 - `cargo build --release -p couple-ffi` — must run **before** any swift build.
 - `cd mac && swift build -c release` — ship variant (DebugDrive stubbed).
 - `cd mac && swift build -c release -Xswiftc -DCOUPLE_DEVHARNESS` — dev harness.
 - `cd mac && Scripts/make-app.sh [--dist] [--dmg]` — assemble `mac/dist/Couple.app`.
-  `--dist` bundles the pinned static ffmpeg via `Scripts/fetch-ffmpeg.sh`
-  (sha256-pinned, otool-verified self-contained; GPL-configured — see the
-  script's license note before public distribution; cache `mac/vendor/`,
-  gitignored). Default dev build copies `COUPLE_FFMPEG`/`$PATH` ffmpeg and
-  warns if it links non-system dylibs (a Homebrew copy breaks on `brew
-  upgrade` — the 2026-11-01 "unsupported format" failure).
+  `--dist` builds and bundles the pinned **LGPL** static ffmpeg via
+  `Scripts/fetch-ffmpeg.sh` (compiled from the sha256+GPG-verified ffmpeg
+  source tarball — fetched from this repo's `ffmpeg-source-<ver>` prerelease
+  first, ffmpeg.org second; signing key committed next to the script; in CI
+  the mirror is required — with no external libs; otool-, launch- and LGPL-verified; license
+  texts + `SOURCE.txt` land in `Contents/Resources/Licenses/ffmpeg/`, the
+  generated `third-party/` notices next to them in `Licenses/`; cache
+  `mac/vendor/`, gitignored; first run compiles for a few minutes). The only
+  variant fit for distribution — obligations in `docs/LICENSING.md` (attach
+  the source tarball to each public release). Default dev build copies
+  `COUPLE_FFMPEG`/`$PATH` ffmpeg (a GPL-configured Homebrew build), labels the
+  bundle a dev build, and warns if it links non-system dylibs (a Homebrew copy
+  breaks on `brew upgrade` — the 2026-11-01 "unsupported format" failure).
 - `cd mac && swift test`
+- Release (Electron installers → DRAFT GitHub Release; `.github/workflows/release.yml`):
+  fires ONLY on a pushed `v*` tag (`git tag v0.1.0 && git push origin v0.1.0`),
+  never on ordinary pushes; the draft is published by hand. The tag is the
+  version (stamped into `electron/package.json` at build time). Installer names
+  are versionless (`Couple-mac-arm64.dmg` etc., `artifactName` in
+  `electron/electron-builder.yml`) so `releases/latest/download/<name>` links in
+  `README.md` stay valid. Every installer bundles ffmpeg + ffprobe: macOS via
+  `mac/Scripts/fetch-ffmpeg.sh` (whole helper dir incl. `SOURCE.txt` +
+  `licenses/`); Windows/Linux via
+  `electron/scripts/fetch-ffmpeg.mjs [--platform win32|linux]` — one pinned
+  month-end BtbN FFmpeg-Builds `-lgpl` release (asset + sha256 per platform,
+  LGPL v3 via `--enable-version3`; configure-line, `-version` and `-L` checks)
+  laid out as `electron/resources/ffmpeg/<platform>/{ffmpeg,ffprobe,SOURCE.txt,licenses/}`;
+  cache `electron/vendor/`, gitignored; a non-host `--platform` downloads and
+  verifies without the run checks, which is how to exercise both pins from a Mac.
+  `workflow_dispatch` from a branch = dry run (artifacts only, no release).
 - ROC gate (weekly/on-demand, plus auto on push/PR touching matcher paths — .github/workflows/roc-gate.yml):
   `cargo test --release -p couple-core --test matching_evidence -- --ignored synthetic_corpus_roc_gates_hold`
 - Real data (owner-only): `COUPLE_REALDATA_DIR=<sessions> scripts/realdata-sweep.sh`
@@ -105,6 +152,10 @@ rename them.
   rescue automatically (`policy/sync_seed.rs` decides); CLI opt-in via
   `couple sync --seed-lag-ms=<ms>`. Unseeded behavior is byte-identical.
 - `COUPLE_DEVHARNESS` (env) + `-DCOUPLE_DEVHARNESS` (compile flag) — dev harness.
+- `COUPLE_LICENSES_DIR` — overrides where the Acknowledgements view looks for
+  the Licenses folder (both shells; a bare `swift build` run has no bundle —
+  point it at `third-party/`). Electron main also sets it, plus
+  `COUPLE_FFMPEG_LICENSE_DIR` and `COUPLE_APP_VERSION`, for the renderer.
 - `COUPLE_FFMPEG` (ffmpeg path), `COUPLE_MATCHER`/`COUPLE_SHADOW_MATCHER`,
   `COUPLE_REALDATA_DIR`, `COUPLE_UPDATE_GOLDEN`, plus a `COUPLE_*_TEST` /
   `COUPLE_*_SHOT_DIR` family driving the UI screenshot harness.

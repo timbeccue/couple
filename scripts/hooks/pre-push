@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Pre-push: run the warn-only shell drift check on each pushed range.
+# Installed by scripts/install-hooks.sh. Never blocks a push.
+#
+# git passes one line per ref on stdin:
+#   <local-ref> <local-sha> <remote-ref> <remote-sha>
+set -uo pipefail
+
+top="$(git rev-parse --show-toplevel)"
+check="$top/scripts/shell-drift-check.sh"
+[ -x "$check" ] || exit 0
+
+zero='^0+$'
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [[ "$local_sha" =~ $zero ]] && continue # branch deletion
+
+    base=""
+    if ! [[ "$remote_sha" =~ $zero ]] &&
+        git rev-parse --verify --quiet "$remote_sha^{commit}" >/dev/null; then
+        base="$remote_sha"
+    elif git rev-parse --verify --quiet origin/main >/dev/null; then
+        base="origin/main" # new branch: compare with main
+    fi
+    [ -n "$base" ] || continue
+
+    "$check" "$base" "$local_sha" || true
+done
+exit 0

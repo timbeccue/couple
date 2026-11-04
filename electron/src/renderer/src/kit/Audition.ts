@@ -6,9 +6,16 @@ import { native } from './native';
 import type { Engine } from './Engine';
 import type { SessionHandle } from './Session';
 
-export type MonitorMode = 'pan' | 'overlay' | 'null';
+/** Wire names shared with core serde; 'camera' / 'external' are the A/B solos
+ * (UX-DECISIONS 2026-11-03). */
+export type MonitorMode = 'pan' | 'overlay' | 'null' | 'camera' | 'external';
 
-const MODE_CODE: Record<MonitorMode, number> = { pan: 0, overlay: 1, null: 2 };
+const MODE_CODE: Record<MonitorMode, number> = { pan: 0, overlay: 1, null: 2, camera: 3, external: 4 };
+
+/** True for the two A/B solos (one track audible). */
+export function isSoloMode(m: MonitorMode): boolean {
+  return m === 'camera' || m === 'external';
+}
 
 export class AuditionStream {
   private readonly engine: Engine;

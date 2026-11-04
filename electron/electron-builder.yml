@@ -1,9 +1,16 @@
 # electron-builder config (M7). The napi binding must stay OUTSIDE the asar
 # (native modules can't load from it); ffmpeg bundling is optional — drop
-# static builds into resources/ffmpeg/<darwin|win32|linux>/ to include them
-# (LGPL builds only; see the plan's licensing note).
+# static builds into resources/ffmpeg/<darwin|win32|linux>/ to include them.
+# LGPL-configured builds only (no --enable-gpl/--enable-nonfree), with their
+# license texts and a SOURCE.txt alongside; the whole directory is copied.
+# Rules and sources per platform: docs/LICENSING.md §2.
 appId: com.timbeccue.couple
 productName: Couple
+# Versionless file names (Couple-mac-arm64.dmg, Couple-win-x64.exe,
+# Couple-linux-x64.AppImage/.deb) so README/website links of the form
+# releases/latest/download/<name> keep working across releases; the version
+# lives in the release tag (.github/workflows/release.yml).
+artifactName: ${productName}-${os}-${arch}.${ext}
 directories:
   output: dist
 files:
@@ -15,6 +22,11 @@ extraResources:
     filter: ['index.cjs', '*.node']
   - from: resources/ffmpeg/${platform}
     to: ffmpeg
+  # Third-party notices (scripts/third-party-notices.sh output; docs/LICENSING §3),
+  # read by the Acknowledgements view. electron-builder adds LICENSE.electron.txt
+  # and LICENSES.chromium.html at the resources root by itself.
+  - from: ../third-party
+    to: Licenses
 mac:
   target: dmg
   category: public.app-category.video
@@ -25,4 +37,5 @@ linux:
     - AppImage
     - deb
   category: Video
+  maintainer: Tim Beccue <timothybeccue@gmail.com>
 npmRebuild: false

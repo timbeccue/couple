@@ -80,7 +80,8 @@ final class DebugDrive {
             || env["COUPLE_REMERGE_TEST"] != nil || env["COUPLE_POOLSEL_TEST"] != nil
             || env["COUPLE_QUALITY_TEST"] != nil || env["COUPLE_REPAIRDROP_TEST"] != nil
             || env["COUPLE_REMOVE_TEST"] != nil || env["COUPLE_ANCHOR_TEST"] != nil
-            || env["COUPLE_ACTIVITY_TEST"] != nil || env["COUPLE_OVERVIEW_TEST"] != nil else { return }
+            || env["COUPLE_ACTIVITY_TEST"] != nil || env["COUPLE_OVERVIEW_TEST"] != nil
+            || env["COUPLE_MONITOR_TEST"] != nil else { return }
         Task { await run(env: env) }
     }
 
@@ -171,10 +172,75 @@ final class DebugDrive {
         if env["COUPLE_ANCHOR_TEST"] == "1" {
             await anchorTest()
         }
+        if env["COUPLE_MONITOR_TEST"] == "1" {
+            await monitorTest(shotDir: env["COUPLE_SHOT_DIR"])
+        }
         if env["COUPLE_AUTOQUIT"] == "1" {
             print("DEBUG-DRIVE: done, quitting")
             NSApp.terminate(nil)
         }
+    }
+
+    // MARK: - A/B monitor (UX-DECISIONS 2026-11-03): the 4-way picker + a/b keys
+    // through the live policy + InputRouter, with lane-silence feedback.
+
+    private func monitorTest(shotDir: String?) async {
+        guard let model, model.pair.session != nil else {
+            print("MONITOR-TEST: SKIPPED (no session)")
+            return
+        }
+        let a = model.pair.audition
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("MONITOR-TEST \(ok ? "ok  " : "FAIL") \(name)")
+        }
+        check("default is overlay, no lane silenced",
+              a.monitorMode == .overlay && !a.camSilenced && !a.extSilenced)
+        check("picker offers camera · pan · overlay · external",
+              MonitorMode.allCases == [.camera, .pan, .overlay, .external])
+        a.flipMonitor(); await settle()
+        check("flip from both → camera only; external lane silenced",
+              a.monitorMode == .camera && a.extSilenced && !a.camSilenced)
+        if let d = shotDir { capture(to: "\(d)/10-ab-camera-only.png") }
+        a.flipMonitor(); await settle()
+        check("flip again → external only; camera lane silenced",
+              a.monitorMode == .external && a.camSilenced && !a.extSilenced)
+        if let d = shotDir { capture(to: "\(d)/11-ab-external-only.png") }
+        a.restoreBothMonitor(); await settle()
+        check("both → back to overlay", a.monitorMode == .overlay && !a.camSilenced && !a.extSilenced)
+        a.selectMonitor(.pan); a.flipMonitor(); await settle()
+        check("flip after picking pan resumes external (side heard last)", a.monitorMode == .external)
+        a.restoreBothMonitor(); await settle()
+        check("both restores pan (the mode left)", a.monitorMode == .pan)
+        a.extMuted = true
+        a.selectMonitor(.camera); a.restoreBothMonitor(); await settle()
+        check("a user mute survives a solo round-trip", a.extMuted && a.monitorMode == .pan)
+        a.extMuted = false
+        a.selectMonitor(.overlay); await settle()
+
+        // Keys through InputRouter (QUEUE-EVENT idiom): a flips, b restores.
+        if let win = NSApp.windows.first(where: { $0.isVisible }) {
+            NSApp.activate(ignoringOtherApps: true)
+            win.makeKeyAndOrderFront(nil)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            let pid = ProcessInfo.processInfo.processIdentifier
+            func key(_ code: CGKeyCode) async {
+                for down in [true, false] {
+                    if let e = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down) {
+                        e.postToPid(pid)
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+            await key(0) // a
+            check("a key → camera only", a.monitorMode == .camera)
+            await key(0) // a
+            check("a key again → external only", a.monitorMode == .external)
+            await key(11) // b
+            check("b key → overlay", a.monitorMode == .overlay)
+        }
+        print("MONITOR-TEST: \(fail == 0 ? "PASS" : "FAIL") (\(pass) ok, \(fail) failed)")
     }
 
     private func shoot(dir: String) async {

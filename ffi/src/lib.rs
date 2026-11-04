@@ -806,7 +806,8 @@ pub unsafe extern "C" fn cpl_fit_ls_json(points_json: *const c_char) -> *mut c_c
 
 // ---------- audition (§4.8, Phase 6) ----------
 
-/// Open an audition stream on a session. mode: 0 = pan, 1 = overlay, 2 = null.
+/// Open an audition stream on a session. mode: 0 = pan, 1 = overlay, 2 = null,
+/// 3 = camera only, 4 = external only (the A/B solos, UX-DECISIONS 2026-11-03).
 /// Returns the stream id, 0 on error.
 #[no_mangle]
 pub extern "C" fn cpl_audition_open(ctx: u64, session: u64, mode: i32, t_start: f64) -> u64 {
@@ -875,7 +876,8 @@ pub extern "C" fn cpl_audition_seek(ctx: u64, stream: u64, t: f64) -> i32 {
     })
 }
 
-/// mode: 0 = pan, 1 = overlay, 2 = null. Click-free (240-sample crossfade).
+/// mode: 0 = pan, 1 = overlay, 2 = null, 3 = camera only, 4 = external only.
+/// Click-free (240-sample crossfade).
 #[no_mangle]
 pub extern "C" fn cpl_audition_set_mode(ctx: u64, stream: u64, mode: i32) -> i32 {
     guarded_status(|| {
@@ -1901,6 +1903,25 @@ pub unsafe extern "C" fn cpl_policy_activity(json: *const c_char) -> *mut c_char
     use couple_core::policy::activity::{decide, Request};
     match policy_request::<Request>(json) {
         Ok(req) => policy_ok(&decide(&req)),
+        Err(envelope) => envelope,
+    }
+    })
+}
+
+/// Monitor A/B decision (UX-DECISIONS 2026-11-03; `policy::monitor`) — the next monitor mode for
+/// the `a` (flip) / `b` (both) keys and the 4-way picker, plus the memory the shell hands back on
+/// the next call. Request: `{"action":"flip"|"both"|"select","current":<mode>,"chosen":<mode>|null,
+/// "lastSide":<mode>|null,"lastBoth":<mode>|null}` where `<mode>` is the wire name
+/// `"pan"|"overlay"|"null"|"camera"|"external"`. Value: `{"next":<mode>,"lastSide":<mode>,
+/// "lastBoth":<mode>}` — set `next` via `cpl_audition_set_mode` and store both memories verbatim.
+/// On malformed JSON the error envelope (the wrapper's conservative fallback keeps the current
+/// mode). PURE (no ctx). Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_policy_monitor(json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
+    use couple_core::policy::monitor::{plan, MonitorRequest};
+    match policy_request::<MonitorRequest>(json) {
+        Ok(req) => policy_ok(&plan(&req)),
         Err(envelope) => envelope,
     }
     })

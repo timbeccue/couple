@@ -215,7 +215,8 @@ char *cpl_measure_local_json(uint64_t ctx,
  char *cpl_fit_ls_json(const char *points_json);
 
 /*
- Open an audition stream on a session. mode: 0 = pan, 1 = overlay, 2 = null.
+ Open an audition stream on a session. mode: 0 = pan, 1 = overlay, 2 = null,
+ 3 = camera only, 4 = external only (the A/B solos, UX-DECISIONS 2026-11-03).
  Returns the stream id, 0 on error.
  */
  uint64_t cpl_audition_open(uint64_t ctx, uint64_t session, int32_t mode, double t_start);
@@ -237,7 +238,8 @@ int32_t cpl_audition_fill(uint64_t ctx,
  int32_t cpl_audition_seek(uint64_t ctx, uint64_t stream, double t);
 
 /*
- mode: 0 = pan, 1 = overlay, 2 = null. Click-free (240-sample crossfade).
+ mode: 0 = pan, 1 = overlay, 2 = null, 3 = camera only, 4 = external only.
+ Click-free (240-sample crossfade).
  */
  int32_t cpl_audition_set_mode(uint64_t ctx, uint64_t stream, int32_t mode);
 
@@ -625,6 +627,18 @@ char *cpl_policy_shadow_rows(const char *json);
  */
 
 char *cpl_policy_activity(const char *json);
+
+/*
+ Monitor A/B decision (UX-DECISIONS 2026-11-03; `policy::monitor`) — the next monitor mode for
+ the `a` (flip) / `b` (both) keys and the 4-way picker, plus the memory the shell hands back on
+ the next call. Request: `{"action":"flip"|"both"|"select","current":<mode>,"chosen":<mode>|null,
+ "lastSide":<mode>|null,"lastBoth":<mode>|null}` where `<mode>` is the wire name
+ `"pan"|"overlay"|"null"|"camera"|"external"`. Value: `{"next":<mode>,"lastSide":<mode>,
+ "lastBoth":<mode>}` — set `next` via `cpl_audition_set_mode` and store both memories verbatim.
+ On malformed JSON the error envelope (the wrapper's conservative fallback keeps the current
+ mode). PURE (no ctx). Free with cpl_string_free.
+ */
+ char *cpl_policy_monitor(const char *json);
 
 /*
  Auto-sync seed selection (PLAN-SPECTRAL-FINGERPRINT-MATCHING §11.3; `policy::sync_seed`).

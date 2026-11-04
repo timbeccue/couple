@@ -29,6 +29,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Non-blocking reminder: warns (annotation + job summary) when a change
+  # touches one shell's views without the other shell or SHELL-UI-PARITY.md.
+  # See scripts/shell-drift-check.sh for the rules and the opt-out trailer;
+  # the same check runs pre-push locally via scripts/install-hooks.sh.
+  shell-drift:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # PRs compare against the base branch's CURRENT tip (the event's
+      # base.sha can be stale once the branch has merged newer main, which
+      # would pull main's own commits into the range). Pushes compare against
+      # the previous tip; a new branch (zero SHA) is skipped by the script.
+      - name: Shell drift check (warn only)
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            git fetch --no-tags origin "$GITHUB_BASE_REF"
+            BASE="origin/$GITHUB_BASE_REF"
+          else
+            BASE="$BEFORE"
+          fi
+          scripts/shell-drift-check.sh "$BASE" HEAD
+
   test:
     runs-on: macos-15
     timeout-minutes: 60
