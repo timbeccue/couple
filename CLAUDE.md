@@ -34,7 +34,9 @@ rename them.
   Phase G is in progress.
 - `docs/LICENSING.md` — third-party licensing record: the ffmpeg LGPL rule
   (what a distributable build may contain, how `fetch-ffmpeg.sh` enforces it),
-  the obligations each release must meet, Electron bundling rules, open items.
+  the obligations each release must meet, Electron bundling rules, and the
+  dependency-notice pipeline (`scripts/third-party-notices.sh` →
+  `third-party/` → bundle `Licenses/` → Acknowledgements view).
 - `docs/archive/` — shipped plans, historical only; kept because code cites them.
 - `fixtures/matcher-corpus/CALIBRATION.md` — derivation of frozen matcher
   thresholds. §1–5 are self-marked superseded; §6–7 (profile 2) is the live
@@ -60,11 +62,16 @@ rename them.
   `COUPLE_SHOT_PATH`/`COUPLE_SHOT_DELAY_MS`, `COUPLE_AUTOQUIT_MS`, `COUPLE_HUD`,
   `COUPLE_USER_DATA` (persistence root override), plus a `COUPLE_*_TEST` family
   (PLAY, EXPORT, NUDGE, ANCHOR, PERSIST, RESTORE, UNDO, QUALITY, REMOVE,
-  POOL_PREVIEW, POOL_INFO) mirroring the mac harness idiom.
+  POOL_PREVIEW, POOL_INFO, ACK = open Acknowledgements at startup) mirroring
+  the mac harness idiom.
 - `mac/` — Swift package: `CoupleKit` (FFI binding + policy mirrors), `Couple`
   (SwiftUI app), `CCouple` (C shim), `Tests/`. Swift mirrors Rust policies
   file-for-file (`RowMergePolicy.swift` ↔ `policy/row_merge.rs`, etc.); the Rust
   side is the authority.
+- `third-party/` — generated dependency license notices (`components.json`,
+  `rust-crates.txt`, `npm-packages.txt`, `swift-packages.txt`), committed;
+  regenerate with `scripts/third-party-notices.sh` after a `Cargo.lock` or
+  `package-lock.json` change. Both bundles copy it to their `Licenses/` folder.
 - `scripts/`, `fixtures/` (test corpora; media gitignored, manifests tracked),
   `example_data/` (owner-local media, optional), `design/` (mockups v1+v2 — both
   live; v2 is queue-scope, not a replacement).
@@ -77,6 +84,11 @@ rename them.
 
 - `cargo test --release --workspace` — integration suites require `--release`.
 - `scripts/golden-pair-rows.sh` — resolver-decision golden diff vs `fixtures/golden/rows/` (CI runs it in the test job). Intended decision change: `COUPLE_UPDATE_GOLDEN=1 scripts/golden-pair-rows.sh`, review diff, commit.
+- `scripts/third-party-notices.sh [--check]` — regenerate `third-party/` from
+  `cargo metadata` + `npm ls` (needs `electron/node_modules`); fails on an
+  unknown or copyleft license (allowed set in `scripts/third_party_notices.py`;
+  rule in `docs/LICENSING.md` §3). `--check` fails if the committed output is
+  stale; `make-app.sh --dist` runs it.
 - `scripts/shell-drift-check.sh <base-ref>` — warn-only (CI `shell-drift` job, and
   pre-push once `scripts/install-hooks.sh` has run): flags a change that touches
   one shell's views (`mac/Sources/Couple/Views/` vs
@@ -90,7 +102,8 @@ rename them.
   `--dist` builds and bundles the pinned **LGPL** static ffmpeg via
   `Scripts/fetch-ffmpeg.sh` (compiled from the sha256+GPG-verified ffmpeg.org
   tarball with no external libs; otool-, launch- and LGPL-verified; license
-  texts + `SOURCE.txt` land in `Contents/Resources/Licenses/ffmpeg/`; cache
+  texts + `SOURCE.txt` land in `Contents/Resources/Licenses/ffmpeg/`, the
+  generated `third-party/` notices next to them in `Licenses/`; cache
   `mac/vendor/`, gitignored; first run compiles for a few minutes). The only
   variant fit for distribution — obligations in `docs/LICENSING.md` (attach
   the source tarball to each public release). Default dev build copies
@@ -116,6 +129,10 @@ rename them.
   rescue automatically (`policy/sync_seed.rs` decides); CLI opt-in via
   `couple sync --seed-lag-ms=<ms>`. Unseeded behavior is byte-identical.
 - `COUPLE_DEVHARNESS` (env) + `-DCOUPLE_DEVHARNESS` (compile flag) — dev harness.
+- `COUPLE_LICENSES_DIR` — overrides where the Acknowledgements view looks for
+  the Licenses folder (both shells; a bare `swift build` run has no bundle —
+  point it at `third-party/`). Electron main also sets it, plus
+  `COUPLE_FFMPEG_LICENSE_DIR` and `COUPLE_APP_VERSION`, for the renderer.
 - `COUPLE_FFMPEG` (ffmpeg path), `COUPLE_MATCHER`/`COUPLE_SHADOW_MATCHER`,
   `COUPLE_REALDATA_DIR`, `COUPLE_UPDATE_GOLDEN`, plus a `COUPLE_*_TEST` /
   `COUPLE_*_SHOT_DIR` family driving the UI screenshot harness.

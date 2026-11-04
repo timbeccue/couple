@@ -44,9 +44,9 @@ simple: it is exactly the unmodified tarball plus the configure line.
 1. *Ship the license text.* `Contents/Resources/Licenses/ffmpeg/` holds
    `COPYING.LGPLv2.1` and ffmpeg's `LICENSE.md` (its per-component license
    map), copied from the same tarball the binaries were built from.
-2. *Tell the user.* `NSHumanReadableCopyright` (visible in the About panel)
-   says the helpers are LGPL and where the licenses live. An in-app
-   Acknowledgements view is an open item (§3).
+2. *Tell the user.* `NSHumanReadableCopyright` (shown in the About panel)
+   says the helpers are LGPL and where the licenses live; the Acknowledgements
+   view (§3) shows the texts themselves.
 3. *Make the corresponding source available.* `SOURCE.txt` in the same
    folder gives the exact tarball URL, its sha256, the signing key, and the
    configure line. The tarball itself is cached at `mac/vendor/ffmpeg/src/`
@@ -88,10 +88,52 @@ Electron itself ships Chromium's own (LGPL) ffmpeg library; electron-builder
 includes its notices (`LICENSE.electron.txt`, `LICENSES.chromium.html`)
 automatically. Unrelated to the helper above.
 
-## 3. Open items
+## 3. Dependency notices and the Acknowledgements view (done 2026-11-04)
 
-- Dependency notices for the Rust, Swift and npm trees are not generated yet
-  (almost all MIT/Apache-2.0; Apache requires carrying any `NOTICE` forward).
-  `cargo about` can produce the Rust side as one file.
-- An Acknowledgements view in both shells listing the above
-  (`SHELL-UI-PARITY.md` applies).
+**Notices.** `scripts/third-party-notices.sh` generates `third-party/`
+(committed, deterministic) from the three dependency trees a build ships:
+
+- `rust-crates.txt` — every crate reachable over *normal* dependency edges
+  from the workspace members (dev/build dependencies such as proptest,
+  cbindgen and bindgen are not shipped and not listed), read from
+  `cargo metadata` and the crate sources in the cargo registry: the declared
+  SPDX expression, the alternative Couple uses for an `OR`, and the crate's
+  own license files. A crate that ships none gets the canonical text from
+  `scripts/license-texts/` with its authors on the MIT copyright line. Any
+  `NOTICE` file is carried in verbatim (Apache-2.0 §4(d); none today).
+- `npm-packages.txt` — the Electron shell's production packages
+  (`npm ls --omit=dev`) plus the Electron runtime. Chromium/Node notices are
+  electron-builder's `LICENSE.electron.txt` / `LICENSES.chromium.html`.
+- `swift-packages.txt` — records that `mac/Package.swift` has no external
+  packages; the script fails if one is added, so the tree is handled on
+  purpose.
+- `components.json` — the component list (name, version, license, tree) the
+  views render.
+
+The script **fails** on any license outside its allowed set (permissive only:
+MIT, Apache-2.0, BSD, ISC, Zlib, Unicode, CC0, Unlicense, BSL, 0BSD) —
+unknown, missing, or copyleft including weak copyleft (MPL). Adding such a
+dependency is a licensing decision: record it here first, then extend
+`ALLOWED` in `scripts/third_party_notices.py`. `--check` regenerates to a
+temp dir and fails if `third-party/` is stale; `make-app.sh --dist` runs it.
+Rerun the script after any `Cargo.lock` / `package-lock.json` change and
+commit the result.
+
+**Where they ship.** `make-app.sh` copies `third-party/` into
+`Contents/Resources/Licenses/` (next to `ffmpeg/` from §1) in both the dev
+and dist variants; `electron/electron-builder.yml` copies it to
+`resources/Licenses/` via `extraResources`.
+
+**Acknowledgements view.** Both shells (`mac/Sources/Couple/Views/AboutView.swift`
++ `AcknowledgementsView.swift`; `electron/src/renderer/src/views/AboutView.tsx`
++ `AcknowledgementsView.tsx`) replace the stock About panel with one that
+shows the version and the copyright/ffmpeg line and opens Acknowledgements
+(also under Help). Acknowledgements lists every bundled component with its
+license name and shows the bundled texts: ffmpeg's `COPYING.LGPLv2.1`,
+`LICENSE.md` and `SOURCE.txt` when ffmpeg is bundled, and the per-tree
+notices files, scrolled to the selected component. The loaders
+(`Licenses.swift`, `app/Licenses.ts`) read the same files the same way;
+`COUPLE_LICENSES_DIR` overrides the folder for runs outside a bundle.
+`SHELL-UI-PARITY.md` has the line.
+
+No open items.

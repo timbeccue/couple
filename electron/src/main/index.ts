@@ -1,7 +1,7 @@
 // Electron main process — deliberately thin (the plan's process model): window,
 // menus, native dialogs, reveal-in-file-manager. The engine lives in the
 // renderer (nodeIntegration) so hot-path calls stay synchronous in-process.
-import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, shell, type MenuItemConstructorOptions } from 'electron';
 import { createReadStream, existsSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, join } from 'node:path';
@@ -21,6 +21,56 @@ function ffmpegDir(): string | null {
   // when absent the core's discovery chain (COUPLE_FFMPEG / $PATH) applies.
   const dir = join(process.resourcesPath, 'ffmpeg');
   return existsSync(dir) ? dir : null;
+}
+
+function licensesDir(): string {
+  // Dev: the repo's third-party/ (scripts/third-party-notices.sh output).
+  // Packaged: resources/Licenses (electron-builder.yml extraResources).
+  return app.isPackaged
+    ? join(process.resourcesPath, 'Licenses')
+    : join(__dirname, '..', '..', '..', 'third-party');
+}
+
+/** Application menu: the defaults by role, with About routed to the
+ * renderer's own panel (which links to Acknowledgements) instead of the
+ * native about box, and Acknowledgements listed under Help as well. */
+function installMenu(): void {
+  const send = (channel: string) => () => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    win?.webContents.send(channel);
+  };
+  const about: MenuItemConstructorOptions = { label: 'About Couple', click: send('couple:show-about') };
+  const acknowledgements: MenuItemConstructorOptions = {
+    label: 'Acknowledgements',
+    click: send('couple:show-acknowledgements'),
+  };
+  const mac = process.platform === 'darwin';
+  const template: MenuItemConstructorOptions[] = [
+    ...(mac
+      ? [
+          {
+            label: 'Couple',
+            submenu: [
+              about,
+              { type: 'separator' },
+              { role: 'services' },
+              { type: 'separator' },
+              { role: 'hide' },
+              { role: 'hideOthers' },
+              { role: 'unhide' },
+              { type: 'separator' },
+              { role: 'quit' },
+            ],
+          } as MenuItemConstructorOptions,
+        ]
+      : []),
+    { role: 'fileMenu' },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+    { role: 'help', submenu: mac ? [acknowledgements] : [acknowledgements, about] },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function createWindow(): void {
@@ -86,7 +136,13 @@ if (ff) {
   const exe = process.platform === 'win32' ? '.exe' : '';
   process.env.COUPLE_FFMPEG_PATH = join(ff, `ffmpeg${exe}`);
   process.env.COUPLE_FFPROBE_PATH = join(ff, `ffprobe${exe}`);
+  // Its license texts + SOURCE.txt sit next to the binaries (docs/LICENSING §2).
+  process.env.COUPLE_FFMPEG_LICENSE_DIR = ff;
 }
+// Third-party notices for the About / Acknowledgements views, and the version
+// they show (package.json in dev, the packaged app's version otherwise).
+process.env.COUPLE_LICENSES_DIR = licensesDir();
+process.env.COUPLE_APP_VERSION = app.getVersion();
 
 // Native dialogs + reveal stay main-process (the only IPC in the app).
 ipcMain.handle('couple:pick-folder', async (_e, title: string) => {
@@ -195,6 +251,7 @@ app.whenReady().then(() => {
       },
     });
   });
+  installMenu();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

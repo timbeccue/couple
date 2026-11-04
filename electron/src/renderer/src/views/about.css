@@ -1,0 +1,202 @@
+/* About + Acknowledgements overlays (AboutView.tsx, AcknowledgementsView.tsx). */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+.about {
+  width: 380px;
+  padding: 28px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  text-align: center;
+}
+
+.about-name {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.about-version {
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.about-copyright {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin: 14px 0;
+  line-height: 1.4;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.about-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.ack {
+  width: min(920px, calc(100vw - 48px));
+  height: min(600px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.ack-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+
+.ack-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.ack-list {
+  width: 300px;
+  flex: none;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.ack-intro {
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 10px 12px;
+}
+
+.ack-group-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 10px 12px 4px;
+}
+
+.ack-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 12px;
+  cursor: default;
+}
+
+.ack-row:hover {
+  background: var(--bg-hover);
+}
+
+.ack-row.selected {
+  background: var(--accent);
+  color: #fff;
+}
+
+.ack-row.selected .ack-version,
+.ack-row.selected .ack-license {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.ack-version {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.ack-license {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.ack-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ack-files {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ack-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+
+.ack-section + .ack-section {
+  margin-top: 18px;
+}
+
+.ack-section-title {
+  font-weight: 600;
+}
+
+.ack-section-header {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+.ack-section pre {
+  margin-top: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  white-space: pre-wrap;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.ack-missing {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.ack-missing code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.dim {
+  color: var(--text-dim);
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}

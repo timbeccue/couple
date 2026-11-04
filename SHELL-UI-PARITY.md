@@ -113,3 +113,14 @@ Legend: [source] = the reference implementation a port must read.
   apply WITHOUT re-sync. [QueueStore.swift, SessionStore.swift]
 - Toasts: skipped-files, batch summary; confirmation dialogs for destructive
   acts (replace approved pairing, removal, clear session).
+- About + Acknowledgements (docs/LICENSING.md §3): the app menu's About item
+  opens OUR panel (version, the copyright/ffmpeg line, "Acknowledgements"
+  button, "Show Licenses Folder" when the folder exists); Acknowledgements is
+  also under Help. The Acknowledgements surface lists every bundled component
+  grouped by tree (ffmpeg when bundled, Rust crates, npm packages, Swift
+  packages) with version + license name, and shows the bundled license text
+  (ffmpeg's COPYING.LGPLv2.1 / LICENSE.md / SOURCE.txt as switchable files;
+  the generated notices files scrolled to the selected component's section).
+  A build without the Licenses folder says so and names the expected path.
+  Plain copy; no marketing language. [AboutView.swift, AcknowledgementsView.swift,
+  Licenses.swift; Electron: AboutView.tsx, AcknowledgementsView.tsx, app/Licenses.ts]

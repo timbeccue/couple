@@ -1216,3 +1216,36 @@ report the LGPL and the configuration must contain neither `--enable-gpl` nor
   window), Electron bundling rules (lgpl variants only), open items
   (Rust/Swift/npm notices via `cargo about`; Acknowledgements view in both
   shells). CLAUDE.md doc map + build section updated.
+
+## 2026-11-04 — Dependency notices + Acknowledgements view (LICENSING §3 closed)
+
+Closes both open items from the 2026-11-03 entry.
+
+- `scripts/third-party-notices.sh` (→ `scripts/third_party_notices.py`)
+  generates the committed `third-party/` folder: `rust-crates.txt` (180
+  crates over normal dependency edges from `cargo metadata`; dev/build deps
+  excluded; crate license files inline, canonical MIT/Apache-2.0 text from
+  `scripts/license-texts/` for the 21 crates that ship none; NOTICE files
+  carried verbatim — none today), `npm-packages.txt` (react, react-dom,
+  scheduler + the Electron runtime), `swift-packages.txt` (asserts
+  `mac/Package.swift` has no external packages), `components.json` (the list
+  the views render). SPDX expressions are evaluated against a permissive-only
+  allowed set; unknown or copyleft (incl. MPL) fails the run. `--check` fails
+  on a stale folder. Not `cargo about`: it reads the same registry sources
+  without another tool to install.
+- `make-app.sh` copies `third-party/` into `Contents/Resources/Licenses/`
+  (dev and dist; dist runs `--check` first); `electron-builder.yml` copies it
+  to `resources/Licenses/` via extraResources.
+- About + Acknowledgements in both shells (SHELL-UI-PARITY "App-level"):
+  Swift `Window` scenes `about` / `acknowledgements` (CommandGroup replaces
+  `.appInfo`; Help ▸ Acknowledgements), `Licenses.swift` loader; Electron
+  explicit application menu in `main/index.ts` (About → renderer overlay,
+  Help ▸ Acknowledgements), `app/Licenses.ts`, `views/AboutView.tsx` +
+  `AcknowledgementsView.tsx` + `about.css`. Loaders parse the `==== name
+  version` sections of the notices files and the ffmpeg folder
+  (`COPYING.LGPLv2.1`, `LICENSE.md`, `SOURCE.txt`; version from SOURCE.txt's
+  first line). `COUPLE_LICENSES_DIR` overrides the folder; Electron harness
+  `COUPLE_ACK_TEST=1` opens the view at startup for `COUPLE_SHOT_PATH`.
+- docs/LICENSING.md §3 rewritten as the record of the pipeline; CLAUDE.md
+  (doc map, layout, build commands, env) updated.
+

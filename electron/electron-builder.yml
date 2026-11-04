@@ -17,6 +17,11 @@ extraResources:
     filter: ['index.cjs', '*.node']
   - from: resources/ffmpeg/${platform}
     to: ffmpeg
+  # Third-party notices (scripts/third-party-notices.sh output; docs/LICENSING §3),
+  # read by the Acknowledgements view. electron-builder adds LICENSE.electron.txt
+  # and LICENSES.chromium.html at the resources root by itself.
+  - from: ../third-party
+    to: Licenses
 mac:
   target: dmg
   category: public.app-category.video

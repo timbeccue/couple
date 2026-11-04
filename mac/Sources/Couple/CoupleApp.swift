@@ -36,5 +36,39 @@ struct CoupleApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
+        .commands {
+            // About opens our own panel (the standard one cannot link to
+            // Acknowledgements); Help lists Acknowledgements directly too.
+            CommandGroup(replacing: .appInfo) { AboutCommands() }
+            CommandGroup(after: .help) { AcknowledgementsCommands() }
+        }
+
+        Window("About Couple", id: "about") {
+            AboutView()
+                .preferredColorScheme(.dark)
+        }
+        .windowResizability(.contentSize)
+
+        Window("Acknowledgements", id: "acknowledgements") {
+            AcknowledgementsView()
+                .preferredColorScheme(.dark)
+                .frame(minWidth: 720, minHeight: 420)
+        }
+        .defaultSize(width: 920, height: 600)
+    }
+}
+
+/// `Commands` cannot hold an environment value directly; a view can.
+private struct AboutCommands: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("About Couple") { openWindow(id: "about") }
+    }
+}
+
+private struct AcknowledgementsCommands: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("Acknowledgements") { openWindow(id: "acknowledgements") }
     }
 }
