@@ -74,9 +74,12 @@ rename them.
   `package-lock.json` change. Both bundles copy it to their `Licenses/` folder.
 - `scripts/`, `fixtures/` (test corpora; media gitignored, manifests tracked),
   `example_data/` (owner-local media, optional), `design/` (mockups v1+v2 — both
-  live; v2 is queue-scope, not a replacement; `logo/` = final logo SVGs + `Couple.icns`,
-  regen per `design/logo/README.md` — the app icon ships from `mac/Resources/AppIcon.icns`,
-  wired in `make-app.sh`; the README header uses the wordmark SVGs via `<picture>`).
+  live; v2 is queue-scope, not a replacement; `logo/` = final logo SVGs + `Couple.icns`
+  + the wordmark font (Nunito, OFL, in `logo/fonts/`), regen per
+  `design/logo/README.md` — `outline-uple.py` writes both wordmark SVGs and
+  `mac/.../CoupleWordmarkGlyphs.swift` (generated; the app draws the lockup natively,
+  no font bundled); the app icon ships from `mac/Resources/AppIcon.icns`, wired in
+  `make-app.sh`; the README header uses the wordmark SVGs via `<picture>`).
 - `README.md` — public landing for the GitHub repo: wordmark header, Electron
   download links (`releases/latest/download/...`), first-launch caveats,
   requirements, release how-to.

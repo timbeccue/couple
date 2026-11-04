@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="design/logo/couple-wordmark.svg">
     <source media="(prefers-color-scheme: light)" srcset="design/logo/couple-wordmark-light.svg">
-    <img alt="Couple" src="design/logo/couple-wordmark-light.svg" width="330">
+    <img alt="Couple" src="design/logo/couple-wordmark-light.svg" width="350">
   </picture>
 </p>
 
