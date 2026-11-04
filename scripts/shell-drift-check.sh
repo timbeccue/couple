@@ -1,42 +1,54 @@
 #!/usr/bin/env bash
-# Shell drift check: warns when a change touches one shell's UI (SwiftUI app
-# or Electron renderer) without touching the other shell's counterpart or
+# Shell drift check: warns when a change touches one shell's views (SwiftUI
+# app or Electron renderer) without touching the other shell's views or
 # SHELL-UI-PARITY.md. Non-blocking: it always exits 0 and only reports.
 #
 #   scripts/shell-drift-check.sh <base-ref> [<head-ref>]   (head defaults to HEAD)
 #
 # Example, local branch vs main:  scripts/shell-drift-check.sh main
+# Runs in CI (the shell-drift job) and before each push once
+# scripts/install-hooks.sh has been run.
 #
 # Why: decisions live in the Rust core and are shared, but the two UIs are
 # separate code (PLAN-CORE-SHELL-BOUNDARY §1, SHELL-UI-PARITY.md). This turns
 # "remember to match the other shell" into a visible reminder.
 #
-# Quiet when any of these hold for the range:
+# Scope: only the view folders count. Replaying history since the Electron
+# shell landed, wider groupings (models, controllers, the FFI kits) warned
+# almost only on internal refactors, while user-facing affordances nearly
+# always touch a view. A behavior added without any view change is missed.
+#
+# Quiet when any of these hold for the WHOLE range (not per pair/commit):
 #   - both sides of a pair changed, or neither did
 #   - SHELL-UI-PARITY.md changed (someone audited parity explicitly)
 #   - a commit message carries the trailer "Shell-parity: n/a <reason>"
 #     (an intentionally one-sided change, e.g. a shell-specific bug fix)
 #
-# Not counted: tests, dev-harness files, and CSS (chrome stays
-# shell-idiomatic, SPEC §13.3; only behavior and presence must match).
+# Not counted: tests and CSS (chrome stays shell-idiomatic, SPEC §13.3; only
+# behavior and presence must match). Renames are listed by destination path
+# only, so moving a file out of a views folder does not count as a change.
 set -euo pipefail
 
 base="${1:?usage: shell-drift-check.sh <base-ref> [<head-ref>]}"
 head="${2:-HEAD}"
 
-if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-    echo "shell-drift-check: base '$base' not found; skipping."
+for ref in "$base" "$head"; do
+    if ! git rev-parse --verify --quiet "$ref^{commit}" >/dev/null; then
+        echo "shell-drift-check: '$ref' not found; skipping."
+        exit 0
+    fi
+done
+
+if ! changed="$(git diff --name-only "$base...$head" 2>/dev/null)"; then
+    echo "shell-drift-check: no merge base for $base...$head; skipping."
     exit 0
 fi
 
-changed="$(git diff --name-only "$base...$head")"
-
-# Pair definitions: name | mac-side regex | electron-side regex
-pairs=(
-    "UI|^mac/Sources/Couple/|^electron/src/(main|renderer/src/(app|views))/|^electron/src/renderer/src/[^/]+\.(ts|tsx)$"
-    "Kit (FFI binding + policy mirrors)|^mac/Sources/CoupleKit/|^electron/src/renderer/src/kit/"
-)
-excluded='(\.test\.tsx?$|\.css$|^mac/Sources/Couple/DebugDrive\.swift$|^electron/src/renderer/src/app/harness\.ts$)'
+# Pairs, as parallel arrays: display name, mac-side regex, electron-side regex.
+pair_names=("Views")
+pair_mac=('^mac/Sources/Couple/Views/')
+pair_electron=('^electron/src/renderer/src/views/')
+excluded='(\.test\.tsx?$|\.css$)'
 
 counted="$(printf '%s\n' "$changed" | grep -Ev "$excluded" || true)"
 
@@ -51,13 +63,10 @@ fi
 
 warnings=0
 report=""
-for pair in "${pairs[@]}"; do
-    name="${pair%%|*}"
-    rest="${pair#*|}"
-    mac_re="${rest%%|*}"
-    el_re="${rest#*|}"
-    mac_files="$(printf '%s\n' "$counted" | grep -E "$mac_re" || true)"
-    el_files="$(printf '%s\n' "$counted" | grep -E "$el_re" || true)"
+for i in "${!pair_names[@]}"; do
+    name="${pair_names[$i]}"
+    mac_files="$(printf '%s\n' "$counted" | grep -E "${pair_mac[$i]}" || true)"
+    el_files="$(printf '%s\n' "$counted" | grep -E "${pair_electron[$i]}" || true)"
 
     if [ -n "$mac_files" ] && [ -z "$el_files" ]; then
         only="Swift"; other="Electron"; files="$mac_files"
@@ -74,9 +83,8 @@ for pair in "${pairs[@]}"; do
     fi
     echo "WARNING: $msg"
     printf '%s\n' "$files" | sed 's/^/    /'
-    report+="### Shell drift: $name"$'\n\n'"$msg"$'\n\n'
     # shellcheck disable=SC2016 # literal backticks: markdown code spans
-    report+="$(printf '%s\n' "$files" | sed 's/^/- `/; s/$/`/')"$'\n\n'
+    report+="### Shell drift: $name"$'\n\n'"$msg"$'\n\n'"$(printf '%s\n' "$files" | sed 's/^/- `/; s/$/`/')"$'\n\n'
 done
 
 if [ "$warnings" -eq 0 ]; then
