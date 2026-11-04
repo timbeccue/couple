@@ -1217,6 +1217,43 @@ report the LGPL and the configuration must contain neither `--enable-gpl` nor
   (Rust/Swift/npm notices via `cargo about`; Acknowledgements view in both
   shells). CLAUDE.md doc map + build section updated.
 
+## 2026-11-03 — Tag-triggered Electron release pipeline
+
+Made the Electron app downloadable from GitHub. Nothing publishes on its own:
+the owner pushes a `v*` tag, and even then the result is a draft release.
+
+- **`.github/workflows/release.yml` (new).** On a pushed `v*` tag: build the
+  napi binding + renderer on macos-15 / windows-latest / ubuntu-latest, run the
+  binding smoke test, package with electron-builder, and attach the installers
+  to a **draft** GitHub Release (`gh release create --draft`; a re-run refreshes
+  the assets with `--clobber`). `workflow_dispatch` from a branch is a dry run
+  (workflow artifacts only, no release). The tag is validated as
+  `vMAJOR.MINOR.PATCH[-pre]` and stamped into `electron/package.json` with
+  `npm version --no-git-tag-version`, so no bump commit is needed.
+- **Versionless installer names.** `artifactName:
+  ${productName}-${os}-${arch}.${ext}` in `electron/electron-builder.yml` →
+  `Couple-mac-arm64.dmg`, `Couple-win-x64.exe`, `Couple-linux-x64.AppImage`,
+  `Couple-linux-x64.deb`, so `releases/latest/download/<name>` links never go
+  stale. Verified locally (mac).
+- **ffmpeg on macOS is bundled** from `mac/Scripts/fetch-ffmpeg.sh` (the same
+  pinned build as the Swift `--dist` bundle; since the 2026-11-03 LGPL entry
+  above that is the from-source LGPL build, and the workflow copies the whole
+  helper dir — binaries, `SOURCE.txt`, `licenses/` — so Acknowledgements shows
+  the texts) into `electron/resources/ffmpeg/darwin/`, which
+  `electron-builder.yml` already picked up as `extraResources`. Reason: the
+  core's discovery chain ends at `$PATH`, and a Finder-launched app's PATH
+  excludes `/opt/homebrew/bin`, so an unbundled mac build could not find a
+  Homebrew ffmpeg at all. Windows/Linux bundling: next entry (2026-11-04).
+- **`README.md` (new, root).** Plain download section with per-platform links,
+  the unsigned-app first-launch steps (macOS Privacy & Security "Open Anyway" /
+  `xattr -dr com.apple.quarantine`; Windows SmartScreen; Linux AppImage/.deb),
+  requirements, build-from-source pointer, and the maintainer release how-to.
+- `electron/package.json`: added `author` and `repository` (electron-builder
+  warned about the missing author).
+- Not done: code signing/notarization (Apple Developer account + Windows cert),
+  Intel mac build (runner is arm64 only), website download buttons (still `#`;
+  the website's "Download for Mac" refers to the Swift app).
+
 ## 2026-11-04 — Dependency notices + Acknowledgements view (LICENSING §3 closed)
 
 Closes both open items from the 2026-11-03 entry.
@@ -1249,3 +1286,44 @@ Closes both open items from the 2026-11-03 entry.
 - docs/LICENSING.md §3 rewritten as the record of the pipeline; CLAUDE.md
   (doc map, layout, build commands, env) updated.
 
+
+## 2026-11-04 — Windows and Linux installers bundle ffmpeg too
+
+Closes the "Windows/Linux ffmpeg bundling" item from the 2026-11-03 release
+entry. Testers on those platforms no longer install ffmpeg.
+
+- **`electron/scripts/fetch-ffmpeg.mjs` (new, Node, runs on all three
+  runners).** Downloads the pinned BtbN FFmpeg-Builds `-lgpl` static build for
+  the target platform — release `autobuild-2026-10-31-12-59` (a month-end
+  build; BtbN prunes dailies but keeps those), ffmpeg `n9.0.2-39-g7adfbe40dc`
+  (release/9.0, same line as the mac pin), one asset + sha256 per platform
+  computed from an inspected download, never the remote checksum file —
+  extracts `bin/ffmpeg(.exe)` + `bin/ffprobe(.exe)`, and lays out
+  `electron/resources/ffmpeg/<win32|linux>/` with `SOURCE.txt` (release URL,
+  asset, sha256, ffmpeg commit, builder tag) and `licenses/{COPYING.LGPLv3,
+  LICENSE.md}` (the archive's `LICENSE.txt` is byte-identical to ffmpeg's
+  `COPYING.LGPLv3`, pinned; `LICENSE.md` fetched from the same ffmpeg commit,
+  pinned). Gates: the configure line embedded in each binary must contain
+  neither `--enable-gpl` nor `--enable-nonfree` (checked on any host, by
+  reading the binary); when the host can run the binary, `-version` must
+  succeed and `-L` must report the LGPL. `--platform win32|linux` overrides
+  the host so both pins can be exercised from a Mac (run checks skipped).
+  Cache `electron/vendor/ffmpeg/<tag>/` (gitignored). stdout = the destination
+  dir, progress on stderr, like the mac script.
+- **These builds are LGPL v3** (BtbN passes `--enable-version3`), not v2.1
+  like the compiled mac build. `SOURCE.txt`'s first line says "LGPL v3 or
+  later"; both license loaders (`app/Licenses.ts`, `Licenses.swift`) now take
+  the license name from that line and also look for `COPYING.LGPLv3`, so
+  Acknowledgements states the right license per platform. docs/LICENSING.md
+  §2 and SHELL-UI-PARITY.md updated.
+- **`release.yml`**: new "Bundle ffmpeg (Windows/Linux …)" step on the
+  non-mac runners before "Typecheck + renderer build". The macOS step now
+  copies the whole helper dir (`SOURCE.txt` + `licenses/` too, as main's
+  from-source script emits them), not just the two binaries. Header comment
+  and the draft-release notes' Requirements updated; README Requirements now
+  says nothing to install on any platform.
+- Verified on this Mac: `--platform linux` and `--platform win32` both
+  download, hash-match, extract to the expected binaries, pass the
+  configure-line check and produce the layout above. The `-version`/`-L` run
+  checks will first execute on the real runners (next `workflow_dispatch`
+  dry run).

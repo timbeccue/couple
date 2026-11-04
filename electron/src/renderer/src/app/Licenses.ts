@@ -8,8 +8,8 @@
 //   resources/Licenses/components.json, rust-crates.txt, npm-packages.txt,
 //                      swift-packages.txt
 //   resources/ffmpeg/   optional LGPL ffmpeg with SOURCE.txt and its license
-//                      texts (in licenses/ for a fetch-ffmpeg.sh build, or
-//                      alongside the binaries for a win/linux lgpl build)
+//                      texts in licenses/ (mac: fetch-ffmpeg.sh, LGPL v2.1;
+//                      win/linux: scripts/fetch-ffmpeg.mjs, LGPL v3)
 //   resources/LICENSE.electron.txt, LICENSES.chromium.html — placed by
 //                      electron-builder; pointed at, not rendered (huge).
 // The main process hands the renderer the resolved folders as
@@ -106,11 +106,14 @@ function loadFFmpeg(dir: string | null): NoticeTree | null {
   if (!dir) return null;
   const source = readText(path.join(dir, 'SOURCE.txt'));
   if (source === null) return null;
-  // First line: "ffmpeg/ffprobe 9.0.2 — LGPL v2.1 or later build for macOS arm64".
+  // First line: "ffmpeg/ffprobe 9.0.2 — LGPL v2.1 or later build for macOS arm64"
+  // (mac, fetch-ffmpeg.sh) or "… — LGPL v3 or later build for Windows x64"
+  // (win/linux, scripts/fetch-ffmpeg.mjs: BtbN builds pass --enable-version3).
   const firstLine = source.split('\n', 1)[0] ?? '';
   const version = firstLine.split(' ').find((w) => /^\d/.test(w)) ?? '';
+  const license = /LGPL v3/.test(firstLine) ? 'LGPL-3.0-or-later' : 'LGPL-2.1-or-later';
   const documents: NoticeDocument[] = [];
-  for (const name of ['COPYING.LGPLv2.1', 'LICENSE.md', 'SOURCE.txt']) {
+  for (const name of ['COPYING.LGPLv2.1', 'COPYING.LGPLv3', 'LICENSE.md', 'SOURCE.txt']) {
     const text = readText(path.join(dir, 'licenses', name)) ?? readText(path.join(dir, name));
     if (text === null) continue;
     const id = `ffmpeg/${name}`;
@@ -125,7 +128,7 @@ function loadFFmpeg(dir: string | null): NoticeTree | null {
         id: 'ffmpeg',
         name: 'ffmpeg / ffprobe',
         version,
-        license: 'LGPL-2.1-or-later',
+        license,
         usedUnder: null,
         source: 'https://ffmpeg.org',
       },

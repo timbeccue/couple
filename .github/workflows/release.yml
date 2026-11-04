@@ -1,0 +1,193 @@
+# Release — builds the Electron installers for all three desktop OSes and
+# attaches them to a DRAFT GitHub Release. Nothing here runs on ordinary
+# pushes: it fires only when a `v*` tag is pushed (an explicit act), and the
+# resulting release stays a draft until it is published by hand on GitHub.
+#
+#   git tag v0.1.0 && git push origin v0.1.0     # cut a release (draft)
+#
+# `workflow_dispatch` from a branch is a dry run: it builds the installers
+# and keeps them as workflow artifacts (Actions → run → Artifacts) without
+# creating any release. Useful to check packaging before tagging.
+#
+# The tag is the single source of truth for the version: it is stamped into
+# electron/package.json before packaging (no commit), so no bump is needed
+# in the repo. Installer file names carry no version (electron-builder
+# artifactName), so `releases/latest/download/<name>` links never go stale.
+#
+# ffmpeg: every installer bundles its own ffmpeg + ffprobe, so users install
+# nothing. macOS: mac/Scripts/fetch-ffmpeg.sh (the same pinned LGPL build the
+# Swift --dist bundle ships, compiled from the sha256-verified ffmpeg.org
+# tarball; attach that tarball to each public release — docs/LICENSING.md
+# §1). Windows and Linux: electron/scripts/fetch-ffmpeg.mjs downloads
+# the pinned, sha256-verified BtbN FFmpeg-Builds `-lgpl` static build for the
+# runner's platform (LGPL v3, no --enable-gpl/--enable-nonfree; verified by
+# the script) into electron/resources/ffmpeg/<win32|linux>/, with SOURCE.txt
+# and the license texts electron-builder copies alongside (docs/LICENSING.md §2).
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: mac
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build deps (ALSA for the cpal audition pump)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: npm install
+        working-directory: electron
+        run: npm ci
+
+      - name: Stamp version from tag
+        if: github.ref_type == 'tag'
+        working-directory: electron
+        shell: bash
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::tag '$TAG' is not vMAJOR.MINOR.PATCH[-prerelease]"
+            exit 1
+          fi
+          npm version --no-git-tag-version "${TAG#v}"
+
+      - name: Build native binding
+        working-directory: electron
+        run: npm run build:native
+
+      - name: Binding smoke test (ABI, errors, policies, job path)
+        working-directory: electron
+        run: npm run smoke
+
+      - name: Bundle ffmpeg (macOS, pinned LGPL build from source)
+        if: runner.os == 'macOS'
+        shell: bash
+        working-directory: mac
+        run: |
+          # The script prints the helper dir relative to mac/ (its cwd). It
+          # holds ffmpeg, ffprobe, SOURCE.txt and licenses/ — copy all of it so
+          # the Acknowledgements view finds the license texts (Licenses.ts).
+          # Compiles ffmpeg on first run (a few minutes; cached below).
+          HELPER_DIR="$(Scripts/fetch-ffmpeg.sh)"
+          mkdir -p ../electron/resources/ffmpeg/darwin
+          cp -R "$HELPER_DIR"/. ../electron/resources/ffmpeg/darwin/
+          ls -laR ../electron/resources/ffmpeg/darwin
+
+      - name: Bundle ffmpeg (Windows/Linux, pinned BtbN LGPL static build)
+        if: runner.os != 'macOS'
+        working-directory: electron
+        # Downloads + sha256-verifies the pinned asset for this runner's
+        # platform, checks the LGPL configuration and `-version`, and lays out
+        # resources/ffmpeg/<win32|linux>/ (binaries, SOURCE.txt, licenses/).
+        run: node scripts/fetch-ffmpeg.mjs
+
+      - name: Typecheck + renderer build
+        working-directory: electron
+        run: npx tsc --noEmit && npx electron-vite build
+
+      - name: Package
+        working-directory: electron
+        run: npx electron-builder --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: List installers
+        working-directory: electron
+        shell: bash
+        run: ls -la dist/ | grep -E '\.(dmg|exe|AppImage|deb)$'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: couple-${{ matrix.platform }}
+          path: |
+            electron/dist/*.dmg
+            electron/dist/*.exe
+            electron/dist/*.AppImage
+            electron/dist/*.deb
+          if-no-files-found: error
+
+  # Only for a pushed tag. Creates (or, on a re-run, refreshes the assets of)
+  # a DRAFT release — publish it by hand on GitHub after checking the assets.
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+
+      - name: Create or refresh draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          ls -la installers
+          cat > notes.md <<'NOTES'
+          ## Download
+
+          - macOS (Apple Silicon): `Couple-mac-arm64.dmg`
+          - Windows (x64): `Couple-win-x64.exe`
+          - Linux (x64): `Couple-linux-x64.AppImage` or `Couple-linux-x64.deb`
+
+          ## First launch
+
+          These builds are not code-signed, so each OS warns once.
+
+          - **macOS**: if the app is blocked, open System Settings → Privacy & Security, scroll to the "Couple was blocked" notice and click **Open Anyway**. Or in Terminal: `xattr -dr com.apple.quarantine /Applications/Couple.app`.
+          - **Windows**: on the SmartScreen dialog click **More info**, then **Run anyway**.
+          - **Linux**: `chmod +x Couple-linux-x64.AppImage` then run it, or `sudo apt install ./Couple-linux-x64.deb`.
+
+          ## Requirements
+
+          Nothing to install: ffmpeg and ffprobe are bundled on every platform.
+          NOTES
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "release $TAG exists; refreshing assets"
+            gh release upload "$TAG" installers/* --repo "$REPO" --clobber
+          else
+            gh release create "$TAG" installers/* \
+              --repo "$REPO" \
+              --draft \
+              --verify-tag \
+              --title "Couple $TAG" \
+              --notes-file notes.md \
+              --generate-notes
+          fi
+          echo "Draft release: https://github.com/$REPO/releases/tag/$TAG"

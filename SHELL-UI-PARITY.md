@@ -119,7 +119,8 @@ Legend: [source] = the reference implementation a port must read.
   also under Help. The Acknowledgements surface lists every bundled component
   grouped by tree (ffmpeg when bundled, Rust crates, npm packages, Swift
   packages) with version + license name, and shows the bundled license text
-  (ffmpeg's COPYING.LGPLv2.1 / LICENSE.md / SOURCE.txt as switchable files;
+  (ffmpeg's COPYING.LGPLv2.1 or COPYING.LGPLv3 / LICENSE.md / SOURCE.txt as
+  switchable files, the LGPL version taken from SOURCE.txt's first line;
   the generated notices files scrolled to the selected component's section).
   A build without the Licenses folder says so and names the expected path.
   Plain copy; no marketing language. [AboutView.swift, AcknowledgementsView.swift,

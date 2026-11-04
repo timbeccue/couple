@@ -88,14 +88,18 @@ struct Acknowledgements {
     private static func loadFFmpeg(_ dir: URL) -> NoticeTree? {
         let sourceURL = dir.appendingPathComponent("SOURCE.txt")
         guard let source = try? String(contentsOf: sourceURL, encoding: .utf8) else { return nil }
-        // First line: "ffmpeg/ffprobe 9.0.2 — LGPL v2.1 or later build for macOS arm64".
+        // First line: "ffmpeg/ffprobe 9.0.2 — LGPL v2.1 or later build for macOS arm64"
+        // (fetch-ffmpeg.sh) or "… — LGPL v3 or later build for Windows x64" (the
+        // Electron shell's scripts/fetch-ffmpeg.mjs; mirrored here to keep the
+        // loaders identical — the mac bundle itself is always the v2.1 build).
         let firstLine = source.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
         let version = firstLine.split(separator: " ").first(where: { $0.first?.isNumber == true }).map(String.init) ?? ""
+        let license = firstLine.contains("LGPL v3") ? "LGPL-3.0-or-later" : "LGPL-2.1-or-later"
         let component = LicenseComponent(
             id: "ffmpeg", name: "ffmpeg / ffprobe", version: version,
-            license: "LGPL-2.1-or-later", usedUnder: nil, source: "https://ffmpeg.org")
+            license: license, usedUnder: nil, source: "https://ffmpeg.org")
         var documents: [NoticeDocument] = []
-        for name in ["COPYING.LGPLv2.1", "LICENSE.md", "SOURCE.txt"] {
+        for name in ["COPYING.LGPLv2.1", "COPYING.LGPLv3", "LICENSE.md", "SOURCE.txt"] {
             let url = dir.appendingPathComponent(name)
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
             documents.append(NoticeDocument(

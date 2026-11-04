@@ -75,6 +75,9 @@ rename them.
 - `scripts/`, `fixtures/` (test corpora; media gitignored, manifests tracked),
   `example_data/` (owner-local media, optional), `design/` (mockups v1+v2 — both
   live; v2 is queue-scope, not a replacement).
+- `README.md` — public landing for the GitHub repo: Electron download links
+  (`releases/latest/download/...`), first-launch caveats, requirements, release
+  how-to.
 - `website/` — product marketing page (`index.html`, static; only external dep is
   Google Fonts). Kept from the 2026-07-04 prototype round (the "product frame"
   variant; other prototypes discarded). Preview: `python3 -m http.server 8642`
@@ -111,6 +114,22 @@ rename them.
   bundle a dev build, and warns if it links non-system dylibs (a Homebrew copy
   breaks on `brew upgrade` — the 2026-11-01 "unsupported format" failure).
 - `cd mac && swift test`
+- Release (Electron installers → DRAFT GitHub Release; `.github/workflows/release.yml`):
+  fires ONLY on a pushed `v*` tag (`git tag v0.1.0 && git push origin v0.1.0`),
+  never on ordinary pushes; the draft is published by hand. The tag is the
+  version (stamped into `electron/package.json` at build time). Installer names
+  are versionless (`Couple-mac-arm64.dmg` etc., `artifactName` in
+  `electron/electron-builder.yml`) so `releases/latest/download/<name>` links in
+  `README.md` stay valid. Every installer bundles ffmpeg + ffprobe: macOS via
+  `mac/Scripts/fetch-ffmpeg.sh` (whole helper dir incl. `SOURCE.txt` +
+  `licenses/`); Windows/Linux via
+  `electron/scripts/fetch-ffmpeg.mjs [--platform win32|linux]` — one pinned
+  month-end BtbN FFmpeg-Builds `-lgpl` release (asset + sha256 per platform,
+  LGPL v3 via `--enable-version3`; configure-line, `-version` and `-L` checks)
+  laid out as `electron/resources/ffmpeg/<platform>/{ffmpeg,ffprobe,SOURCE.txt,licenses/}`;
+  cache `electron/vendor/`, gitignored; a non-host `--platform` downloads and
+  verifies without the run checks, which is how to exercise both pins from a Mac.
+  `workflow_dispatch` from a branch = dry run (artifacts only, no release).
 - ROC gate (weekly/on-demand, plus auto on push/PR touching matcher paths — .github/workflows/roc-gate.yml):
   `cargo test --release -p couple-core --test matching_evidence -- --ignored synthetic_corpus_roc_gates_hold`
 - Real data (owner-only): `COUPLE_REALDATA_DIR=<sessions> scripts/realdata-sweep.sh`

@@ -81,6 +81,18 @@ back to `COUPLE_FFMPEG` / `$PATH`. When bundling:
   separate `gpl` and `lgpl` builds for win64 and linux64 from a public CI
   workflow); put the license texts and a `SOURCE.txt` with the build's source
   pointer alongside. The same `ffmpeg -L` / configuration rule from §1 applies.
+  `electron/scripts/fetch-ffmpeg.mjs` does this (the release workflow runs it
+  on the Windows and Linux runners): one pinned month-end BtbN release, asset
+  + sha256 per platform, configure-line check for `--enable-gpl` /
+  `--enable-nonfree`, `-version` and `-L` when the host can run the binary,
+  then `resources/ffmpeg/<platform>/{ffmpeg,ffprobe,SOURCE.txt,licenses/}`.
+  Note these builds pass `--enable-version3`, so they are **LGPL v3 or later**
+  (`licenses/COPYING.LGPLv3`), not v2.1 like the mac build; the first line of
+  `SOURCE.txt` says so and the Acknowledgements view reads it from there. The
+  corresponding source is the ffmpeg commit named in `SOURCE.txt` plus BtbN's
+  build scripts at the pinned tag; keep a copy of the pinned archives
+  (`electron/vendor/ffmpeg/`, gitignored) for the three-year window, as with
+  the mac tarball.
 - Linux `.deb` alternative: declare `Depends: ffmpeg` instead of bundling.
   The distribution is then the distributor of ffmpeg, not us.
 

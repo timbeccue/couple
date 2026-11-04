@@ -3,3 +3,4 @@ out/
 dist/
 native/*.node
 resources/ffmpeg/
+vendor/

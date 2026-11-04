@@ -6,6 +6,11 @@
 # Rules and sources per platform: docs/LICENSING.md §2.
 appId: com.timbeccue.couple
 productName: Couple
+# Versionless file names (Couple-mac-arm64.dmg, Couple-win-x64.exe,
+# Couple-linux-x64.AppImage/.deb) so README/website links of the form
+# releases/latest/download/<name> keep working across releases; the version
+# lives in the release tag (.github/workflows/release.yml).
+artifactName: ${productName}-${os}-${arch}.${ext}
 directories:
   output: dist
 files:
