@@ -56,8 +56,9 @@ simple: it is exactly the unmodified tarball plus the configure line.
    `fetch-ffmpeg.sh` downloads first, ffmpeg.org second, so a release build
    never depends on ffmpeg.org being up (it was down on 2026-11-04). **Keep
    that prerelease for three years past the last distribution of any build
-   made from it**, and link it from each app release's notes. A local cache
-   lives at `mac/vendor/ffmpeg/src/` (gitignored).
+   made from it**; the release job (`release.yml`) links it from every app
+   release's notes (a Licensing section, version read from the pin). A local
+   cache lives at `mac/vendor/ffmpeg/src/` (gitignored).
 4. *Publish modifications.* There are none. If ffmpeg is ever patched, the
    patch must ship alongside and `SOURCE.txt` must say so.
 

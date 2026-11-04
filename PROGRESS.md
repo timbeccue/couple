@@ -1365,3 +1365,26 @@ under our control. So:
   deb, so Linux came out as `Couple-linux-x86_64.AppImage` /
   `Couple-linux-amd64.deb` while README and the release notes link
   `Couple-linux-x64.*`. `linux.artifactName` now spells `x64` out.
+
+## 2026-11-04 — v0.1.0 tagged; draft release built
+
+- `v0.1.0` tagged on main `ba5b115` and pushed; run 41867192527 built all
+  three installers and created the **draft** release (publish by hand:
+  https://github.com/timbeccue/couple/releases). Assets: `Couple-mac-arm64.dmg`
+  (136 MB), `Couple-win-x64.exe` (176 MB), `Couple-linux-x64.AppImage`
+  (248 MB), `Couple-linux-x64.deb` (198 MB).
+- First attempt (tag on `5b59855`) failed on every runner at "Stamp version
+  from tag": `npm version 0.1.0` exits 1 with "Version not changed" because
+  `electron/package.json` already said 0.1.0. The dry runs never reached that
+  step (tag-only). The step now skips the stamp when the versions match; the
+  tag was deleted and re-pointed at the fixed commit.
+- `--generate-notes` with no previous `v*` tag picked the nearest tag of any
+  kind, so the draft's "Full Changelog" compared from `ffmpeg-source-9.0.2`.
+  The release job now checks the repo out, generates the changelog only
+  against the previous `v*` tag, and appends a Licensing section linking the
+  `ffmpeg-source-<version>` prerelease (read from the pin in
+  `mac/Scripts/fetch-ffmpeg.sh`) — docs/LICENSING.md §1 obligation 3. The
+  v0.1.0 draft's notes were corrected by hand to the same text.
+- Still open: upload `ffmpeg-9.0.2.tar.xz.asc` to the `ffmpeg-source-9.0.2`
+  prerelease once ffmpeg.org is reachable so CI runs the GPG check; try the
+  Windows and Linux installers on a machine without ffmpeg before publishing.

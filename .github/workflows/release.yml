@@ -170,6 +170,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Full history so the previous v* tag can be found for the generated
+      # changelog, and the ffmpeg pin can be read for the licensing note.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: installers
@@ -200,7 +206,31 @@ jobs:
           ## Requirements
 
           Nothing to install: ffmpeg and ffprobe are bundled on every platform.
+
+          ## Licensing
+
+          The bundled ffmpeg and ffprobe are LGPL builds (license texts ship
+          inside the app; see Help → Acknowledgements). Their corresponding
+          source: the macOS build is compiled from the unmodified ffmpeg
+          FFMPEG_VERSION release tarball, retained as the
+          [ffmpeg-source-FFMPEG_VERSION](https://github.com/REPO/releases/tag/ffmpeg-source-FFMPEG_VERSION)
+          prerelease in this repository; the Windows and Linux builds are the
+          pinned BtbN FFmpeg-Builds `lgpl` release whose exact ffmpeg commit is
+          named in the bundled `SOURCE.txt` (docs/LICENSING.md).
           NOTES
+          # docs/LICENSING.md §1: every app release links the retained ffmpeg
+          # source. The version is the pin in the mac fetch script.
+          FFMPEG_VERSION="$(sed -n 's/^FFMPEG_VERSION="\([^"]*\)".*/\1/p' mac/Scripts/fetch-ffmpeg.sh)"
+          [[ -n "$FFMPEG_VERSION" ]] || { echo "::error::could not read FFMPEG_VERSION"; exit 1; }
+          sed -i "s|FFMPEG_VERSION|$FFMPEG_VERSION|g; s|REPO|$REPO|g" notes.md
+          # Generated changelog only when there is a previous v* tag to diff
+          # against; otherwise gh picks the nearest tag of any kind (v0.1.0 got
+          # a "changelog" from the ffmpeg-source prerelease).
+          PREV="$(git tag -l 'v*' --sort=-v:refname | grep -vx "$TAG" | head -1 || true)"
+          NOTES_ARGS=(--notes-file notes.md)
+          if [[ -n "$PREV" ]]; then
+            NOTES_ARGS+=(--generate-notes --notes-start-tag "$PREV")
+          fi
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
             echo "release $TAG exists; refreshing assets"
             gh release upload "$TAG" installers/* --repo "$REPO" --clobber
@@ -210,7 +240,6 @@ jobs:
               --draft \
               --verify-tag \
               --title "Couple $TAG" \
-              --notes-file notes.md \
-              --generate-notes
+              "${NOTES_ARGS[@]}"
           fi
           echo "Draft release: https://github.com/$REPO/releases/tag/$TAG"
