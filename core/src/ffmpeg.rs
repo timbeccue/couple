@@ -51,9 +51,11 @@ fn usable(cand: PathBuf, searched: &mut Vec<String>) -> Option<PathBuf> {
 /// Resolution order (§3.3): explicit config > COUPLE_FFMPEG env > bundled helper > $PATH.
 pub fn resolve_tool(name: &str, configured: Option<&Path>) -> Result<PathBuf> {
     let mut searched = Vec::new();
+    // On-disk file name: "ffmpeg.exe" on Windows, "ffmpeg" elsewhere.
+    let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
 
     if let Some(p) = configured {
-        let p = if p.is_dir() { p.join(name) } else { p.to_path_buf() };
+        let p = if p.is_dir() { p.join(&file) } else { p.to_path_buf() };
         if let Some(p) = usable(p, &mut searched) {
             return Ok(p);
         }
@@ -63,11 +65,11 @@ pub fn resolve_tool(name: &str, configured: Option<&Path>) -> Result<PathBuf> {
         let env = PathBuf::from(env);
         // Env var may point at the ffmpeg binary or its directory; siblings resolve ffprobe.
         let cand = if env.is_dir() {
-            env.join(name)
+            env.join(&file)
         } else if name == "ffmpeg" {
             env.clone()
         } else {
-            env.parent().map(|d| d.join(name)).unwrap_or(env.clone())
+            env.parent().map(|d| d.join(&file)).unwrap_or(env.clone())
         };
         if let Some(cand) = usable(cand, &mut searched) {
             return Ok(cand);
@@ -76,7 +78,7 @@ pub fn resolve_tool(name: &str, configured: Option<&Path>) -> Result<PathBuf> {
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            for cand in [dir.join(name), dir.join("../Helpers").join(name)] {
+            for cand in [dir.join(&file), dir.join("../Helpers").join(&file)] {
                 if let Some(cand) = usable(cand, &mut searched) {
                     return Ok(cand);
                 }
@@ -86,7 +88,7 @@ pub fn resolve_tool(name: &str, configured: Option<&Path>) -> Result<PathBuf> {
 
     if let Some(paths) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&paths) {
-            let cand = dir.join(name);
+            let cand = dir.join(&file);
             if cand.is_file() {
                 if launches(&cand) {
                     return Ok(cand);
