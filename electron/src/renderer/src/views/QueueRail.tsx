@@ -18,6 +18,7 @@ import { useCanvas } from './useCanvas';
 import './pool.css';
 
 import { mediaUrl as fileURL } from '../app/mediaUrl';
+import { CoupleWordmark } from './CoupleWordmark';
 
 const { ipcRenderer } = (window as unknown as { require: NodeRequire }).require(
   'electron'
@@ -163,7 +164,7 @@ function RailHeader(): React.JSX.Element {
   return (
     <div className="rail-header">
       <div className="rail-header-top">
-        <span className="rail-title">COUPLE</span>
+        <CoupleWordmark height={12} />
         <button
           className="clear-session"
           disabled={model.batch.isRunning || !model.hasContent}

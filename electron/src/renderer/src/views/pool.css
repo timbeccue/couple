@@ -34,11 +34,18 @@
   gap: 8px;
 }
 
-.rail-title {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 3px;
-  color: var(--text);
+/* Brand wordmark (CoupleWordmark.tsx ← CoupleMark.swift): the SVG's bottom edge is
+   the lockup's baseline (text baseline sits 2/118 of the height above it), so the
+   inline-block sits on the header row's baseline beside "Clear Session…" exactly as
+   the Mac's .lastTextBaseline alignment does. */
+.couple-wordmark {
+  display: inline-block;
+  line-height: 0;
+}
+.couple-wordmark svg {
+  display: inline-block;
+  vertical-align: baseline;
+  overflow: visible;
 }
 
 .clear-session {

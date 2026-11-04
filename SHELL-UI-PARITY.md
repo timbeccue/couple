@@ -19,9 +19,15 @@ line in its commit message.
 Legend: [source] = the reference implementation a port must read.
 
 ## Queue rail (left)
-- Session header: app title, media counts ("N video · M audio"), "Approve to
-  queue · a/b approved" status line, visible "Clear Session…" control (disabled
-  mid-export and when the session is empty). [QueueRail.swift header]
+- Session header: brand wordmark (see next line), media counts ("N video · M
+  audio"), "Approve to queue · a/b approved" status line, visible "Clear
+  Session…" control (disabled mid-export and when the session is empty).
+  [QueueRail.swift header]
+- Brand wordmark in the header: the interlocked teal-C / amber-O mark at 12pt
+  height followed by "UPLE", baseline-aligned beside "Clear Session…"; one
+  accessible element labelled "Couple" with the decorative drawing hidden from
+  assistive tech. Art = design/logo/couple-wordmark.svg (dark-surface variant).
+  [QueueRail.swift header, CoupleMark.swift; Electron: CoupleWordmark.tsx]
 - Three live sections QUEUED FOR EXPORT / TO APPROVE / TO FIX with counts;
   membership = approved / (¬approved ∧ verdict good) / rest. [AppModel.swift
   queued/toApprove/toFix]
