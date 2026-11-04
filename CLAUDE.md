@@ -74,12 +74,15 @@ rename them.
   `package-lock.json` change. Both bundles copy it to their `Licenses/` folder.
 - `scripts/`, `fixtures/` (test corpora; media gitignored, manifests tracked),
   `example_data/` (owner-local media, optional), `design/` (mockups v1+v2 — both
-  live; v2 is queue-scope, not a replacement; `logo/` = final logo SVGs + `Couple.icns`,
-  regen per `design/logo/README.md` — the app icon ships from `mac/Resources/AppIcon.icns`,
-  wired in `make-app.sh`).
-- `README.md` — public landing for the GitHub repo: Electron download links
-  (`releases/latest/download/...`), first-launch caveats, requirements, release
-  how-to.
+  live; v2 is queue-scope, not a replacement; `logo/` = final logo SVGs + `Couple.icns`
+  + the wordmark font (Nunito, OFL, in `logo/fonts/`), regen per
+  `design/logo/README.md` — `outline-uple.py` writes both wordmark SVGs and
+  `mac/.../CoupleWordmarkGlyphs.swift` (generated; the app draws the lockup natively,
+  no font bundled); the app icon ships from `mac/Resources/AppIcon.icns`, wired in
+  `make-app.sh`; the README header uses the wordmark SVGs via `<picture>`).
+- `README.md` — public landing for the GitHub repo: wordmark header, Electron
+  download links (`releases/latest/download/...`), first-launch caveats,
+  requirements, release how-to.
 - `website/` — product marketing page (`index.html`, static; only external dep is
   Google Fonts). Kept from the 2026-07-04 prototype round (the "product frame"
   variant; other prototypes discarded). Preview: `python3 -m http.server 8642`
@@ -105,10 +108,8 @@ rename them.
 - `cd mac && swift build -c release -Xswiftc -DCOUPLE_DEVHARNESS` — dev harness.
 - `cd mac && Scripts/make-app.sh [--dist] [--dmg]` — assemble `mac/dist/Couple.app`.
   `--dist` builds and bundles the pinned **LGPL** static ffmpeg via
-  `Scripts/fetch-ffmpeg.sh` (compiled from the sha256+GPG-verified ffmpeg
-  source tarball — fetched from this repo's `ffmpeg-source-<ver>` prerelease
-  first, ffmpeg.org second; signing key committed next to the script; in CI
-  the mirror is required — with no external libs; otool-, launch- and LGPL-verified; license
+  `Scripts/fetch-ffmpeg.sh` (compiled from the sha256+GPG-verified ffmpeg.org
+  tarball with no external libs; otool-, launch- and LGPL-verified; license
   texts + `SOURCE.txt` land in `Contents/Resources/Licenses/ffmpeg/`, the
   generated `third-party/` notices next to them in `Licenses/`; cache
   `mac/vendor/`, gitignored; first run compiles for a few minutes). The only
