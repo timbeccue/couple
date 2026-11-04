@@ -108,8 +108,10 @@ rename them.
 - `cd mac && swift build -c release -Xswiftc -DCOUPLE_DEVHARNESS` — dev harness.
 - `cd mac && Scripts/make-app.sh [--dist] [--dmg]` — assemble `mac/dist/Couple.app`.
   `--dist` builds and bundles the pinned **LGPL** static ffmpeg via
-  `Scripts/fetch-ffmpeg.sh` (compiled from the sha256+GPG-verified ffmpeg.org
-  tarball with no external libs; otool-, launch- and LGPL-verified; license
+  `Scripts/fetch-ffmpeg.sh` (compiled from the sha256+GPG-verified ffmpeg
+  source tarball — fetched from this repo's `ffmpeg-source-<ver>` prerelease
+  first, ffmpeg.org second; signing key committed next to the script; in CI
+  the mirror is required — with no external libs; otool-, launch- and LGPL-verified; license
   texts + `SOURCE.txt` land in `Contents/Resources/Licenses/ffmpeg/`, the
   generated `third-party/` notices next to them in `Licenses/`; cache
   `mac/vendor/`, gitignored; first run compiles for a few minutes). The only
