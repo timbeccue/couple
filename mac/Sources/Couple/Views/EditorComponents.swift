@@ -66,9 +66,11 @@ struct VideoHero: View {
                     .help("Play from anchor \(i + 1) (−0.8 s)")
                 }
                 // Monitor modes live in the HUD beside the timecode (§V2.6).
+                // Camera · Pan L/R · Overlay · External: the ends are the A/B
+                // solos (UX-DECISIONS 2026-11-03); `a` flips, `b` restores both.
                 Picker("", selection: Binding(
                     get: { audition.monitorMode },
-                    set: { audition.monitorMode = $0 }
+                    set: { audition.selectMonitor($0) }
                 )) {
                     ForEach(MonitorMode.allCases, id: \.self) { m in
                         Text(m.label).tag(m)
@@ -76,9 +78,9 @@ struct VideoHero: View {
                 }
                 .pickerStyle(.segmented)
                 .controlSize(.mini)
-                .frame(width: 140)
+                .frame(width: 236)
                 .disabled(pair.session == nil)
-                .help("Pan L/R: camera left, external right · Overlay: both mixed")
+                .help("Camera / External: hear one track only (a flips, b = both) · Pan L/R: camera left, external right · Overlay: both mixed")
                 Button {
                     VideoFullscreen.shared.toggle(player: audition.player)
                 } label: {

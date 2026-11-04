@@ -133,6 +133,18 @@ export function App(): React.JSX.Element {
           e.preventDefault();
           break;
         }
+        case 'a': {
+          // A/B: camera ⇄ external solo (UX-DECISIONS 2026-11-03; InputRouter.swift "a").
+          const c = appModel.selected;
+          if (c && c.hasSession) appModel.audition.flipMonitor();
+          break;
+        }
+        case 'b': {
+          // Back to hearing both (the pan/overlay mode used last).
+          const c = appModel.selected;
+          if (c && c.hasSession) appModel.audition.restoreBothMonitor();
+          break;
+        }
         case 'Escape':
           appModel.audition.pause();
           break;
@@ -169,7 +181,7 @@ export function App(): React.JSX.Element {
             color: 'rgba(216, 218, 222, 0.32)',
           }}
         >
-          j/k move · v approve (=queue) · ⏎/⚙ sync tools · l/◫ loupes · esc collapse
+          j/k move · v approve (=queue) · ⏎/⚙ sync tools · l/◫ loupes · a camera/external · b both · esc collapse
           <span style={{ marginLeft: 24 }}>
             ←/→ offset 1 ms · ⇧ 10 · ⌥ 0.1 · [ ] drift · drag loupe = offset · ⇧-drag = pivot
           </span>

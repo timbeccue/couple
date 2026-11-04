@@ -94,6 +94,9 @@ interface LaneAudio {
   extGain: number;
   camMuted: boolean;
   extMuted: boolean;
+  /** Silenced by the A/B solo (dims like a mute). */
+  camSilenced: boolean;
+  extSilenced: boolean;
 }
 
 /** Time tick row with h:mm:ss labels (WaveformStage.swift drawTicks). */
@@ -165,9 +168,9 @@ function paintStage(
   }
 
   // Camera lane (top); external lane (bottom) drawn through the live mapping.
-  // Each scaled by its monitor gain, dimmed when muted.
-  drawLane(ctx, cam, buf, d0, d1, cols, colW, BADGE_GUTTER_H + laneH / 2, laneH / 2 - 3, CAMERA, laneAudio.camGain, laneAudio.camMuted);
-  drawLane(ctx, ext, buf, m.u(d0), m.u(d1), cols, colW, BADGE_GUTTER_H + laneH + laneH / 2, laneH / 2 - 3, EXTERNAL, laneAudio.extGain, laneAudio.extMuted);
+  // Each scaled by its monitor gain, dimmed when muted or silenced by the A/B solo.
+  drawLane(ctx, cam, buf, d0, d1, cols, colW, BADGE_GUTTER_H + laneH / 2, laneH / 2 - 3, CAMERA, laneAudio.camGain, laneAudio.camMuted || laneAudio.camSilenced);
+  drawLane(ctx, ext, buf, m.u(d0), m.u(d1), cols, colW, BADGE_GUTTER_H + laneH + laneH / 2, laneH / 2 - 3, EXTERNAL, laneAudio.extGain, laneAudio.extMuted || laneAudio.extSilenced);
 
   drawTicks(ctx, cssW, d0, d1, BADGE_GUTTER_H + waveH);
 
@@ -268,6 +271,8 @@ function Stage({
         extGain: audition.extGain,
         camMuted: audition.camMuted,
         extMuted: audition.extMuted,
+        camSilenced: audition.camSilenced,
+        extSilenced: audition.extSilenced,
       },
       audition.playing
     );
@@ -417,6 +422,8 @@ function Stage({
           <LaneAudioControls
             tint={CAMERA}
             muted={audition.camMuted}
+            silenced={audition.camSilenced}
+            silencedBy="external"
             gain={audition.camGain}
             onMute={() => audition.toggleCamMute()}
             onGain={(v) => audition.setCamGain(v)}
@@ -424,6 +431,8 @@ function Stage({
           <LaneAudioControls
             tint={EXTERNAL}
             muted={audition.extMuted}
+            silenced={audition.extSilenced}
+            silencedBy="camera"
             gain={audition.extGain}
             onMute={() => audition.toggleExtMute()}
             onGain={(v) => audition.setExtGain(v)}
@@ -459,25 +468,32 @@ function SpeakerIcon({ muted }: { muted: boolean }): React.JSX.Element {
 function LaneAudioControls({
   tint,
   muted,
+  silenced,
+  silencedBy,
   gain,
   onMute,
   onGain,
 }: {
   tint: string;
   muted: boolean;
+  /** Silenced by the A/B solo (not by this lane's own mute): a grey slash, never
+   * the mute state, so a real mute still reads differently. */
+  silenced: boolean;
+  silencedBy: 'camera' | 'external';
   gain: number;
   onMute: () => void;
   onGain: (v: number) => void;
 }): React.JSX.Element {
+  const quiet = !muted && silenced;
   return (
     <div className="lane-ctl">
       <button
-        className={`lane-mute${muted ? ' muted' : ''}`}
-        style={{ color: muted ? undefined : tint }}
+        className={`lane-mute${muted ? ' muted' : ''}${quiet ? ' silenced' : ''}`}
+        style={{ color: muted || quiet ? undefined : tint }}
         onClick={onMute}
-        title={muted ? 'Unmute' : 'Mute'}
+        title={muted ? 'Unmute' : quiet ? `Silenced by A/B (hearing ${silencedBy} only — b hears both)` : 'Mute'}
       >
-        <SpeakerIcon muted={muted} />
+        <SpeakerIcon muted={muted || quiet} />
       </button>
       <input
         type="range"

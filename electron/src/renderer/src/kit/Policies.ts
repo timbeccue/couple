@@ -250,6 +250,34 @@ export function syncSeed(req: {
   return call<{ seed: SyncSeed | null }>(native.policySyncSeed, req, { seed: null }).seed;
 }
 
+// ---------- monitor A/B (flip / both / picker) ----------
+
+export type MonitorModeWire = 'pan' | 'overlay' | 'null' | 'camera' | 'external';
+
+export interface MonitorPlan {
+  next: MonitorModeWire;
+  lastSide: MonitorModeWire;
+  lastBoth: MonitorModeWire;
+}
+
+/** `a` flips camera ⇄ external, `b` restores the both-mode used last, the picker
+ * selects; core returns the next mode plus the memory to hand back next time
+ * (CoupleKit MonitorPolicy twin). */
+export function monitorPlan(req: {
+  action: 'flip' | 'both' | 'select';
+  current: MonitorModeWire;
+  chosen?: MonitorModeWire | null;
+  lastSide?: MonitorModeWire | null;
+  lastBoth?: MonitorModeWire | null;
+}): MonitorPlan {
+  // Conservative fallback: keep the current mode and memory (never changes what is heard).
+  return call<MonitorPlan>(native.policyMonitor, req, {
+    next: req.current,
+    lastSide: req.lastSide ?? 'camera',
+    lastBoth: req.lastBoth ?? 'overlay',
+  });
+}
+
 // ---------- §13.4 simultaneity predicate ----------
 
 export function triangleCloses(req: {

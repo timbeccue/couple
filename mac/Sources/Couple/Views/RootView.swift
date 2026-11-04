@@ -197,7 +197,7 @@ private struct ActivityStripView: View {
 struct FooterBar: View {
     var body: some View {
         HStack(spacing: 6) {
-            Text("j/k move · v approve (=queue) · ⏎/⚙ sync tools · l/◫ loupes · esc collapse     ←/→ offset 1 ms · ⇧ 10 · ⌥ 0.1 · [ ] drift · drag loupe = offset · ⇧-drag = pivot")
+            Text("j/k move · v approve (=queue) · ⏎/⚙ sync tools · l/◫ loupes · a camera/external · b both · esc collapse     ←/→ offset 1 ms · ⇧ 10 · ⌥ 0.1 · [ ] drift · drag loupe = offset · ⇧-drag = pivot")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)

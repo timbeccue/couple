@@ -723,3 +723,35 @@ here.
   transients — silence and sustained tones are unjudgeable) still stands; it
   is served by onset-based auto-proposal and the explicit ⌖ re-snap, not by a
   forced snap on drag release.
+
+## 2026-11-03 — A/B monitor: Camera / External solos in the HUD picker (REVISES §2.7 "three monitor modes", §V2.6 "Pan L/R | Overlay")
+
+Owner request: comparing the camera audio against the coupled external audio
+took a mute on one lane and an unmute on the other, too slow for a quick
+back-and-forth. Three placements were mocked (extend the monitor picker; a
+dedicated A/B chip in the HUD; solo buttons per lane); the owner chose the
+picker.
+
+- **DECIDED — the monitor picker is Camera · Pan L/R · Overlay · External.**
+  The two ends are solos: one track, mono to both ears, at its Pan L/R level
+  so a flip compares loudness like-for-like. The picker stays the one control
+  that answers "what am I hearing"; the per-lane mute + volume are unchanged
+  and still apply inside a solo. Null stays a test oracle, not in the UI.
+- **Keys:** `a` flips camera ⇄ external. From a both-mode it goes to the side
+  heard last (camera the first time, so A is always the video's own audio).
+  `b` returns to the both-mode used last (Overlay the first time, the app
+  default); choosing Pan L/R or Overlay in the picker does the same. Both keys
+  were free in the editor keymap.
+- **Lane feedback:** the silenced lane dims exactly like a muted lane; its
+  speaker chip shows a grey slash, deliberately NOT the amber mute state, so a
+  mute the user set still reads differently. A lane the user muted stays muted
+  after returning to both. Hover copy on the grey chip names the side being
+  heard and the `b` key.
+- **Boundary:** the next-mode decision and the two remembered modes (last
+  solo, last both-mode) live in core `policy::monitor` (`cpl_policy_monitor`,
+  proptest-covered). Shells store the memory core hands back and present;
+  neither derives the next mode itself. Mixer arms for the two solos are in
+  `audition.rs` beside the existing three (SPEC-CHANGE in PROGRESS.md).
+- **Not done (deliberately):** no hold-to-compare (momentary) variant; no
+  per-lane solo buttons; no A/B readout outside the picker — the picker's
+  selected segment is the readout.

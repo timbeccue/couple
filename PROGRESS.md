@@ -1151,3 +1151,38 @@ x264/x265, i.e. GPL-configured — fine for owner use; before public
 distribution swap the pin for an LGPL-configured static build (any URL +
 sha256 works) or meet GPL terms. SPEC §11.5's "ship the pinned LGPL build"
 intent stands; this wires the mechanism and pins what exists today.
+
+## 2026-11-03 — A/B monitor: Camera / External solos in the HUD picker
+
+Owner request: a one-click way to compare the camera audio with the coupled
+external audio (previously mute one lane, unmute the other). Interactive
+mockup of three placements → owner chose extending the monitor picker
+(UX-DECISIONS 2026-11-03 entry).
+
+SPEC-CHANGE (2026-11-03): §4.8 `MonitorMode` gains two variants,
+`CameraOnly` (wire `"camera"`, ABI code 3) and `ExternalOnly` (`"external"`,
+code 4): L = R = g_cam·cam, resp. L = R = g_ext·ext (the Pan L/R channel in
+both ears; user gains/mutes multiply in as before). Existing codes 0–2 and
+their matrices are unchanged; the crossfade `prev_flags` byte widens its
+monitor field from 2 to 3 bits (integer-shift moves from bit 2 to bit 3 —
+internal). `cpl_audition_open` / `cpl_audition_set_mode` accept the new codes.
+ADDITIVE — `cpl_abi_version` stays 1. Core test
+`audition::solo_modes_are_the_pan_channels_in_both_ears`.
+
+- New pure policy `core/src/policy/monitor.rs` (`cpl_policy_monitor`): flip /
+  both / select → next mode + the two memories (last solo, last both-mode);
+  unit + proptest contract. Mirrors: `CoupleKit/MonitorPolicy.swift`
+  (4 tests under `swift test`), `electron kit/Policies.monitorPlan`
+  (4 vitest cases through the real binding).
+- Swift shell: `MonitorMode.allCases` = [camera, pan, overlay, external]
+  (picker order); `AuditionController.selectMonitor/flipMonitor/
+  restoreBothMonitor` + `camSilenced/extSilenced`; HUD picker widened to
+  236 pt; lanes dim when silenced; lane speaker chip grey-slash state;
+  InputRouter `a` / `b`; footer hint. Electron shell: same surface
+  (`AuditionController.ts`, `VideoHero.tsx`, `WaveformStage.tsx`,
+  `editor.css .lane-mute.silenced`, `App.tsx` keys + hint).
+- Dev harness: `COUPLE_MONITOR_TEST=1` (with `COUPLE_PAIR_DIR`) drives the
+  picker + `a`/`b` keys through the live policy and InputRouter, checks lane
+  silence feedback, and shoots `10-ab-camera-only.png` / `11-ab-external-only.png`
+  into `COUPLE_SHOT_DIR`.
+- SHELL-UI-PARITY.md: video-hero, per-lane, and keymap lines updated.

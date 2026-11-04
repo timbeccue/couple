@@ -58,10 +58,14 @@ Legend: [source] = the reference implementation a port must read.
   UX-DECISIONS 2026-07-11]
 - Video hero (preview-greedy layout): muted video slaved to the AUDITION CLOCK
   (audio is master; ≤1 frame skew), transport (play/pause, timecode, anchor
-  jump chips with −0.8 s pre-roll, monitor mode Pan L/R / Overlay (Null
-  excluded from the UI — CoupleKit MonitorMode.allCases; default Overlay),
-  fullscreen).
-  [AuditionController.swift, EditorComponents.swift]
+  jump chips with −0.8 s pre-roll, monitor picker Camera · Pan L/R ·
+  Overlay · External (the ends are the A/B solos, UX-DECISIONS 2026-11-03;
+  Null excluded from the UI — CoupleKit MonitorMode.allCases; default
+  Overlay), fullscreen). `a` flips camera ⇄ external (from both: the side
+  heard last, camera first); `b` restores the both-mode used last. The
+  decision + memory come from core `policy::monitor` (CoupleKit
+  MonitorPolicy / kit Policies.monitorPlan); shells store and present.
+  [AuditionController.swift, EditorComponents.swift, InputRouter.swift]
 - Resolve banner when unresolved/alternates: candidate list with evidence (z),
   re-pick = manual pin via forced-verdict policy. [CenterColumn.swift §V2.6]
 - Waveform: ONE zoomable dual-lane strip (no separate minimap) owning anchor
@@ -69,8 +73,10 @@ Legend: [source] = the reference implementation a port must read.
   loupe-layout toolbar. [WaveformStage.swift OverviewStrip]
 - Per-lane audio controls beside each lane: mute (remembers pre-mute level) +
   0–2 gain slider tinted to the lane; lane drawing scales with gain, dims when
-  muted; same state as any other gain surface. [WaveformStage.swift
-  LaneAudioControls + drawLane]
+  muted OR silenced by the A/B solo; a silenced lane's speaker is a grey slash
+  (never the mute state — a real mute still reads differently; hover copy
+  names the side being heard); same state as any other gain surface.
+  [WaveformStage.swift LaneAudioControls + drawLane]
 - Editing: drag external lane = offset, shift-drag = pivot drift (commit on
   release), camera lane pans, wheel zooms, ←→/[ ] nudge families, esc restores
   drag-start alignment; gated ONLY by inputsEnabled; editing never un-verifies.
@@ -96,7 +102,7 @@ Legend: [source] = the reference implementation a port must read.
 ## App-level
 - Whole-window drop target + native file picker fallback; window is draggable
   (hidden titlebar needs an explicit drag region on non-mac frameworks).
-- Keymap: j/k select, v approve (undoable), space/l play, esc, ⌘Z/⇧⌘Z, ⌘⌫
+- Keymap: j/k select, v approve (undoable), space/l play, a flip camera⇄external, b both, esc, ⌘Z/⇧⌘Z, ⌘⌫
   clear session (policy counts in the confirm). [InputRouter.swift]
 - Unified import→match→sync activity strip composed by the activity policy
   (shell holds clocks/debounce; never sticks at 100%), rendered FULL WINDOW

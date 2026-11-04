@@ -207,3 +207,36 @@ fn fill_budget_512_frames_under_1ms() {
     println!("audition_fill 512: median {median:.4} ms, max {max:.4} ms");
     assert!(median < 1.0, "§9.6: fill 512 must be ≤ 1 ms (median {median:.3})");
 }
+
+/// A/B solos (UX-DECISIONS 2026-11-03): camera-only is the pan-mode LEFT channel in both ears,
+/// external-only the pan-mode RIGHT channel in both ears; the user gains still apply.
+#[test]
+fn solo_modes_are_the_pan_channels_in_both_ears() {
+    let r = rig();
+    let ctx = &r.ctx;
+    let s = ctx.session(r.session).unwrap();
+    s.set_drift_mode(couple_core::session::DriftMode::None);
+    let st = ctx.audition_open(r.session, MonitorMode::PanLR, 2.0).unwrap();
+    let stream = ctx.audition_stream(st).unwrap();
+    // Distinct gains so L and R differ even with identical content.
+    stream.set_gains(0.5, 0.25);
+    let _ = fill(ctx, st, 512); // absorb the gain crossfade
+    let t0 = fill(ctx, st, 0).1.stream_t;
+    let (pan, _) = fill(ctx, st, 2400);
+    for mode in [MonitorMode::CameraOnly, MonitorMode::ExternalOnly] {
+        stream.seek(t0);
+        stream.set_mode(mode);
+        let (solo, info) = fill(ctx, st, 2400);
+        assert_eq!(info.frames, 2400);
+        for i in 0..2400 {
+            let want = if mode == MonitorMode::CameraOnly { pan[2 * i] } else { pan[2 * i + 1] };
+            assert!((solo[2 * i] - want).abs() < 1e-6, "{mode:?} L at {i}");
+            assert!((solo[2 * i + 1] - want).abs() < 1e-6, "{mode:?} R at {i}");
+        }
+        let peak = solo.iter().fold(0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.0, "{mode:?} must not be silent");
+    }
+    assert_eq!(MonitorMode::from_u8(3), MonitorMode::CameraOnly);
+    assert_eq!(MonitorMode::from_u8(4), MonitorMode::ExternalOnly);
+    assert_eq!(serde_json::to_string(&MonitorMode::CameraOnly).unwrap(), "\"camera\"");
+}

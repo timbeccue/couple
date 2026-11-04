@@ -31,6 +31,13 @@ pub enum MonitorMode {
     /// Difference monitor (cam − ext). Dropped from the shell UI; kept in the
     /// core as the exact-cancellation oracle for the §4.8 precision tests.
     Null,
+    /// A/B solo (UX-DECISIONS 2026-11-03): only the camera track, mono to both
+    /// ears. The user's per-track gains/mutes still apply.
+    #[serde(rename = "camera")]
+    CameraOnly,
+    /// A/B solo: only the external track, mono to both ears.
+    #[serde(rename = "external")]
+    ExternalOnly,
 }
 
 impl MonitorMode {
@@ -38,6 +45,8 @@ impl MonitorMode {
         match v {
             1 => MonitorMode::Overlay,
             2 => MonitorMode::Null,
+            3 => MonitorMode::CameraOnly,
+            4 => MonitorMode::ExternalOnly,
             _ => MonitorMode::PanLR,
         }
     }
@@ -47,7 +56,14 @@ impl MonitorMode {
             MonitorMode::PanLR => 0,
             MonitorMode::Overlay => 1,
             MonitorMode::Null => 2,
+            MonitorMode::CameraOnly => 3,
+            MonitorMode::ExternalOnly => 4,
         }
+    }
+
+    /// True for the two A/B solo modes (one track audible).
+    pub fn is_solo(self) -> bool {
+        matches!(self, MonitorMode::CameraOnly | MonitorMode::ExternalOnly)
     }
 }
 
@@ -149,7 +165,7 @@ pub struct AuditionStream {
     prev_drift_bits: AtomicU64,
     prev_gain_cam_bits: AtomicU32,
     prev_gain_ext_bits: AtomicU32,
-    prev_flags: AtomicU8, // monitor(2 bits) | integer_shift(bit 2) | valid(bit 7)
+    prev_flags: AtomicU8, // monitor(3 bits) | integer_shift(bit 3) | valid(bit 7)
 }
 
 impl AuditionStream {
@@ -251,8 +267,8 @@ impl AuditionStream {
             let prev = RenderParams {
                 offset_ms: f64::from_bits(self.prev_offset_bits.load(Ordering::Acquire)),
                 drift_ppm: f64::from_bits(self.prev_drift_bits.load(Ordering::Acquire)),
-                integer_shift: prev_flags & 0x04 != 0,
-                monitor: MonitorMode::from_u8(prev_flags & 0x03),
+                integer_shift: prev_flags & 0x08 != 0,
+                monitor: MonitorMode::from_u8(prev_flags & 0x07),
                 gain_cam: f32::from_bits(self.prev_gain_cam_bits.load(Ordering::Acquire)),
                 gain_ext: f32::from_bits(self.prev_gain_ext_bits.load(Ordering::Acquire)),
             };
@@ -273,7 +289,7 @@ impl AuditionStream {
         self.prev_gain_cam_bits.store(params.gain_cam.to_bits(), Ordering::Release);
         self.prev_gain_ext_bits.store(params.gain_ext.to_bits(), Ordering::Release);
         self.prev_flags.store(
-            0x80 | params.monitor.as_u8() | if params.integer_shift { 0x04 } else { 0 },
+            0x80 | params.monitor.as_u8() | if params.integer_shift { 0x08 } else { 0 },
             Ordering::Release,
         );
 
@@ -318,6 +334,16 @@ impl AuditionStream {
                 }
                 MonitorMode::Null => {
                     let m = 0.5 * (gc * c - ge * e);
+                    (m, m)
+                }
+                // A/B solos: one track, mono to both ears, at its pan-mode level
+                // so flipping between sides compares loudness like-for-like.
+                MonitorMode::CameraOnly => {
+                    let m = gc * c;
+                    (m, m)
+                }
+                MonitorMode::ExternalOnly => {
+                    let m = ge * e;
                     (m, m)
                 }
             };

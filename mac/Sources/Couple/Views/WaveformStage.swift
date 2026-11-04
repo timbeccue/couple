@@ -233,7 +233,7 @@ struct OverviewStrip: View {
                          midY: badgeGutterH + laneH / 2, halfH: laneH / 2 - 3,
                          gain: 1.44 / max(cam.meta.stats.activeP959600, 1e-6) * audition.camGain,
                          normalization: cam.meta.normalization,
-                         color: Theme.camera, dimmed: audition.camMuted)
+                         color: Theme.camera, dimmed: audition.camMuted || audition.camSilenced)
             }
             // External lane (bottom): drawn through the current mapping — the
             // u-range is affine in t, so one band query stays column-aligned.
@@ -243,7 +243,7 @@ struct OverviewStrip: View {
                          midY: badgeGutterH + laneH + laneH / 2, halfH: laneH / 2 - 3,
                          gain: 1.44 / max(ext.meta.stats.activeP959600, 1e-6) * audition.extGain,
                          normalization: ext.meta.normalization,
-                         color: Theme.external, dimmed: audition.extMuted)
+                         color: Theme.external, dimmed: audition.extMuted || audition.extSilenced)
             }
 
             drawTicks(ctx, size: sz, d0: d0, d1: d1, y: badgeGutterH + waveH, h: tickRowH)
@@ -512,6 +512,9 @@ private struct LaneAudioControls: View {
         let audition = model.pair.audition
         @Bindable var a = audition
         let muted = lane == .camera ? audition.camMuted : audition.extMuted
+        // Silenced by the A/B solo (not by this lane's own mute): a grey slash,
+        // never the amber mute state, so a real mute still reads differently.
+        let silenced = !muted && (lane == .camera ? audition.camSilenced : audition.extSilenced)
         let tint = lane == .camera ? Theme.camera : Theme.external
         HStack(spacing: 6) {
             Button {
@@ -523,9 +526,9 @@ private struct LaneAudioControls: View {
             } label: {
                 // Reads as a button: same chip treatment as the transport
                 // controls, with a filled warn state while muted.
-                Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                Image(systemName: muted || silenced ? "speaker.slash.fill" : "speaker.wave.2.fill")
                     .font(.system(size: 9))
-                    .foregroundStyle(muted ? Theme.warn : tint)
+                    .foregroundStyle(muted ? Theme.warn : silenced ? Theme.textTertiary : tint)
                     .frame(width: 24, height: 18)
                     .background(muted ? Theme.warn.opacity(0.18) : Theme.chipBg,
                                 in: RoundedRectangle(cornerRadius: 4))
@@ -533,7 +536,9 @@ private struct LaneAudioControls: View {
                         .strokeBorder(muted ? Theme.warn.opacity(0.5) : Theme.panelStroke))
             }
             .buttonStyle(.plain)
-            .help(muted ? "Unmute" : "Mute")
+            .help(muted ? "Unmute"
+                  : silenced ? "Silenced by A/B (hearing \(lane == .camera ? "external" : "camera") only — b hears both)"
+                  : "Mute")
             Slider(value: lane == .camera ? $a.camGain : $a.extGain, in: 0...2)
                 .controlSize(.mini)
                 .frame(width: 64)
