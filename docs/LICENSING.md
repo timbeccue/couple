@@ -49,19 +49,27 @@ simple: it is exactly the unmodified tarball plus the configure line.
    view (§3) shows the texts themselves.
 3. *Make the corresponding source available.* `SOURCE.txt` in the same
    folder gives the exact tarball URL, its sha256, the signing key, and the
-   configure line. The tarball itself is cached at `mac/vendor/ffmpeg/src/`
-   (gitignored). **Before each public release, attach that tarball to the
-   release** (or otherwise keep a copy under your control): the obligation
-   runs three years past the last time that binary is distributed, and
-   ffmpeg.org staying online is not something we control.
+   configure line. The retained copy of the tarball is the
+   `ffmpeg-source-<version>` prerelease in this repo (asset
+   `ffmpeg-<version>.tar.xz` plus its `.asc`; marked prerelease and not
+   latest so the app download links are unaffected). It is also what
+   `fetch-ffmpeg.sh` downloads first, ffmpeg.org second, so a release build
+   never depends on ffmpeg.org being up (it was down on 2026-11-04). **Keep
+   that prerelease for three years past the last distribution of any build
+   made from it**, and link it from each app release's notes. A local cache
+   lives at `mac/vendor/ffmpeg/src/` (gitignored).
 4. *Publish modifications.* There are none. If ffmpeg is ever patched, the
    patch must ship alongside and `SOURCE.txt` must say so.
 
 **Bumping the pin.** Change `FFMPEG_VERSION` and `TARBALL_SHA256` in
-`fetch-ffmpeg.sh` from a download whose GPG signature you verified; delete
+`fetch-ffmpeg.sh` from a download whose GPG signature you verified (the
+release signing key is committed as `mac/Scripts/ffmpeg-release-signing-key.asc`;
+the script checks its fingerprint against the pin before trusting it), then
+create the matching `ffmpeg-source-<version>` prerelease with the tarball and
+`.asc` — in CI the script refuses to build without it. Delete
 `mac/vendor/ffmpeg/<old>` if you want the space back. Nothing downstream
-changes. Keep the previous tarball around until the three-year window on the
-last build that shipped it has passed.
+changes. Keep the previous prerelease until the three-year window on the last
+build that shipped it has passed.
 
 **Patents.** Separate from copyright. Stream-copying H.264/HEVC avoids
 encoding entirely; the core AAC patents are widely regarded as expired;

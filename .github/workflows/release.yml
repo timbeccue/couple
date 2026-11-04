@@ -16,9 +16,10 @@
 #
 # ffmpeg: every installer bundles its own ffmpeg + ffprobe, so users install
 # nothing. macOS: mac/Scripts/fetch-ffmpeg.sh (the same pinned LGPL build the
-# Swift --dist bundle ships, compiled from the sha256-verified ffmpeg.org
-# tarball; attach that tarball to each public release — docs/LICENSING.md
-# §1). Windows and Linux: electron/scripts/fetch-ffmpeg.mjs downloads
+# Swift --dist bundle ships, compiled from the sha256-verified ffmpeg source
+# tarball, fetched from this repo's `ffmpeg-source-<version>` prerelease first
+# and ffmpeg.org second — docs/LICENSING.md §1). Windows and Linux:
+# electron/scripts/fetch-ffmpeg.mjs downloads
 # the pinned, sha256-verified BtbN FFmpeg-Builds `-lgpl` static build for the
 # runner's platform (LGPL v3, no --enable-gpl/--enable-nonfree; verified by
 # the script) into electron/resources/ffmpeg/<win32|linux>/, with SOURCE.txt
@@ -89,6 +90,20 @@ jobs:
       - name: Binding smoke test (ABI, errors, policies, job path)
         working-directory: electron
         run: npm run smoke
+
+      # The fetch scripts cache their inputs and outputs under vendor/; keep
+      # that across runs so macOS does not recompile ffmpeg and Windows/Linux
+      # do not re-download 150 MB each time. Keyed on the scripts, i.e. the
+      # pins. The downloaded archives are left out (the staged output suffices).
+      - name: Cache ffmpeg build inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            mac/vendor/ffmpeg
+            electron/vendor/ffmpeg
+            !electron/vendor/ffmpeg/*/*.zip
+            !electron/vendor/ffmpeg/*/*.tar.xz
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('mac/Scripts/fetch-ffmpeg.sh', 'electron/scripts/fetch-ffmpeg.mjs') }}
 
       - name: Bundle ffmpeg (macOS, pinned LGPL build from source)
         if: runner.os == 'macOS'

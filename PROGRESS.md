@@ -1327,3 +1327,34 @@ entry. Testers on those platforms no longer install ffmpeg.
   configure-line check and produce the layout above. The `-version`/`-L` run
   checks will first execute on the real runners (next `workflow_dispatch`
   dry run).
+
+## 2026-11-04 — Release dry run: ffmpeg source mirrored in-repo, inputs cached
+
+First `workflow_dispatch` dry run of `release.yml` (run 41795729422): Windows
+and Linux built and packaged with the bundled ffmpeg; macOS failed before
+building anything — ffmpeg.org's HTTPS endpoint was down and the tarball
+download timed out. The release build should not depend on a volunteer-run
+site being up, and LICENSING §1 already required keeping the exact tarball
+under our control. So:
+
+- **`ffmpeg-source-9.0.2` prerelease** in this repo (not marked latest, so
+  `releases/latest/download/...` keeps pointing at app builds) carries the
+  sha256-verified `ffmpeg-9.0.2.tar.xz` (and its `.asc` once ffmpeg.org is
+  reachable again). It is both the LGPL source-retention copy and the build
+  input.
+- **`mac/Scripts/fetch-ffmpeg.sh`** fetches the mirror first and ffmpeg.org
+  second, with curl retries and a connect timeout; the sha256 pin applies
+  either way. In CI (`$CI` set) the mirror is required — a pin bump that has
+  not uploaded its tarball fails with the `gh release create` line to run.
+  The FFmpeg release signing key is now committed
+  (`mac/Scripts/ffmpeg-release-signing-key.asc`, fetched from
+  keyserver.ubuntu.com by fingerprint) and its fingerprint is checked against
+  the pin before use; the `.asc` is tried from both sources and, if neither
+  answers, the signature check is skipped with a note (sha256 still gates).
+  `SOURCE.txt` lists both URLs.
+- **`release.yml`** caches `mac/vendor/ffmpeg` and the staged
+  `electron/vendor/ffmpeg` output (archives excluded) with `actions/cache`,
+  keyed on the two fetch scripts, so macOS stops recompiling ffmpeg on every
+  run and Windows/Linux stop re-downloading 150 MB each.
+- docs/LICENSING.md §1 (obligation 3 and the pin-bump recipe) and CLAUDE.md
+  updated.

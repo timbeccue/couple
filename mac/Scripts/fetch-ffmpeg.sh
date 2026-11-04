@@ -23,25 +23,37 @@
 # source-availability obligation.
 #
 # Verification: tarball sha256 against the pin below, plus the FFmpeg release
-# GPG signature when gpg is installed (key fingerprint pinned); otool -L must
-# show only /System and /usr/lib; both tools must run `-version` and pass
-# check_lgpl.
+# GPG signature when gpg is installed and the .asc is reachable (key committed
+# next to this script, fingerprint pinned); otool -L must show only /System
+# and /usr/lib; both tools must run `-version` and pass check_lgpl.
 #
 # Output: vendor/ffmpeg/<version>-lgpl-<arch>/ holding ffmpeg, ffprobe,
 # SOURCE.txt and licenses/{COPYING.LGPLv2.1,LICENSE.md}. stdout is exactly one
 # line — that directory — so callers can do HELPER_DIR="$(Scripts/fetch-ffmpeg.sh)".
 # Progress → stderr. Builds for the host architecture (a few minutes, once;
 # cached afterwards). Bumping the pin: change FFMPEG_VERSION and TARBALL_SHA256
-# from a signature-verified download; nothing else in the pipeline changes.
+# from a signature-verified download and upload that tarball + .asc to a new
+# `ffmpeg-source-<version>` prerelease (see MIRROR_URL); nothing else changes.
 set -e
 cd "$(dirname "$0")/.."
 
 FFMPEG_VERSION="9.0.2" # released 2026-09-17
 TARBALL="ffmpeg-$FFMPEG_VERSION.tar.xz"
-TARBALL_URL="https://ffmpeg.org/releases/$TARBALL"
+UPSTREAM_URL="https://ffmpeg.org/releases/$TARBALL"
+# Fetched from the mirror first: the same tarball (and its .asc) kept as an
+# asset of the `ffmpeg-source-<version>` prerelease in this repo — the LGPL
+# source-retention copy (docs/LICENSING.md §1) doubling as the build input, so
+# a release build does not depend on ffmpeg.org being reachable (it was not on
+# 2026-11-04, which failed the first release dry run). The sha256 pin applies
+# whichever source answered. In CI the mirror is required: a pin bump must
+# upload the new tarball there before it can ship (the error says how).
+MIRROR_URL="https://github.com/timbeccue/couple/releases/download/ffmpeg-source-$FFMPEG_VERSION/$TARBALL"
 TARBALL_SHA256="8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
-SIGNING_KEY_URL="https://ffmpeg.org/ffmpeg-devel.asc"
-SIGNING_KEY_FPR="FCF986EA15E6E293A5644F10B4322F04D67658D8" # "FFmpeg release signing key"
+# Committed copy of the "FFmpeg release signing key" (upstream:
+# https://ffmpeg.org/ffmpeg-devel.asc); its fingerprint is checked against the
+# pin below before use, so the file is a convenience, not a trust root.
+SIGNING_KEY_FILE="Scripts/ffmpeg-release-signing-key.asc"
+SIGNING_KEY_FPR="FCF986EA15E6E293A5644F10B4322F04D67658D8"
 
 # No --enable-gpl / --enable-nonfree / --enable-version3. Everything enabled
 # here is a macOS system framework or a /usr/lib dylib; no network protocols
@@ -95,26 +107,53 @@ check_lgpl() { # binary — reports LGPL and was not configured with GPL/nonfree
     esac
 }
 
+download() { # dest url — retries transient failures; 1 if the URL is unavailable
+    if curl -fsSL --retry 2 --retry-delay 5 --connect-timeout 20 -o "$1.part" "$2"; then
+        mv "$1.part" "$1"
+        note "fetched $2"
+        return 0
+    fi
+    rm -f "$1.part"
+    note "unavailable: $2"
+    return 1
+}
+
 fetch_source() {
     mkdir -p "$SRC_DIR"
     if [ ! -f "$SRC_DIR/$TARBALL" ]; then
-        note "downloading $TARBALL_URL"
-        curl -fsSL -o "$SRC_DIR/$TARBALL" "$TARBALL_URL"
+        if ! download "$SRC_DIR/$TARBALL" "$MIRROR_URL"; then
+            if [ -n "${CI:-}" ]; then
+                note "the mirror has no $TARBALL; a release build requires it. Upload the"
+                note "sha256-verified upstream tarball (and its .asc) first:"
+                note "  gh release create ffmpeg-source-$FFMPEG_VERSION $TARBALL $TARBALL.asc --prerelease --latest=false"
+                exit 1
+            fi
+            note "falling back to upstream (remember to upload it to the mirror before a release)"
+            download "$SRC_DIR/$TARBALL" "$UPSTREAM_URL" || { note "could not download $TARBALL"; exit 1; }
+        fi
     fi
     check_sha256 "$SRC_DIR/$TARBALL" "$TARBALL_SHA256"
-    if command -v gpg >/dev/null 2>&1; then
-        note "verifying release signature"
-        curl -fsSL -o "$TMP/$TARBALL.asc" "$TARBALL_URL.asc"
-        curl -fsSL -o "$TMP/key.asc" "$SIGNING_KEY_URL"
-        gpg --batch --quiet --no-default-keyring --keyring "$TMP/keyring.gpg" --import "$TMP/key.asc" 2>/dev/null
-        if ! gpg --batch --status-fd 1 --no-default-keyring --keyring "$TMP/keyring.gpg" \
-                --verify "$TMP/$TARBALL.asc" "$SRC_DIR/$TARBALL" 2>/dev/null \
-                | grep -q "VALIDSIG $SIGNING_KEY_FPR"; then
-            note "GPG signature on $TARBALL is not from key $SIGNING_KEY_FPR"
-            exit 1
-        fi
-    else
+    if ! command -v gpg >/dev/null 2>&1; then
         note "gpg not installed: skipping signature check (sha256 pin still enforced)"
+        return
+    fi
+    if ! download "$TMP/$TARBALL.asc" "$MIRROR_URL.asc" && ! download "$TMP/$TARBALL.asc" "$UPSTREAM_URL.asc"; then
+        note "signature file not available from the mirror or upstream: skipping signature check (sha256 pin still enforced)"
+        return
+    fi
+    note "verifying release signature"
+    gpg --batch --quiet --no-default-keyring --keyring "$TMP/keyring.gpg" --import "$SIGNING_KEY_FILE" 2>/dev/null
+    imported="$(gpg --batch --no-default-keyring --keyring "$TMP/keyring.gpg" --with-colons --fingerprint 2>/dev/null \
+        | awk -F: '/^fpr/ { print $10; exit }')"
+    if [ "$imported" != "$SIGNING_KEY_FPR" ]; then
+        note "$SIGNING_KEY_FILE has fingerprint '$imported', expected $SIGNING_KEY_FPR"
+        exit 1
+    fi
+    if ! gpg --batch --status-fd 1 --no-default-keyring --keyring "$TMP/keyring.gpg" \
+            --verify "$TMP/$TARBALL.asc" "$SRC_DIR/$TARBALL" 2>/dev/null \
+            | grep -q "VALIDSIG $SIGNING_KEY_FPR"; then
+        note "GPG signature on $TARBALL is not from key $SIGNING_KEY_FPR"
+        exit 1
     fi
 }
 
@@ -141,7 +180,8 @@ ffmpeg/ffprobe $FFMPEG_VERSION — LGPL v2.1 or later build for macOS $ARCH
 Built $(date -u +%Y-%m-%dT%H:%M:%SZ) on macOS $(sw_vers -productVersion) by couple/mac/Scripts/fetch-ffmpeg.sh
 
 Corresponding source (unmodified):
-  $TARBALL_URL
+  $UPSTREAM_URL
+  retained copy: $MIRROR_URL
   sha256 $TARBALL_SHA256
   signed by FFmpeg release signing key $SIGNING_KEY_FPR
 
