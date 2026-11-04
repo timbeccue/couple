@@ -81,7 +81,15 @@ jobs:
             echo "::error::tag '$TAG' is not vMAJOR.MINOR.PATCH[-prerelease]"
             exit 1
           fi
-          npm version --no-git-tag-version "${TAG#v}"
+          # `npm version` exits 1 with "Version not changed" when package.json
+          # already carries the tag's version (v0.1.0 did, 2026-11-04); that is
+          # fine — the stamp exists only to catch a stale package.json.
+          CURRENT="$(node -p 'require("./package.json").version')"
+          if [[ "$CURRENT" == "${TAG#v}" ]]; then
+            echo "package.json already at $CURRENT"
+          else
+            npm version --no-git-tag-version "${TAG#v}"
+          fi
 
       - name: Build native binding
         working-directory: electron
