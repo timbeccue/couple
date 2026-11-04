@@ -64,10 +64,18 @@ struct QueueRail: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text("COUPLE")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .kerning(3)
-                    .foregroundStyle(Theme.textPrimary)
+                // Brand wordmark: the C and O are the interlocked mark (CoupleMark),
+                // sized so the rings sit just proud of the text's cap height.
+                HStack(alignment: .lastTextBaseline, spacing: 2.5) {
+                    CoupleMark(height: 12)
+                        .alignmentGuide(.lastTextBaseline) { d in d[.bottom] - 0.5 }
+                    Text("UPLE")
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .kerning(3)
+                        .foregroundStyle(Theme.textPrimary)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Couple")
                 Spacer()
                 // Clear Session (TODO-001): a clearly-visible session control that
                 // returns to the initial import screen. Confirms with media/couple/

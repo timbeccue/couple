@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<!-- Couple logo prototype D (round 2): Offset Snap — two clip bars sharing a left edge; the faded
+     ghost is where the external (amber) clip sat before sync pulled it into line. -->
+<defs>
+<linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0" stop-color="#1d2127"/>
+<stop offset="1" stop-color="#0e1014"/>
+</linearGradient>
+<filter id="soft6" x="-30%" y="-30%" width="160%" height="160%">
+<feGaussianBlur stdDeviation="6"/>
+</filter>
+</defs>
+<ellipse cx="256" cy="410" rx="148" ry="13" fill="#000000" opacity="0.5" filter="url(#soft6)"/>
+<rect x="96" y="76" width="320" height="320" rx="72" fill="url(#plate)"/>
+<rect x="97.5" y="77.5" width="317" height="317" rx="70.5" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="1.5"/>
+<line x1="126" y1="156" x2="126" y2="338" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2"/>
+<rect x="126" y="186" width="220" height="46" rx="14" fill="#4fd9c4"/>
+<rect x="174" y="262" width="220" height="46" rx="14" fill="#f0b35e" fill-opacity="0.22"/>
+<rect x="126" y="262" width="220" height="46" rx="14" fill="#f0b35e"/>
+</svg>
