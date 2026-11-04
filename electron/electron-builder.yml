@@ -36,6 +36,10 @@ linux:
   target:
     - AppImage
     - deb
+  # ${arch} is "x86_64" for AppImage and "amd64" for deb; the README and the
+  # release notes link Couple-linux-x64.*, so spell it out (first dry run,
+  # 2026-11-04, produced the mismatched names).
+  artifactName: ${productName}-linux-x64.${ext}
   category: Video
   maintainer: Tim Beccue <timothybeccue@gmail.com>
 npmRebuild: false

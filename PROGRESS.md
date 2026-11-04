@@ -1358,3 +1358,10 @@ under our control. So:
   run and Windows/Linux stop re-downloading 150 MB each.
 - docs/LICENSING.md §1 (obligation 3 and the pin-bump recipe) and CLAUDE.md
   updated.
+- Second dry run (41799099756) passed on all three OSes: macOS fetched the
+  tarball from the mirror, compiled it and packaged; Windows and Linux ran the
+  BtbN bundling with the `-version`/`-L` checks; ffmpeg caches saved. One
+  catch: electron-builder's `${arch}` is `x86_64` for AppImage and `amd64` for
+  deb, so Linux came out as `Couple-linux-x86_64.AppImage` /
+  `Couple-linux-amd64.deb` while README and the release notes link
+  `Couple-linux-x64.*`. `linux.artifactName` now spells `x64` out.
