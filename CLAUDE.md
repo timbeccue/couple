@@ -74,6 +74,10 @@ rename them.
 
 - `cargo test --release --workspace` — integration suites require `--release`.
 - `scripts/golden-pair-rows.sh` — resolver-decision golden diff vs `fixtures/golden/rows/` (CI runs it in the test job). Intended decision change: `COUPLE_UPDATE_GOLDEN=1 scripts/golden-pair-rows.sh`, review diff, commit.
+- `scripts/shell-drift-check.sh <base-ref>` — warn-only (CI `shell-drift` job): flags
+  a change that touches one shell's UI/kit without the other shell or
+  `SHELL-UI-PARITY.md`. Opt out for an intentionally one-sided change with a
+  `Shell-parity: n/a <reason>` line in a commit message.
 - `cargo build --release -p couple-ffi` — must run **before** any swift build.
 - `cd mac && swift build -c release` — ship variant (DebugDrive stubbed).
 - `cd mac && swift build -c release -Xswiftc -DCOUPLE_DEVHARNESS` — dev harness.

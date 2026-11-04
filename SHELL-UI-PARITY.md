@@ -10,6 +10,10 @@ looks — chrome stays shell-idiomatic (SPEC §13.3); semantics and presence are
 required. Each line cites the authoritative implementation. Keep this file
 current: adding/removing a user-facing affordance in any shell means updating
 the matching line here IN THE SAME CHANGE (same rule as CLAUDE.md upkeep).
+CI reminds you: `scripts/shell-drift-check.sh` (the `shell-drift` job, warn
+only) flags changes that touch one shell without the other or this file; an
+intentionally one-sided change says so with a `Shell-parity: n/a <reason>`
+line in its commit message.
 
 Legend: [source] = the reference implementation a port must read.
 
