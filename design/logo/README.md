@@ -14,8 +14,12 @@ so every file renders correctly on any background and stays crisp at any zoom.
   baked drop shadow). Source of the .icns.
 - `Couple.icns` — generated from `couple-appicon.svg`; a copy ships from
   `mac/Resources/AppIcon.icns` (wired in `mac/Scripts/make-app.sh`).
-- `e-co-wordmark-light.svg` — light-background variant (UPLE in dark ink). Parked, kept in
-  sync with the mark geometry.
+- `couple-wordmark-light.svg` — the same outlined wordmark with UPLE in the app's dark ink,
+  for light surfaces. The repo `README.md` header shows it on GitHub's light theme and
+  `couple-wordmark.svg` on the dark theme (an HTML `<picture>` with `prefers-color-scheme`
+  sources). Keep its mark geometry identical to the dark file.
+- `e-co-wordmark-light.svg` — earlier light-background variant with UPLE as live text
+  (renders in the viewer's font). Parked; superseded by `couple-wordmark-light.svg`.
 
 ## Prototype leftovers
 

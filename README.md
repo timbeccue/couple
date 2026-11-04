@@ -1,4 +1,14 @@
-# Couple
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="design/logo/couple-wordmark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="design/logo/couple-wordmark-light.svg">
+    <img alt="Couple" src="design/logo/couple-wordmark-light.svg" width="330">
+  </picture>
+</p>
+
+<p align="center">Pairs and syncs two recordings of the same event by matching their audio.</p>
+
+---
 
 Couple pairs and syncs two independent video recordings of the same event by
 matching their audio. Give it a folder of clips from two cameras (or a camera
