@@ -5,11 +5,15 @@
 # Developer ID + notarytool credentials); the bundle layout is already
 # hardened-runtime-compatible. ffmpeg/ffprobe are copied into Contents/Helpers/
 # (core resolves ../Helpers first):
-#   --dist  bundles the pinned static build via Scripts/fetch-ffmpeg.sh
-#           (self-contained; survives `brew upgrade`; see that script's
-#           license note) and refuses non-static helpers. Use with --dmg.
-#   default (dev) copies whatever COUPLE_FFMPEG/$PATH provides and only
-#           warns if that copy links non-system dylibs.
+#   --dist  bundles the pinned LGPL static build via Scripts/fetch-ffmpeg.sh
+#           (self-contained; survives `brew upgrade`; refuses GPL/nonfree or
+#           non-static helpers) and ships its license texts + source pointer
+#           in Contents/Resources/Licenses/ffmpeg/ (docs/LICENSING.md). The
+#           only variant fit for distribution. Use with --dmg.
+#   default (dev) copies whatever COUPLE_FFMPEG/$PATH provides (typically a
+#           GPL-configured Homebrew build), only warns if that copy links
+#           non-system dylibs, and labels the bundle a dev build. Never
+#           distribute one.
 set -e
 cd "$(dirname "$0")/.."
 
@@ -36,12 +40,18 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 cp .build/release/Couple "$APP/Contents/MacOS/Couple"
 
 if [ "$MAKE_DIST" = "1" ]; then
-    HELPER_DIR="$(Scripts/fetch-ffmpeg.sh)" # verifies pin, static-ness, launch
+    HELPER_DIR="$(Scripts/fetch-ffmpeg.sh)" # verifies pin, static-ness, LGPL, launch
     FFMPEG="$HELPER_DIR/ffmpeg"
     FFPROBE="$HELPER_DIR/ffprobe"
+    # LGPL: ship the license texts and the pointer to the corresponding source
+    # next to the binaries they cover (docs/LICENSING.md §1).
+    mkdir -p "$APP/Contents/Resources/Licenses/ffmpeg"
+    cp "$HELPER_DIR/licenses/"* "$HELPER_DIR/SOURCE.txt" "$APP/Contents/Resources/Licenses/ffmpeg/"
+    COPYRIGHT="© 2026 Tim Beccue. ffmpeg and ffprobe (LGPL v2.1 or later) are shipped as separate executables in Contents/Helpers; their licenses and source information are in Contents/Resources/Licenses/ffmpeg."
 else
     FFMPEG="${COUPLE_FFMPEG:-$(command -v ffmpeg)}"
     FFPROBE="$(dirname "$FFMPEG")/ffprobe"
+    COPYRIGHT="© 2026 Tim Beccue. Development build: ffmpeg/ffprobe were copied from the build machine. Not for distribution (build with --dist)."
 fi
 cp "$FFMPEG" "$APP/Contents/Helpers/ffmpeg"
 cp "$FFPROBE" "$APP/Contents/Helpers/ffprobe"
@@ -71,16 +81,22 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSHumanReadableCopyright</key><string>© 2026 Tim Beccue. ffmpeg/ffprobe are LGPL, shipped as separate executables in Contents/Helpers.</string>
+    <key>NSHumanReadableCopyright</key><string>$COPYRIGHT</string>
 </dict>
 </plist>
 PLIST
 
-# The helpers need library validation disabled: a dev (homebrew) ffmpeg loads
-# its own dylibs from /opt/homebrew, which hardened-runtime library validation
-# otherwise rejects ("different Team IDs"). Harmless for a static LGPL build.
-HELPER_ENTS="$(mktemp -t couple-helper-ents).plist"
-cat > "$HELPER_ENTS" <<ENTS
+if [ "$MAKE_DIST" = "1" ]; then
+    # The pinned helpers load nothing outside /System and /usr/lib, so hardened
+    # runtime library validation stays on.
+    codesign --force --options runtime -s "$SIGN_ID" "$APP/Contents/Helpers/ffmpeg"
+    codesign --force --options runtime -s "$SIGN_ID" "$APP/Contents/Helpers/ffprobe"
+else
+    # A dev (homebrew) ffmpeg loads its own dylibs from /opt/homebrew, which
+    # hardened-runtime library validation otherwise rejects ("different Team
+    # IDs"), so dev helpers get library validation disabled.
+    HELPER_ENTS="$(mktemp -t couple-helper-ents).plist"
+    cat > "$HELPER_ENTS" <<ENTS
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -89,9 +105,10 @@ cat > "$HELPER_ENTS" <<ENTS
 </dict>
 </plist>
 ENTS
-codesign --force --options runtime --entitlements "$HELPER_ENTS" -s "$SIGN_ID" "$APP/Contents/Helpers/ffmpeg"
-codesign --force --options runtime --entitlements "$HELPER_ENTS" -s "$SIGN_ID" "$APP/Contents/Helpers/ffprobe"
-rm -f "$HELPER_ENTS"
+    codesign --force --options runtime --entitlements "$HELPER_ENTS" -s "$SIGN_ID" "$APP/Contents/Helpers/ffmpeg"
+    codesign --force --options runtime --entitlements "$HELPER_ENTS" -s "$SIGN_ID" "$APP/Contents/Helpers/ffprobe"
+    rm -f "$HELPER_ENTS"
+fi
 codesign --force --options runtime -s "$SIGN_ID" "$APP"
 codesign --verify --deep "$APP" && echo "codesign: ok ($SIGN_ID)"
 

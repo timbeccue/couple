@@ -1,7 +1,9 @@
 # electron-builder config (M7). The napi binding must stay OUTSIDE the asar
 # (native modules can't load from it); ffmpeg bundling is optional — drop
-# static builds into resources/ffmpeg/<darwin|win32|linux>/ to include them
-# (LGPL builds only; see the plan's licensing note).
+# static builds into resources/ffmpeg/<darwin|win32|linux>/ to include them.
+# LGPL-configured builds only (no --enable-gpl/--enable-nonfree), with their
+# license texts and a SOURCE.txt alongside; the whole directory is copied.
+# Rules and sources per platform: docs/LICENSING.md §2.
 appId: com.timbeccue.couple
 productName: Couple
 directories:

@@ -32,6 +32,9 @@ rename them.
   core; presentation lives in the shell"). Phases A–F shipped; Phase G (new
   shells) started 2026-07-04 via the `electron/` shell. Stays in root while
   Phase G is in progress.
+- `docs/LICENSING.md` — third-party licensing record: the ffmpeg LGPL rule
+  (what a distributable build may contain, how `fetch-ffmpeg.sh` enforces it),
+  the obligations each release must meet, Electron bundling rules, open items.
 - `docs/archive/` — shipped plans, historical only; kept because code cites them.
 - `fixtures/matcher-corpus/CALIBRATION.md` — derivation of frozen matcher
   thresholds. §1–5 are self-marked superseded; §6–7 (profile 2) is the live
@@ -84,12 +87,16 @@ rename them.
 - `cd mac && swift build -c release` — ship variant (DebugDrive stubbed).
 - `cd mac && swift build -c release -Xswiftc -DCOUPLE_DEVHARNESS` — dev harness.
 - `cd mac && Scripts/make-app.sh [--dist] [--dmg]` — assemble `mac/dist/Couple.app`.
-  `--dist` bundles the pinned static ffmpeg via `Scripts/fetch-ffmpeg.sh`
-  (sha256-pinned, otool-verified self-contained; GPL-configured — see the
-  script's license note before public distribution; cache `mac/vendor/`,
-  gitignored). Default dev build copies `COUPLE_FFMPEG`/`$PATH` ffmpeg and
-  warns if it links non-system dylibs (a Homebrew copy breaks on `brew
-  upgrade` — the 2026-11-01 "unsupported format" failure).
+  `--dist` builds and bundles the pinned **LGPL** static ffmpeg via
+  `Scripts/fetch-ffmpeg.sh` (compiled from the sha256+GPG-verified ffmpeg.org
+  tarball with no external libs; otool-, launch- and LGPL-verified; license
+  texts + `SOURCE.txt` land in `Contents/Resources/Licenses/ffmpeg/`; cache
+  `mac/vendor/`, gitignored; first run compiles for a few minutes). The only
+  variant fit for distribution — obligations in `docs/LICENSING.md` (attach
+  the source tarball to each public release). Default dev build copies
+  `COUPLE_FFMPEG`/`$PATH` ffmpeg (a GPL-configured Homebrew build), labels the
+  bundle a dev build, and warns if it links non-system dylibs (a Homebrew copy
+  breaks on `brew upgrade` — the 2026-11-01 "unsupported format" failure).
 - `cd mac && swift test`
 - ROC gate (weekly/on-demand, plus auto on push/PR touching matcher paths — .github/workflows/roc-gate.yml):
   `cargo test --release -p couple-core --test matching_evidence -- --ignored synthetic_corpus_roc_gates_hold`

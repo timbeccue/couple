@@ -1186,3 +1186,33 @@ ADDITIVE — `cpl_abi_version` stays 1. Core test
   silence feedback, and shoots `10-ab-camera-only.png` / `11-ab-external-only.png`
   into `COUPLE_SHOT_DIR`.
 - SHELL-UI-PARITY.md: video-hero, per-lane, and keymap lines updated.
+
+## 2026-11-03 — Dist bundle ships an LGPL ffmpeg built from pinned source
+
+Closes the license note from the 2026-11-01 entry. Couple shells out to
+ffmpeg/ffprobe over argv/pipes (never links libav*), stream-copies video on
+export and encodes audio with AudioToolbox / native `aac` / PCM, so nothing
+GPL (x264/x265) or nonfree is needed — but the pinned martin-riedl.de build
+was GPL-configured while the bundle's `NSHumanReadableCopyright` claimed LGPL.
+No public static macOS build we could vouch for is LGPL-configured, so
+`mac/Scripts/fetch-ffmpeg.sh` now **compiles** ffmpeg 9.0.2 from the
+ffmpeg.org tarball (sha256-pinned; GPG-verified against the FFmpeg release
+signing key when `gpg` is present) with `--disable-autodetect` and no external
+libraries; links only /System and /usr/lib, so the unmodified tarball plus the
+configure line *is* the corresponding source. Same stdout contract as before
+(one line, the helper dir); cached under `mac/vendor/ffmpeg/<ver>-lgpl-<arch>/`
+with `licenses/{COPYING.LGPLv2.1,LICENSE.md}` and a `SOURCE.txt` (tarball
+URL, sha256, key, configure line). New gate `check_lgpl`: `ffmpeg -L` must
+report the LGPL and the configuration must contain neither `--enable-gpl` nor
+`--enable-nonfree`. SPEC §11.5's "ship the pinned LGPL build" is now met.
+
+- `make-app.sh --dist` copies the license texts + `SOURCE.txt` to
+  `Contents/Resources/Licenses/ffmpeg/`, writes an accurate copyright string,
+  and signs the helpers *without* `disable-library-validation` (static build
+  loads nothing foreign). Dev builds keep the entitlement (Homebrew dylibs)
+  and now label the bundle "Development build … not for distribution".
+- New `docs/LICENSING.md`: the LGPL rule, how it is enforced, the per-release
+  obligations (attach the source tarball to each public release; three-year
+  window), Electron bundling rules (lgpl variants only), open items
+  (Rust/Swift/npm notices via `cargo about`; Acknowledgements view in both
+  shells). CLAUDE.md doc map + build section updated.
