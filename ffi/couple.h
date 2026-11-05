@@ -531,7 +531,8 @@ uint64_t cpl_resolve_start(uint64_t ctx,
  selected couple should do, lifted from Swift `RepairDropPolicy.decide` (both drop gestures share
  it so they cannot diverge). `json` is the request `{"hasSelectedCouple":bool,
  "payloadIsAudio":bool,"videoAvailable":bool,"currentSelectedKey":str|null,"droppedKey":str,
- "approved":bool}`. Returns the uniform envelope: on success
+ "approved":bool}` — `approved` carries PINNED (a manual pick) since PLAN-COMPACT-MODE D9; the
+ key name is kept until Phase 6 (D12). Returns the uniform envelope: on success
  `{"ok":true,"value":{"outcome":"noOp|accept|needsConfirmation|reject"}}`; on malformed/stale JSON
  the `{"ok":false,"error":{"kind":"invalid",...}}` envelope (the wrapper maps the error to the
  conservative `reject`, which mutates NO state). PURE (no ctx). Free with cpl_string_free.
@@ -554,7 +555,8 @@ uint64_t cpl_resolve_start(uint64_t ctx,
  PURE re-resolution merge decision (TODO-007 / PLAN §3.2) — how to fold a fresh `ResolvedRow`
  into an existing queue row, lifted from Swift `RowMergePolicy.plan`. `json` is the request
  `{"protected":bool,"currentSelectedKey":str|null,"currentCandidateKeys":[str],
- "freshSelectedKey":str|null,"freshCandidateKeys":[str]}`. Returns the uniform envelope: on
+ "freshSelectedKey":str|null,"freshCandidateKeys":[str]}` — `protected` is PINNED only since
+ PLAN-COMPACT-MODE D6 (was approved || pinned). Returns the uniform envelope: on
  success `{"ok":true,"value":{"selectedAudioKey":str|null,"candidateKeys":[str],
  "adoptFreshDisplay":bool,"rebuildSession":bool,"clearForced":bool}}`; on malformed/stale JSON
  the error envelope (the wrapper maps it to the conservative PROTECTED-row plan: keep the
@@ -572,6 +574,8 @@ uint64_t cpl_resolve_start(uint64_t ctx,
      "affectedCouples":u32,"affectedApproved":u32}`;
    - `{"op":"clearCounts","mediaCount":u32,"couples":[…]}` ⇒ `value` is
      `{"media":u32,"couples":u32,"approved":u32}`.
+ Since PLAN-COMPACT-MODE D7 the `approved` inputs and the `affectedApproved`/`approved` counts
+ carry INCLUDED (included for export); the key names are kept until Phase 6 (D12).
  Returns the uniform envelope; on malformed/stale JSON (e.g. an unknown `op`) the error envelope
  (the wrapper maps the error to the conservative EMPTY/no-op plan — `needsConfirmation:false`,
  zero counts — so a failure removes nothing). PURE (no ctx). Free with cpl_string_free.
@@ -650,6 +654,21 @@ char *cpl_policy_activity(const char *json);
  fallback is the unseeded sync). PURE (no ctx). Free with cpl_string_free.
  */
  char *cpl_policy_sync_seed(const char *json);
+
+/*
+ PURE include-for-export decision (PLAN-COMPACT-MODE §3, D1/D8; UX-DECISIONS V2.12;
+ `policy::export_include`) — whether each couple goes out on the next export, whether it is
+ listed in the export rail's Files list, and the N in "Export N files". The rule is
+ `included = verdict is good ∧ (explicit ?? ¬exported)`, `inFilesList = included ∪ exported`.
+ `json` is the request `{"rows":[{"verdict":"confident|questionable|none",
+ "explicit":bool|null,"exported":bool}]}` (rows in display order; `explicit` may be omitted).
+ Returns the uniform envelope: on success `{"ok":true,"value":{"rows":[{"included":bool,
+ "inFilesList":bool}],"count":usize}}` (one decision per input row, same order); on
+ malformed/stale JSON the error envelope (the Swift wrapper's fallback re-applies the same rule
+ shell-side, so it is exact; the TS wrapper excludes everything — nothing leaves the app on a
+ fault). ADDITIVE — `cpl_abi_version` stays 1. PURE (no ctx). Free with cpl_string_free.
+ */
+ char *cpl_policy_export_include(const char *json);
 
 /*
  LRU-GC the cache down to max_bytes; returns bytes freed.

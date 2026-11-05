@@ -1764,7 +1764,8 @@ pub unsafe extern "C" fn cpl_policy_match_quality(json: *const c_char) -> *mut c
 /// selected couple should do, lifted from Swift `RepairDropPolicy.decide` (both drop gestures share
 /// it so they cannot diverge). `json` is the request `{"hasSelectedCouple":bool,
 /// "payloadIsAudio":bool,"videoAvailable":bool,"currentSelectedKey":str|null,"droppedKey":str,
-/// "approved":bool}`. Returns the uniform envelope: on success
+/// "approved":bool}` — `approved` carries PINNED (a manual pick) since PLAN-COMPACT-MODE D9; the
+/// key name is kept until Phase 6 (D12). Returns the uniform envelope: on success
 /// `{"ok":true,"value":{"outcome":"noOp|accept|needsConfirmation|reject"}}`; on malformed/stale JSON
 /// the `{"ok":false,"error":{"kind":"invalid",...}}` envelope (the wrapper maps the error to the
 /// conservative `reject`, which mutates NO state). PURE (no ctx). Free with cpl_string_free.
@@ -1801,7 +1802,8 @@ pub unsafe extern "C" fn cpl_policy_repair_forced(json: *const c_char) -> *mut c
 /// PURE re-resolution merge decision (TODO-007 / PLAN §3.2) — how to fold a fresh `ResolvedRow`
 /// into an existing queue row, lifted from Swift `RowMergePolicy.plan`. `json` is the request
 /// `{"protected":bool,"currentSelectedKey":str|null,"currentCandidateKeys":[str],
-/// "freshSelectedKey":str|null,"freshCandidateKeys":[str]}`. Returns the uniform envelope: on
+/// "freshSelectedKey":str|null,"freshCandidateKeys":[str]}` — `protected` is PINNED only since
+/// PLAN-COMPACT-MODE D6 (was approved || pinned). Returns the uniform envelope: on
 /// success `{"ok":true,"value":{"selectedAudioKey":str|null,"candidateKeys":[str],
 /// "adoptFreshDisplay":bool,"rebuildSession":bool,"clearForced":bool}}`; on malformed/stale JSON
 /// the error envelope (the wrapper maps it to the conservative PROTECTED-row plan: keep the
@@ -1826,6 +1828,8 @@ pub unsafe extern "C" fn cpl_policy_row_merge(json: *const c_char) -> *mut c_cha
 ///     "affectedCouples":u32,"affectedApproved":u32}`;
 ///   - `{"op":"clearCounts","mediaCount":u32,"couples":[…]}` ⇒ `value` is
 ///     `{"media":u32,"couples":u32,"approved":u32}`.
+/// Since PLAN-COMPACT-MODE D7 the `approved` inputs and the `affectedApproved`/`approved` counts
+/// carry INCLUDED (included for export); the key names are kept until Phase 6 (D12).
 /// Returns the uniform envelope; on malformed/stale JSON (e.g. an unknown `op`) the error envelope
 /// (the wrapper maps the error to the conservative EMPTY/no-op plan — `needsConfirmation:false`,
 /// zero counts — so a failure removes nothing). PURE (no ctx). Free with cpl_string_free.
@@ -1940,6 +1944,28 @@ pub unsafe extern "C" fn cpl_policy_sync_seed(json: *const c_char) -> *mut c_cha
     use couple_core::policy::sync_seed::{dispatch, Request};
     match policy_request::<Request>(json) {
         Ok(req) => policy_ok(&dispatch(&req)),
+        Err(envelope) => envelope,
+    }
+    })
+}
+
+/// PURE include-for-export decision (PLAN-COMPACT-MODE §3, D1/D8; UX-DECISIONS V2.12;
+/// `policy::export_include`) — whether each couple goes out on the next export, whether it is
+/// listed in the export rail's Files list, and the N in "Export N files". The rule is
+/// `included = verdict is good ∧ (explicit ?? ¬exported)`, `inFilesList = included ∪ exported`.
+/// `json` is the request `{"rows":[{"verdict":"confident|questionable|none",
+/// "explicit":bool|null,"exported":bool}]}` (rows in display order; `explicit` may be omitted).
+/// Returns the uniform envelope: on success `{"ok":true,"value":{"rows":[{"included":bool,
+/// "inFilesList":bool}],"count":usize}}` (one decision per input row, same order); on
+/// malformed/stale JSON the error envelope (the Swift wrapper's fallback re-applies the same rule
+/// shell-side, so it is exact; the TS wrapper excludes everything — nothing leaves the app on a
+/// fault). ADDITIVE — `cpl_abi_version` stays 1. PURE (no ctx). Free with cpl_string_free.
+#[no_mangle]
+pub unsafe extern "C" fn cpl_policy_export_include(json: *const c_char) -> *mut c_char {
+    guarded_ptr(|| {
+    use couple_core::policy::export_include::{decide, Request};
+    match policy_request::<Request>(json) {
+        Ok(req) => policy_ok(&decide(&req)),
         Err(envelope) => envelope,
     }
     })
@@ -2233,6 +2259,56 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&r).unwrap();
         assert_eq!(v["ok"], serde_json::json!(false), "malformed ⇒ ok:false: {r}");
         assert_eq!(v["error"]["kind"], serde_json::json!("invalid"), "malformed ⇒ invalid: {r}");
+    }
+
+    // PLAN-COMPACT-MODE §3: cpl_policy_export_include — value path decides per-row inclusion,
+    // Files-list membership and the export count; error path surfaces a malformed/stale request
+    // explicitly (the Swift wrapper re-applies the same rule shell-side; the TS wrapper excludes).
+    #[test]
+    fn policy_export_include_envelope() {
+        // Value path: fresh good ⇒ in; exported good untouched ⇒ out but listed; re-included
+        // exported ⇒ in; non-good with an explicit true ⇒ never in. `explicit` may be omitted.
+        let ok = CString::new(
+            r#"{"rows":[{"verdict":"confident","explicit":null,"exported":false},
+                        {"verdict":"confident","exported":true},
+                        {"verdict":"confident","explicit":true,"exported":true},
+                        {"verdict":"questionable","explicit":true,"exported":false}]}"#,
+        )
+        .unwrap();
+        let r = take(unsafe { cpl_policy_export_include(ok.as_ptr()) }).expect("envelope json");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(true), "value path ok: {r}");
+        assert_eq!(
+            v["value"]["rows"],
+            serde_json::json!([
+                {"included": true, "inFilesList": true},
+                {"included": false, "inFilesList": true},
+                {"included": true, "inFilesList": true},
+                {"included": false, "inFilesList": false},
+            ]),
+            "per-row decisions in input order: {r}"
+        );
+        assert_eq!(v["value"]["count"], serde_json::json!(2), "Export N files: {r}");
+
+        // Value path: an empty queue decides nothing and counts zero.
+        let empty = CString::new(r#"{"rows":[]}"#).unwrap();
+        let r = take(unsafe { cpl_policy_export_include(empty.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["value"]["rows"], serde_json::json!([]), "empty: {r}");
+        assert_eq!(v["value"]["count"], serde_json::json!(0), "empty count: {r}");
+
+        // Error path: malformed JSON ⇒ explicit invalid error, not null, not a silent value.
+        let bad = CString::new("{nope").unwrap();
+        let r = take(unsafe { cpl_policy_export_include(bad.as_ptr()) }).expect("error envelope");
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "malformed ⇒ ok:false: {r}");
+        assert_eq!(v["error"]["kind"], serde_json::json!("invalid"), "malformed ⇒ invalid: {r}");
+
+        // Error path (stale shape): an unknown verdict string is also invalid.
+        let stale = CString::new(r#"{"rows":[{"verdict":"good","exported":false}]}"#).unwrap();
+        let r = take(unsafe { cpl_policy_export_include(stale.as_ptr()) }).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["ok"], serde_json::json!(false), "stale DTO ⇒ ok:false: {r}");
     }
 
     // PLAN §3.2: cpl_policy_row_merge — value path folds a fresh resolution into an existing row;

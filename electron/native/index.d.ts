@@ -240,6 +240,7 @@ export function policyShadowRows(json: string): string | null;
 export function policyActivity(json: string): string | null;
 export function policySyncSeed(json: string): string | null;
 export function policyMonitor(json: string): string | null;
+export function policyExportInclude(json: string): string | null;
 
 // cache
 export function cacheGc(ctx: bigint, maxBytes: bigint): bigint;

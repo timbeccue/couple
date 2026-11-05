@@ -1,4 +1,4 @@
-// Policies.ts — thin wrappers over the 9 pure cpl_policy_* decisions +
+// Policies.ts — thin wrappers over the 11 pure cpl_policy_* decisions +
 // triangleCloses (PLAN-CORE-SHELL-BOUNDARY §3.2). TS twin of the CoupleKit
 // policy mirror files. NO decision logic here: each wrapper builds the request
 // JSON, decodes the uniform envelope, and maps a failure to the CONSERVATIVE
@@ -44,6 +44,7 @@ export function repairDrop(req: {
   videoAvailable: boolean;
   currentSelectedKey: string | null;
   droppedKey: string;
+  /** Carries PINNED (a manual pick) since PLAN-COMPACT-MODE D9; key name kept until Phase 6 (D12). */
   approved: boolean;
 }): RepairDropOutcome {
   // Conservative fallback: reject — mutates NO state.
@@ -67,6 +68,7 @@ export interface RowMergePlan {
 }
 
 export function rowMergePlan(req: {
+  /** Pinned ONLY since PLAN-COMPACT-MODE D6 (was approved || pinned); the caller composes it. */
   protected: boolean;
   currentSelectedKey: string | null;
   currentCandidateKeys: string[];
@@ -90,12 +92,14 @@ export interface RemovalPlan {
   removableKeys: string[];
   needsConfirmation: boolean;
   affectedCouples: number;
+  /** Affected couples INCLUDED for export (PLAN-COMPACT-MODE D7; key name kept until Phase 6, D12). */
   affectedApproved: number;
 }
 
 export interface RemovalCouple {
   videoKey: string;
   selectedAudioKey: string | null;
+  /** Included for export (PLAN-COMPACT-MODE D7; was approved ≡ queued; key name kept per D12). */
   approved: boolean;
 }
 
@@ -116,6 +120,7 @@ export function mediaRemovalPlan(req: {
 export function clearSessionCounts(req: { mediaCount: number; couples: RemovalCouple[] }): {
   media: number;
   couples: number;
+  /** Couples included for export (D7; key name kept per D12). */
   approved: number;
 } {
   return call(native.policyMediaRemoval, { op: 'clearCounts', ...req }, { media: 0, couples: 0, approved: 0 });
@@ -275,6 +280,34 @@ export function monitorPlan(req: {
     next: req.current,
     lastSide: req.lastSide ?? 'camera',
     lastBoth: req.lastBoth ?? 'overlay',
+  });
+}
+
+// ---------- include for export (PLAN-COMPACT-MODE §3, D1/D8; UX-DECISIONS V2.12) ----------
+
+/** One row's inclusion inputs: the verdict, the user's checkbox (null = untouched)
+ * and whether the couple has been exported already (`exportedAt != null`, D8). */
+export interface IncludeInput {
+  verdict: MatchQuality;
+  explicit: boolean | null;
+  exported: boolean;
+}
+
+export interface IncludeDecision {
+  /** The row goes out on the next export (`verdict good && (explicit ?? !exported)`). */
+  included: boolean;
+  /** The row is listed in the export rail's Files list (`included || exported`). */
+  inFilesList: boolean;
+}
+
+/** Per-row inclusion decisions in input order plus the N in "Export N files"
+ * (ExportIncludePolicy twin; decision in core policy::export_include). */
+export function exportInclude(rows: IncludeInput[]): { rows: IncludeDecision[]; count: number } {
+  // Conservative fallback: nothing included — a fault never lets a file leave the app;
+  // already-exported couples stay listed.
+  return call<{ rows: IncludeDecision[]; count: number }>(native.policyExportInclude, { rows }, {
+    rows: rows.map((r) => ({ included: false, inFilesList: r.exported })),
+    count: 0,
   });
 }
 

@@ -13,28 +13,33 @@
 //!   - A couple is AFFECTED when its video is removed (the row goes away) OR its currently selected
 //!     audio is removed (the row re-resolves). A removed key that is only a non-selected ALTERNATE
 //!     is NOT counted as affected.
-//!   - Clearing the session always confirms, with the media/couple/approved counts.
+//!   - Clearing the session always confirms, with the media/couple/included counts.
+//!
+//! Since PLAN-COMPACT-MODE D7 the per-couple `approved` input (and the `affected_approved` /
+//! `approved` counts) carry INCLUDED — included for export (D1) — not the retired approval flag.
+//! The wire key names are kept until Phase 6 (D12); only their meaning changed, not the math.
 //!
 //! CONTRACT (the testable invariants):
 //!   1. EMPTY removal (no keys, or only keys absent from the pool) needs no confirmation and
-//!      reports zero affected/approved.
+//!      reports zero affected/included.
 //!   2. UNUSED-ONLY removal needs no confirmation and reports zero affected couples.
 //!   3. A removal touching ≥1 referenced key needs confirmation; `affected_couples` counts the
 //!      DISTINCT couples whose video or SELECTED audio is removed; `affected_approved` counts how
-//!      many of those were approved.
+//!      many of those were included for export (D7).
 //!   4. The counts are a function of the input sets ALONE (no call-site flavor).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 /// The identity of one couple as removal reasons about it: its video key, the audio key it
-/// currently uses (`null` when unresolved), and whether it is approved (≡ queued for export).
+/// currently uses (`null` when unresolved), and whether it is included for export (D7).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CoupleRef {
     pub video_key: String,
     #[serde(default)]
     pub selected_audio_key: Option<String>,
+    /// Included for export (PLAN-COMPACT-MODE D7; was approved ≡ queued). Wire key kept per D12.
     pub approved: bool,
 }
 
@@ -51,7 +56,7 @@ pub struct MediaRemovalPlan {
     pub needs_confirmation: bool,
     /// Distinct couples whose video is removed OR whose selected audio is removed.
     pub affected_couples: u32,
-    /// How many of the affected couples were approved (queued for export).
+    /// How many of the affected couples were included for export (D7; wire key kept per D12).
     pub affected_approved: u32,
 }
 
@@ -62,6 +67,7 @@ pub struct MediaRemovalPlan {
 pub struct ClearSessionCounts {
     pub media: u32,
     pub couples: u32,
+    /// Couples included for export (D7; wire key kept per D12).
     pub approved: u32,
 }
 
@@ -107,7 +113,7 @@ pub fn plan(selected_keys: &HashSet<String>, pool_keys: &HashSet<String>, couple
     }
 }
 
-/// The Clear Session confirmation counts (TODO-001) — media files, couples, and approved couples.
+/// The Clear Session confirmation counts (TODO-001) — media files, couples, and included couples (D7).
 pub fn clear_counts(media_count: u32, couples: &[CoupleRef]) -> ClearSessionCounts {
     ClearSessionCounts {
         media: media_count,

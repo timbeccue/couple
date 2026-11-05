@@ -820,6 +820,12 @@ pub fn policy_monitor(json: String) -> Option<String> {
     take(unsafe { c::cpl_policy_monitor(j.as_ptr()) })
 }
 
+#[napi]
+pub fn policy_export_include(json: String) -> Option<String> {
+    let j = cs(&json);
+    take(unsafe { c::cpl_policy_export_include(j.as_ptr()) })
+}
+
 // ---------- cache ----------
 
 #[napi]

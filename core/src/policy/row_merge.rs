@@ -3,14 +3,16 @@
 //! `mac/Sources/CoupleKit/RowMergePolicy.swift` (a RELOCATION, not a behavior change).
 //!
 //! When new media is imported, the whole pool is re-resolved and each fresh `ResolvedRow` must be
-//! folded into the EXISTING queue row. An unapproved, unpinned unresolved row must adopt the newly
-//! confident result WHOLESALE; an approved or manually pinned row must NEVER have its chosen source
-//! changed silently (new evidence may only surface as extra alternates). The shell owns the side
+//! folded into the EXISTING queue row. An unpinned row must adopt the newly confident result
+//! WHOLESALE; a manually PINNED row must NEVER have its chosen source changed silently (new
+//! evidence may only surface as extra alternates). Protection is the pin ALONE since
+//! PLAN-COMPACT-MODE D6: with default-on inclusion (D1) "included" no longer means a human looked
+//! at the row, so inclusion is not an input here (it was `approved || pinned` before D6). The shell owns the side
 //! effects (rebuild the PairSession, enqueue auto-sync, reset the `forced` chip); this decides only
 //! WHAT the merged row should be.
 //!
 //! CONTRACT (the testable invariants):
-//!   1. PROTECTED ROWS ARE STABLE — when `protected` (approved || pinned), the selected source and
+//!   1. PROTECTED ROWS ARE STABLE — when `protected` (pinned only, PLAN-COMPACT-MODE D6), the selected source and
 //!      display are preserved; only genuinely-new candidate keys are appended (order preserved); the
 //!      session is never rebuilt (SPEC-V2 §3.6 stability).
 //!   2. UNPROTECTED ROWS TAKE THE FRESH RESOLUTION WHOLE — selection, candidates, and display all
@@ -49,7 +51,8 @@ pub struct RowMergePlan {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Request {
-    /// `approved || pinned` — the SPEC-V2 §3.6 protection boundary.
+    /// `pinned` — the SPEC-V2 §3.6 protection boundary. Pinned ONLY since PLAN-COMPACT-MODE D6
+    /// (was `approved || pinned`); the shell composes it, so inclusion never reaches this policy.
     pub protected: bool,
     /// The row's selected audio key before the merge.
     #[serde(default)]
@@ -149,12 +152,13 @@ mod tests {
         assert!(!p.clear_forced);
     }
 
-    // (4) An approved row protects identically.
+    // (4) D6: protection is the pin ALONE — the same plan whatever the row's inclusion for export
+    //     (inclusion is not an input; a pinned row protects identically whether or not it is included).
     #[test]
-    fn approved_row_keeps_selection_when_stronger_audio_arrives() {
-        let p = plan(&req(true, Some("queued"), &["queued"], Some("stronger"), &["stronger", "queued"]));
-        assert_eq!(p.selected_audio_key.as_deref(), Some("queued"));
-        assert_eq!(p.candidate_keys, vec!["queued", "stronger"]);
+    fn pinned_row_protects_regardless_of_inclusion() {
+        let p = plan(&req(true, Some("picked"), &["picked"], Some("stronger"), &["stronger", "picked"]));
+        assert_eq!(p.selected_audio_key.as_deref(), Some("picked"));
+        assert_eq!(p.candidate_keys, vec!["picked", "stronger"]);
         assert!(!p.rebuild_session);
     }
 

@@ -8,18 +8,21 @@
 //! The replacement rules (TODO-013 / SPEC-V2 §V2.6) are deliberately simple:
 //!   - Dropping the ALREADY-selected audio is a no-op.
 //!   - A couple with NO current audio (unresolved) accepts the drop immediately.
-//!   - An UNAPPROVED couple with a DIFFERENT source replaces immediately, no dialog.
-//!   - An APPROVED couple needs confirmation (replacing it removes it from the export queue).
+//!   - An UNPINNED couple with a DIFFERENT source replaces immediately, no dialog.
+//!   - A PINNED couple (a manual pick) needs confirmation (replacing it discards a deliberate
+//!     choice). Since PLAN-COMPACT-MODE D9 the gate is the PIN, not approval/inclusion: with
+//!     default-on inclusion (D1) an inclusion gate would prompt on every drop. The `approved`
+//!     wire key carries `pinned` until Phase 6 (D12).
 //!   - No couple / non-audio payload / no available video rejects the drop with no state change.
 //!
 //! CONTRACT (the testable invariants):
 //!   1. REJECT needs no couple, no audio, or no video — checked BEFORE any replacement reasoning
 //!      (a malformed/non-audio drop never mutates).
-//!   2. SAME AUDIO IS A NO-OP — dropping the already-selected key ⇒ `NoOp` regardless of approval.
+//!   2. SAME AUDIO IS A NO-OP — dropping the already-selected key ⇒ `NoOp` regardless of the pin.
 //!   3. UNRESOLVED ACCEPTS IMMEDIATELY — no current selection (different, non-null dropped key) ⇒
 //!      `Accept`.
-//!   4. UNAPPROVED + DIFFERENT ACCEPTS IMMEDIATELY — `Accept`, no confirmation.
-//!   5. APPROVED + DIFFERENT NEEDS CONFIRMATION — `NeedsConfirmation`; the ONLY outcome that asks.
+//!   4. UNPINNED + DIFFERENT ACCEPTS IMMEDIATELY — `Accept`, no confirmation.
+//!   5. PINNED + DIFFERENT NEEDS CONFIRMATION — `NeedsConfirmation`; the ONLY outcome that asks.
 
 use serde::{Deserialize, Serialize};
 
@@ -30,9 +33,9 @@ use serde::{Deserialize, Serialize};
 pub enum RepairDropOutcome {
     /// Drop the already-selected audio — nothing changes.
     NoOp,
-    /// Replace immediately (unresolved, or an unapproved couple with a new source).
+    /// Replace immediately (unresolved, or an unpinned couple with a new source).
     Accept,
-    /// Replacing an APPROVED couple — confirm first, then replace on confirm.
+    /// Replacing a PINNED couple (a manual pick, D9) — confirm first, then replace on confirm.
     NeedsConfirmation,
     /// No selected couple, a non-audio payload, or an unavailable video — ignore the drop.
     Reject,
@@ -53,7 +56,8 @@ pub struct Request {
     pub current_selected_key: Option<String>,
     /// The dragged audio's content key.
     pub dropped_key: String,
-    /// The couple is approved (≡ queued for export).
+    /// The couple is PINNED (a manual pick). Since PLAN-COMPACT-MODE D9 this input carries
+    /// `pinned`, not approval/inclusion; the wire key name is kept until Phase 6 (D12).
     pub approved: bool,
 }
 
@@ -77,15 +81,15 @@ fn decide_outcome(req: &Request) -> RepairDropOutcome {
     if !(req.has_selected_couple && req.payload_is_audio && req.video_available) {
         return RepairDropOutcome::Reject;
     }
-    // (2) Re-dropping the already-selected source changes nothing (independent of approval).
+    // (2) Re-dropping the already-selected source changes nothing (independent of the pin).
     if req.current_selected_key.as_deref() == Some(req.dropped_key.as_str()) {
         return RepairDropOutcome::NoOp;
     }
-    // (3)/(4) A new source on an unresolved or unapproved couple replaces immediately.
+    // (3)/(4) A new source on an unresolved or unpinned couple replaces immediately.
     if !req.approved {
         return RepairDropOutcome::Accept;
     }
-    // (5) A new source on an APPROVED couple removes it from the export queue, so confirm first.
+    // (5) A new source on a PINNED couple discards a deliberate manual pick, so confirm first (D9).
     RepairDropOutcome::NeedsConfirmation
 }
 
@@ -144,7 +148,7 @@ mod tests {
         .outcome
     }
 
-    // (1)/(2) Dropping the already-selected source ⇒ NoOp, regardless of approval.
+    // (1)/(2) Dropping the already-selected source ⇒ NoOp, regardless of the pin.
     #[test]
     fn dropping_current_source_is_no_op() {
         assert_eq!(d(true, true, true, Some("x"), "x", false), RepairDropOutcome::NoOp);
@@ -157,15 +161,15 @@ mod tests {
         assert_eq!(d(true, true, true, None, "new", false), RepairDropOutcome::Accept);
     }
 
-    // (4) An unapproved couple with a different source replaces immediately.
+    // (4) An unpinned couple with a different source replaces immediately.
     #[test]
-    fn unapproved_different_source_accepts_immediately() {
+    fn unpinned_different_source_accepts_immediately() {
         assert_eq!(d(true, true, true, Some("old"), "new", false), RepairDropOutcome::Accept);
     }
 
-    // (5) An approved couple with a different source needs confirmation.
+    // (5) A pinned couple (D9; `approved` carries `pinned`) with a different source needs confirmation.
     #[test]
-    fn approved_different_source_needs_confirmation() {
+    fn pinned_different_source_needs_confirmation() {
         assert_eq!(
             d(true, true, true, Some("old"), "new", true),
             RepairDropOutcome::NeedsConfirmation
