@@ -345,7 +345,7 @@ re-import, not a state restore — offering "undo" there would either lie or blo
 
 ## TODO-016: Compact arrangement and include-for-export model
 
-**Status:** Done — Phases 0–6 shipped 2026-11-05 on `claude/minimal-compact-ui-963b4a` (plan archived to `docs/archive/PLAN-COMPACT-MODE.md`). Still open before merge to main: the realdata verdict check (Phase 0 step 1) and a live look at the animated switch.  
+**Status:** Done — Phases 0–6 shipped 2026-11-05 (branch `feature/compact-mode`, merged to main 2026-11-05; plan archived to `docs/archive/PLAN-COMPACT-MODE.md`). The Phase 0 realdata verdict check was deferred by owner decision at merge time — tracked as TODO-017.  
 **Type:** Feature  
 **Area:** Shell (mac first, Electron in Phase 6)
 
@@ -376,3 +376,55 @@ realdata verdict check must pass before Phase 1 ships.
 
 Supersedes parts of UX V2.1–V2.5 (SPEC-CHANGE entries in Phase 0). Interacts
 with TODO-015 undo (include toggle keeps its undo case).
+
+---
+
+## TODO-017: Run the realdata verdict check for include-for-export
+
+**Status:** Ready — owner-only (needs the owner's real sessions; no media on CI or in the repo)  
+**Type:** Verification  
+**Area:** Core matcher thresholds (`core/src/sync.rs` [TUNE] lines, `matching_evidence.rs`)
+
+### Motivation
+
+Since TODO-016 (UX §V2.12 / SPEC-CHANGE D1, 2026-11-05) the **good** verdict is
+the only gate before a file leaves the app: "Export N files" writes every
+included couple, and a couple is included by default whenever its verdict is
+good. The plan required one measurement on real recordings before shipping
+that (PLAN-COMPACT-MODE §2 caveat, Phase 0 step 1). It could not run during
+the build because that machine had no owner media, and the owner chose on
+2026-11-05 to merge with the gate deferred and assume the matcher holds. The
+PROGRESS.md Phase 0 entry still carries the **OUTSTANDING GATE** note.
+
+### Current behavior
+
+Only the synthetic corpus (`fixtures/matcher-corpus/`, ROC gate) backs the
+frozen thresholds. No per-class verdict counts on the owner corpus have been
+recorded since the include model shipped.
+
+### Proposed solution
+
+1. Put the real session folders under one parent directory (each session folder
+   = the camera videos and recorder files of one event; include several ordinary
+   sessions, at least one multi-take session, and ideally a video with no
+   recorder audio).
+2. `COUPLE_REALDATA_DIR=/path/to/sessions scripts/realdata-sweep.sh` from the
+   repo root (ffmpeg on PATH; first run imports everything, later runs are warm).
+3. Read `realdata-report.md`: §2 "over the line" / not-synced counts for true
+   couples, and the ⚠ cross-cell `match` warning (the §3.5 different-take
+   hazard).
+4. Record the counts in PROGRESS.md under the Phase 0 OUTSTANDING GATE note and
+   mark the gate closed.
+
+### Acceptance criteria
+
+- Every true pair on the owner corpus is good (0 over the line, 0 not synced).
+- 0 non-selected cells classify as `match`.
+- Counts recorded in PROGRESS.md; this item set to Done.
+- If either count is non-zero: stop, recalibrate per
+  `fixtures/matcher-corpus/CALIBRATION.md` §6–7 through the SPEC-CHANGE
+  protocol, and re-run before relying on compact export for real work.
+
+### Dependencies
+
+TODO-016 (shipped). `scripts/realdata-sweep.sh` (PLAN-REALDATA-CALIBRATION F4).

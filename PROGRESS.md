@@ -1412,6 +1412,10 @@ MUST land in this entry, before Phase 1 merges to main. If a true pair lands
 in "questionable" or a wrong take lands in "good", stop and recalibrate first
 (`fixtures/matcher-corpus/CALIBRATION.md` §6–7).
 
+**2026-11-05 (merge):** the owner merged `feature/compact-mode` to main with this
+gate still open, choosing to assume the matcher holds for now. The check is
+tracked as TODO-017 (owner-only); its counts land here when it runs.
+
 SPEC-CHANGE (2026-11-05) [D1]: SPEC-V2 §2 item 4 ("Verified ≡ queued", one
 opt-in flag, "Export n verified") and UX §V2.5 ("Approve ≡ queued") are
 superseded by **include-for-export**. A couple is **included** in the export
