@@ -153,6 +153,7 @@ if [ "$RUN_MAC" = 1 ]; then
     exec "$REPO/mac/.build/release/Couple"
   ) >"$LOG_DIR/mac.log" 2>&1 &
   MAC_PID=$!
+  disown "$MAC_PID" # no "Terminated" job notice when cleanup kills it
 fi
 
 if [ "$RUN_ELECTRON" = 1 ]; then
@@ -167,6 +168,7 @@ if [ "$RUN_ELECTRON" = 1 ]; then
     exec npx electron-vite dev
   ) >"$LOG_DIR/electron.log" 2>&1 &
   EL_PID=$!
+  disown "$EL_PID"
 fi
 
 alive() { kill -0 "$1" 2>/dev/null; }
