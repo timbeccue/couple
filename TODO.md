@@ -340,3 +340,39 @@ re-import, not a state restore — offering "undo" there would either lie or blo
 - Undo of a re-pair whose prior audio was since removed shows a toast and changes
   nothing.
 - Media removal and Clear Session behavior unchanged (confirmations, no undo).
+
+---
+
+## TODO-016: Compact arrangement and include-for-export model
+
+**Status:** Ready  
+**Type:** Feature  
+**Area:** Shell (mac first, Electron in Phase 6)
+
+### Motivation
+
+Auto-sync is reliable enough that the owner rarely opens the loupes or the
+overview; the three-column window is more than the common run needs. The
+approve step never required listening, so it was bookkeeping, not a check.
+
+### Current behavior
+
+Approve ≡ queued (SPEC-V2 §2 item 4, UX V2.5); three queue sections; rows show
+a verdict dot and a coverage strip; one window arrangement.
+
+### Proposed solution
+
+`PLAN-COMPACT-MODE.md` — one window with a compact and a full arrangement,
+animated toggle, included-by-default export with an opt-out checkbox, dot-free
+rows, a two-lane waveform seek strip, candidate audition at best fit. Design
+record: `design/mockups-compact/README.md` (direction D, rounds 3–5).
+
+### Acceptance criteria
+
+The plan's per-phase acceptance lines and §5 verification matrix. Phase 0's
+realdata verdict check must pass before Phase 1 ships.
+
+### Dependencies
+
+Supersedes parts of UX V2.1–V2.5 (SPEC-CHANGE entries in Phase 0). Interacts
+with TODO-015 undo (include toggle keeps its undo case).

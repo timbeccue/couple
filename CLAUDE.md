@@ -32,6 +32,10 @@ rename them.
   core; presentation lives in the shell"). Phases A–F shipped; Phase G (new
   shells) started 2026-07-04 via the `electron/` shell. Stays in root while
   Phase G is in progress.
+- `PLAN-COMPACT-MODE.md` — implementation plan (2026-11-05, not started) for
+  the compact arrangement + include-for-export model designed in
+  `design/mockups-compact/` (direction D). Phases 0–6; stays in root until
+  Phase 6 ships.
 - `docs/LICENSING.md` — third-party licensing record: the ffmpeg LGPL rule
   (what a distributable build may contain, how `fetch-ffmpeg.sh` enforces it),
   the obligations each release must meet, Electron bundling rules, and the
@@ -74,7 +78,9 @@ rename them.
   `package-lock.json` change. Both bundles copy it to their `Licenses/` folder.
 - `scripts/`, `fixtures/` (test corpora; media gitignored, manifests tracked),
   `example_data/` (owner-local media, optional), `design/` (mockups v1+v2 — both
-  live; v2 is queue-scope, not a replacement; `logo/` = final logo SVGs + `Couple.icns`
+  live; v2 is queue-scope, not a replacement; `mockups-compact/` = the 2026-11-04
+  compact-mode prototypes, direction D chosen — serve with `.claude/launch.json`
+  "mockups" or `python3 -m http.server 8742` from the repo root; `logo/` = final logo SVGs + `Couple.icns`
   + the wordmark font (Nunito, OFL, in `logo/fonts/`), regen per
   `design/logo/README.md` — `outline-uple.py` writes both wordmark SVGs and
   `mac/.../CoupleWordmarkGlyphs.swift` (generated; the app draws the lockup natively,
