@@ -51,7 +51,7 @@ export function SessionLine({ compact }: { compact: boolean }): React.JSX.Elemen
     return (
       <div className="rail-header session-line">
         <div className="rail-header-top">
-          <CoupleWordmark height={12} />
+          <CoupleWordmark height={15} />
           <span className="session-spacer" />
           {/* Clear Session (TODO-001): returns to the import screen; confirms with
               media/couple/included counts; disabled mid-export (the batch owns the files). */}

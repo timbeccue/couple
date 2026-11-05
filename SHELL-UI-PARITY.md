@@ -27,7 +27,7 @@ Legend: [source] = the reference implementation a port must read.
   arrangement this header is the session line (see Compact arrangement).
   [QueueRail.swift header → SessionLine.swift after Phase 4; Electron:
   SessionLine.tsx]
-- Brand wordmark in the header: the interlocked teal-C / amber-O mark at 12pt
+- Brand wordmark in the header: the interlocked teal-C / amber-O mark at 15pt
   height followed by "UPLE", baseline-aligned beside "Clear Session…"; one
   accessible element labelled "Couple" with the decorative drawing hidden from
   assistive tech. Art = design/logo/couple-wordmark.svg (dark-surface variant;
@@ -140,7 +140,7 @@ Legend: [source] = the reference implementation a port must read.
   drag-start alignment; gated ONLY by inputsEnabled; editing never un-verifies.
   [WaveformStage.swift, InputRouter.swift]
 - Anchors: auto-proposal + "+ anchor" via anchor policy, onset snap, drag to
-  move; loupes on demand (◫): additive blend, local Δ readout, ⇥ align,
+  move; loupes on demand (the tool-bar button; SF Symbol rectangle.split.3x1, an SVG twin in Electron): additive blend, local Δ readout, ⇥ align,
   pivot-about-anchor. [LoupeView.swift, AnchorProposal usage in PairSession.swift]
 - FIT-QUALITY SPARKLINE always visible with the sync readouts: measured-span
   x-domain (m:ss corner labels), accepted lag points, rejected-window baseline

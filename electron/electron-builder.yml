@@ -27,6 +27,15 @@ extraResources:
   # and LICENSES.chromium.html at the resources root by itself.
   - from: ../third-party
     to: Licenses
+  # Runtime window/taskbar icon for Linux (BrowserWindow({ icon }) in
+  # src/main/index.ts); macOS and Windows take theirs from the bundle/exe.
+  - from: build/icon.png
+    to: icon.png
+# App icons: electron-builder's default lookup is build/icon.{icns,ico,png}, so
+# no per-platform `icon:` keys are needed. build/icon.icns is a copy of
+# design/logo/Couple.icns; build/icon.ico (16/32/48/256) and build/icon.png
+# (1024, the Linux set is derived from it) are rendered from
+# design/logo/couple-appicon.svg — regen commands in design/logo/README.md.
 mac:
   target: dmg
   category: public.app-category.video

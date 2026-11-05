@@ -51,6 +51,17 @@ function licensesDir(): string {
     : join(__dirname, '..', '..', '..', 'third-party');
 }
 
+function windowIcon(): string | undefined {
+  // macOS and Windows take the window/dock/taskbar icon from the bundle/exe
+  // (electron-builder's build/icon.{icns,ico}); only Linux needs one on the
+  // BrowserWindow. Dev: the repo's electron/build/icon.png (the main bundle
+  // runs from out/main). Packaged: resources/icon.png (extraResources).
+  if (process.platform !== 'linux') return undefined;
+  return app.isPackaged
+    ? join(process.resourcesPath, 'icon.png')
+    : join(__dirname, '..', '..', 'build', 'icon.png');
+}
+
 /** Application menu: the defaults by role, with About routed to the
  * renderer's own panel (which links to Acknowledgements) instead of the
  * native about box, and Acknowledgements listed under Help as well. */
@@ -392,6 +403,7 @@ function createWindow(): void {
     minHeight: limits.min[1],
     ...(limits.max[0] > 0 ? { maxWidth: limits.max[0] } : {}),
     backgroundColor: '#161719',
+    icon: windowIcon(),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       // Local-only app, no remote content: the renderer hosts the engine so

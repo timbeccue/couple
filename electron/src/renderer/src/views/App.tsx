@@ -220,13 +220,10 @@ export function App(): React.JSX.Element {
             color: 'rgba(216, 218, 222, 0.32)',
           }}
         >
-          j/k move · space play · ⚙ sync tools · ◫ loupes · a camera/external · b both · esc stop · ⌘⇧C compact
+          j/k move · space play · ⏎ sync tools · l loupes · a camera/external · b both · esc stop · ⌘⇧C compact
           <span style={{ marginLeft: 24 }}>
             ←/→ offset 1 ms · ⇧ 10 · ⌥ 0.1 · [ ] drift · drag loupe = offset · ⇧-drag = pivot
           </span>
-        </span>
-        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'rgba(216, 218, 222, 0.32)' }}>
-          waveforms render real peak data
         </span>
       </div>
       )}
