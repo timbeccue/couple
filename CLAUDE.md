@@ -161,6 +161,18 @@ rename them.
   rescue automatically (`policy/sync_seed.rs` decides); CLI opt-in via
   `couple sync --seed-lag-ms=<ms>`. Unseeded behavior is byte-identical.
 - `COUPLE_DEVHARNESS` (env) + `-DCOUPLE_DEVHARNESS` (compile flag) — dev harness.
+- Mac window arrangement (UX §V2.11, PLAN-COMPACT-MODE Phase 4): **compact** or
+  **full**, toggled by ⤢ Full / ⤡ Compact on the session line or View ▸ Compact
+  Window / Full Window (⌘⇧C). Persisted in UserDefaults
+  `com.timbeccue.couple.layoutMode` (absent ⇒ **compact**) plus each
+  arrangement's last frame (`com.timbeccue.couple.windowFrame.{compact,full}`);
+  compact width is clamped 340–420, height min 560. Every dev-harness case forces
+  **full** (and never writes these defaults) except `COUPLE_COMPACT_TEST` (with
+  `COUPLE_PAIR_DIR` [+ `COUPLE_SHOT_DIR`]: clamps + compact-{empty,synced,noaudio,
+  pick,exporting} shots) and `COUPLE_LAYOUT_TOGGLE_TEST` (with `COUPLE_PAIR_DIR`:
+  toggles while playing; selection, playhead, inclusion, per-arrangement frames
+  and the Pan→Synced→Pan monitor round-trip), which start compact. Other Phase
+  1–3 keys: `COUPLE_INCLUDE_TEST`, `COUPLE_CAND_AUDITION_TEST`.
 - `COUPLE_LICENSES_DIR` — overrides where the Acknowledgements view looks for
   the Licenses folder (both shells; a bare `swift build` run has no bundle —
   point it at `third-party/`). Electron main also sets it, plus

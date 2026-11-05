@@ -82,7 +82,14 @@ final class DebugDrive {
             || env["COUPLE_REMOVE_TEST"] != nil || env["COUPLE_ANCHOR_TEST"] != nil
             || env["COUPLE_ACTIVITY_TEST"] != nil || env["COUPLE_OVERVIEW_TEST"] != nil
             || env["COUPLE_MONITOR_TEST"] != nil || env["COUPLE_INCLUDE_TEST"] != nil
-            || env["COUPLE_CAND_AUDITION_TEST"] != nil else { return }
+            || env["COUPLE_CAND_AUDITION_TEST"] != nil || env["COUPLE_COMPACT_TEST"] != nil
+            || env["COUPLE_LAYOUT_TOGGLE_TEST"] != nil else { return }
+        // PLAN-COMPACT-MODE Phase 4: every harness case drives the FULL arrangement
+        // (they assume the overview / loupe rects) — except the two compact cases,
+        // which start compact. Forced here, before the window exists, and the run
+        // never writes the arrangement or frames to the defaults domain.
+        let compactRun = env["COUPLE_COMPACT_TEST"] == "1" || env["COUPLE_LAYOUT_TOGGLE_TEST"] == "1"
+        model.forceLayoutForHarness(compactRun ? .compact : .full)
         Task { await run(env: env) }
     }
 
@@ -121,6 +128,10 @@ final class DebugDrive {
         if let dir = env["COUPLE_SHOT_DIR"] {
             try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
             capture(to: "\(dir)/00-launch-empty.png")
+            if env["COUPLE_COMPACT_TEST"] == "1" {
+                capture(to: "\(dir)/compact-empty.png")
+                print("COMPACT-TEST: screenshot \(dir)/compact-empty.png")
+            }
         }
         // v2: everything imports into the media pool, then resolves into couples.
         // COUPLE_PAIR_DIR drives the whole-session queue gates; the single
@@ -142,7 +153,9 @@ final class DebugDrive {
         }
         try? await Task.sleep(nanoseconds: 700_000_000) // settle/render
 
-        if let dir = env["COUPLE_SHOT_DIR"] {
+        // The full-arrangement shot sequence (loupes, overview); the compact cases
+        // take their own shots instead.
+        if let dir = env["COUPLE_SHOT_DIR"], model.layoutMode == .full {
             try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
             await shoot(dir: dir)
         }
@@ -182,10 +195,234 @@ final class DebugDrive {
         if env["COUPLE_CAND_AUDITION_TEST"] == "1" {
             await candidateAuditionTest(shotDir: env["COUPLE_SHOT_DIR"])
         }
+        if env["COUPLE_LAYOUT_TOGGLE_TEST"] == "1" {
+            await layoutToggleTest()
+        }
+        if env["COUPLE_COMPACT_TEST"] == "1" {
+            await compactTest(shotDir: env["COUPLE_SHOT_DIR"])
+        }
         if env["COUPLE_AUTOQUIT"] == "1" {
             print("DEBUG-DRIVE: done, quitting")
             NSApp.terminate(nil)
         }
+    }
+
+    // MARK: - Compact arrangement (PLAN-COMPACT-MODE Phase 4 step 7)
+
+    /// Wait for resolve + every queued sync to settle (shared by the compact cases).
+    private func settleQueue() async {
+        guard let model else { return }
+        for _ in 0..<3000 {
+            let pending = model.couples.contains { $0.pair.session != nil && $0.pair.isSyncRunning }
+            if !model.resolving && !pending { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+    }
+
+    /// COUPLE_COMPACT_TEST=1 with COUPLE_PAIR_DIR (+ COUPLE_SHOT_DIR for shots): the
+    /// compact arrangement over a real session. Asserts the arrangement and the
+    /// window clamps (width 340–420, height ≥ 560), then shoots a Ready row
+    /// ("compact-synced"), the no-audio row ("compact-noaudio"), the two-sources
+    /// row with its candidate list inline ("compact-pick") and a batch export in
+    /// flight ("compact-exporting"). `compact-empty` is shot before the import.
+    private func compactTest(shotDir: String?) async {
+        guard let model else { return }
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("COMPACT-TEST \(ok ? "PASS" : "FAIL") \(name)")
+        }
+        func shot(_ name: String) {
+            guard let dir = shotDir else { return }
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            capture(to: "\(dir)/\(name).png")
+            print("COMPACT-TEST: screenshot \(dir)/\(name).png")
+        }
+        await settleQueue()
+        check("arrangement is compact", model.layoutMode == .compact)
+        if let w = model.window {
+            let f = w.frame
+            let minC = w.contentMinSize, maxC = w.contentMaxSize
+            print(String(format: "COMPACT-TEST: window frame %.0f×%.0f · content min %.0f×%.0f · content max width %.0f",
+                         f.width, f.height, minC.width, minC.height, min(maxC.width, 99999)))
+            check("window width within 340–420", f.width >= 340 - 0.5 && f.width <= 420 + 0.5)
+            check("window height ≥ 560", f.height >= 560 - 0.5)
+            check("window resize limits: width 340–420, min height 560",
+                  abs(minC.width - 340) < 0.5 && abs(maxC.width - 420) < 0.5 && minC.height >= 560 - 0.5)
+        } else {
+            print("COMPACT-TEST: SKIPPED frame checks (no hosting window attached)")
+        }
+
+        // A Ready row → the synced preview.
+        if let ready = model.ready.first {
+            model.select(ready.id)
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            check("Ready row selected and previewed (\(ready.video.name))",
+                  model.selectedID == ready.id && model.audition.isAttached)
+            check("compact picker shows the mode as one of Camera · Synced · External",
+                  MonitorPicker.compactCases.contains(MonitorPicker.compactSegment(for: model.audition.monitorMode)))
+            shot("compact-synced")
+        } else {
+            check("a Ready row exists", false)
+        }
+
+        // The no-audio row → the one-line "No matching audio … Choose file…".
+        if let none = model.couples.first(where: { $0.state == .noMatch }) {
+            model.select(none.id)
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            check("no-audio row selected (\(none.video.name)); one-line variant applies",
+                  model.selectedID == none.id && none.candidates.isEmpty)
+            shot("compact-noaudio")
+        } else {
+            print("COMPACT-TEST: SKIPPED no-audio shot (no no-match couple)")
+        }
+
+        // The two-sources row → its candidate list inline under the player.
+        if let two = model.couples.first(where: { $0.selectedAudioKey != nil && !$0.alternates.isEmpty })
+            ?? model.couples.first(where: { $0.candidates.count >= 2 }) {
+            model.select(two.id)
+            if two.pinned && two.selectedAudioKey != nil { model.compareCoupleID = two.id }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            check("two-sources row shows its candidate list inline (\(two.video.name), \(two.candidates.count) candidates)",
+                  two.needsResolve || model.compareCoupleID == two.id)
+            shot("compact-pick")
+        } else {
+            print("COMPACT-TEST: SKIPPED pick shot (no couple with alternates)")
+        }
+
+        // Batch export in flight.
+        if model.includedCount > 0 {
+            let outDir = NSTemporaryDirectory() + "couple-compact-test-\(ProcessInfo.processInfo.processIdentifier)"
+            try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+            model.exportDestination = URL(fileURLWithPath: outDir)
+            if let ready = model.ready.first { model.select(ready.id) }
+            let n = model.includedCount
+            model.batch.run()
+            var sawRunning = false
+            for _ in 0..<100 {
+                if case .running = model.batch.phase { sawRunning = true; break }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            let stillRunning = model.batch.isRunning
+            shot("compact-exporting")
+            print("COMPACT-TEST: export shot taken \(stillRunning ? "mid-run" : "after the batch finished")")
+            check("batch export ran (\(n) included)", sawRunning || !stillRunning)
+            for _ in 0..<1200 {
+                if !model.batch.isRunning { break }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            if case .finished(let exported, let failed) = model.batch.phase {
+                check("batch finished: \(exported) exported, \(failed) failed", exported == n && failed == 0)
+            } else {
+                check("batch finished", false)
+            }
+            check("arrangement still compact after export", model.layoutMode == .compact)
+        }
+        print("COMPACT-TEST summary: \(pass) passed, \(fail) failed")
+    }
+
+    /// COUPLE_LAYOUT_TOGGLE_TEST=1 with COUPLE_PAIR_DIR: play a Ready row, then
+    /// toggle compact → full → compact → full and assert at each step: selection
+    /// unchanged, playhead advanced (never reset), inclusion flags unchanged, the
+    /// window restored to each arrangement's last frame, and the monitor mode round-
+    /// trips Pan (full) → Synced (compact) → Pan (full) (D10).
+    private func layoutToggleTest() async {
+        guard let model else { return }
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("LAYOUT-TOGGLE-TEST \(ok ? "PASS" : "FAIL") \(name)")
+        }
+        func near(_ a: NSRect, _ b: NSRect) -> Bool {
+            abs(a.minX - b.minX) < 1 && abs(a.minY - b.minY) < 1
+                && abs(a.width - b.width) < 1 && abs(a.height - b.height) < 1
+        }
+        func fs(_ r: NSRect) -> String { String(format: "%.0f,%.0f %.0f×%.0f", r.minX, r.minY, r.width, r.height) }
+        await settleQueue()
+        guard let ready = model.ready.first(where: { $0.pair.session != nil }) else {
+            print("LAYOUT-TOGGLE-TEST: SKIPPED (no Ready couple with a session)")
+            print("LAYOUT-TOGGLE-TEST summary: 0 passed, 0 failed")
+            return
+        }
+        check("starts compact", model.layoutMode == .compact)
+        model.select(ready.id)
+        try? await Task.sleep(nanoseconds: 600_000_000)
+        let inclusion = Dictionary(uniqueKeysWithValues: model.couples.map { ($0.id, "\($0.included)/\(String(describing: $0.explicit))") })
+        func inclusionUnchanged() -> Bool {
+            model.couples.allSatisfy { inclusion[$0.id] == "\($0.included)/\(String(describing: $0.explicit))" }
+        }
+        let a = model.audition
+        a.play(from: 2)
+        for _ in 0..<100 {
+            if a.isPlaying || a.audioUnavailable { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 800_000_000)
+        let playing = a.isPlaying
+        print("LAYOUT-TOGGLE-TEST: playing=\(playing) audioUnavailable=\(a.audioUnavailable)")
+        var lastT = a.playheadT
+        // Playhead: advanced while playing; at minimum never reset to 0 by a switch.
+        func playheadOK() -> Bool {
+            let t = a.playheadT
+            defer { lastT = t }
+            return playing ? t > lastT : (t >= lastT - 1e-6 && t > 0)
+        }
+        let win = model.window
+        let c0 = win?.frame ?? .zero
+
+        model.setLayoutMode(.full)
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        check("→ full: arrangement full", model.layoutMode == .full)
+        check("→ full: selection unchanged", model.selectedID == ready.id)
+        check(String(format: "→ full: playhead advanced (%.2f s)", a.playheadT), playheadOK())
+        check("→ full: still playing", a.isPlaying == playing)
+        check("→ full: inclusion unchanged", inclusionUnchanged())
+        if let w = win {
+            check("→ full: window ≥ 640 wide (\(fs(w.frame)))", w.frame.width >= 640 - 0.5)
+            // A distinctive full frame so the restore is meaningful.
+            let f1 = NSRect(x: w.frame.minX, y: w.frame.maxY - 760, width: 1100, height: 760)
+            w.setFrame(f1, display: true)
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
+        let f1 = win?.frame ?? .zero
+        a.selectMonitor(.pan)
+        check("full: monitor set to Pan L/R", a.monitorMode == .pan)
+
+        model.setLayoutMode(.compact)
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        check("→ compact: arrangement compact", model.layoutMode == .compact)
+        check("→ compact: selection unchanged", model.selectedID == ready.id)
+        check(String(format: "→ compact: playhead advanced (%.2f s)", a.playheadT), playheadOK())
+        check("→ compact: inclusion unchanged", inclusionUnchanged())
+        check("→ compact: Pan heard and shown as Synced (overlay)",
+              a.monitorMode == .overlay && MonitorPicker.compactSegment(for: a.monitorMode) == .overlay)
+        if let w = win {
+            check("→ compact: last compact frame restored (\(fs(w.frame)) vs \(fs(c0)))", near(w.frame, c0))
+            check("→ compact: width within 340–420", w.frame.width >= 339.5 && w.frame.width <= 420.5)
+        } else {
+            print("LAYOUT-TOGGLE-TEST: SKIPPED frame checks (no hosting window attached)")
+        }
+
+        model.setLayoutMode(.full)
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        check("→ full again: monitor back to Pan L/R", a.monitorMode == .pan)
+        check("→ full again: selection unchanged", model.selectedID == ready.id)
+        check(String(format: "→ full again: playhead advanced (%.2f s)", a.playheadT), playheadOK())
+        check("→ full again: inclusion unchanged", inclusionUnchanged())
+        if let w = win {
+            check("→ full again: last full frame restored (\(fs(w.frame)) vs \(fs(f1)))", near(w.frame, f1))
+        }
+
+        model.setLayoutMode(.compact)
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        if let w = win {
+            check("→ compact again: last compact frame restored (\(fs(w.frame)))", near(w.frame, c0))
+        }
+        check("→ compact again: selection + inclusion unchanged",
+              model.selectedID == ready.id && inclusionUnchanged())
+        a.pause()
+        print("LAYOUT-TOGGLE-TEST summary: \(pass) passed, \(fail) failed")
     }
 
     // MARK: - Candidate audition (PLAN-COMPACT-MODE Phase 3 step 5)
@@ -731,6 +968,9 @@ final class DebugDrive {
         }
         let exportedOK = batch.filter { if case .done = $0.exportStatus { return true } else { return false } }
         check("(3) batch finished with every included couple exported", exportedOK.count == batch.count)
+        for c in batch where exportedOK.first(where: { $0.id == c.id }) == nil {
+            print("INCLUDE-TEST:   not done: \(c.video.name) status=\(c.exportStatus) exportedAt=\(String(describing: c.exportedAt))")
+        }
         check("(3) exportedAt stamped on every exported couple", exportedOK.allSatisfy { $0.exportedAt != nil })
         check("(3) explicit untouched by the export",
               target.explicit == true && batch.filter { $0.id != target.id }.allSatisfy { $0.explicit == nil })

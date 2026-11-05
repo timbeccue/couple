@@ -51,6 +51,20 @@ final class InputRouter {
         guard !isEditingText else { return false }
         let mods = event.modifierFlags
         let chars = event.charactersIgnoringModifiers ?? ""
+        // Compact arrangement (UX §V2.11): the overview, loupes and nudge surfaces
+        // are absent, so ←/→ nudges, [ ] drift, l (loupes) and ⌘0 (overview fit) are
+        // no-ops; Return switches to full with the selected couple's editor open.
+        let compact = model.layoutMode == .compact
+        if compact {
+            if mods.contains(.command) { return false }
+            switch event.keyCode {
+            case 123, 124: return true          // ←/→ offset nudge: no-op
+            case 36, 76: model.openFullEditor(); return true
+            case 51, 117: return false          // Delete: the media pool is not shown
+            default: break
+            }
+            if chars == "[" || chars == "]" || chars == "l" { return true }
+        }
 
         // ⌘0 (TODO-010): fit the overview back to the full union. Guarded by the
         // text-edit check above so it never fires mid-rename; only meaningful with a

@@ -230,11 +230,15 @@ windows.
   fade in after; instant under Reduce Motion. Selection, playhead, playback
   and inclusion survive the switch (players are owned by controllers, not
   views). Default compact on the first launch after the update, then
-  last-used. [CoupleApp.swift WindowAccessor, AppModel.swift layoutMode,
-  RootView.swift, SessionLine.swift]
+  last-used. [Views/WindowAccessor.swift, WindowLayout.swift (AppModel
+  setLayoutMode / applyWindowLayout / frames), AppModel.swift layoutMode,
+  CoupleApp.swift LayoutCommands (⌘⇧C), RootView.swift, SessionLine.swift
+  ArrangementToggle]
 - Session line: session identity + media counts, "+ Add" (the ONLY media-pool
   affordance in compact — the pool list, its sticky player and the unused-file
-  info are full-arrangement surfaces), "⤢ Full". [SessionLine.swift]
+  info are full-arrangement surfaces), "⤢ Full"; Clear Session… in its context
+  menu. [Views/SessionLine.swift (compact: true; the full rail's header is the
+  same view)]
 - Fixed preview block (top; never scrolls with the list), for the selected
   couple: the video (muted, slaved to the audition clock as in the hero);
   the two-lane WAVEFORM SEEK STRIP under it — camera lane (teal) above,
@@ -243,25 +247,30 @@ windows.
   elsewhere, playhead, click/drag seeks (scrub, never snap); the monitor
   picker Camera · Synced · External (Synced = Overlay; a remembered Pan L/R
   both-mode is presented as Synced; `a`/`b` work as in full; the decision
-  stays in core policy::monitor); one tertiary line "offset · fit".
-  [PairPreview.swift, PairStrip.swift (both arrangements), EditorComponents.swift
-  monitor picker, AuditionController.swift]
+  stays in core policy::monitor; a Pan selected in full is heard as Synced
+  while compact and restored on returning to full — AppModel.setLayoutMode);
+  one tertiary line "offset · fit".
+  [Views/PairPreview.swift (compact: true) + OffsetFitLine, EditorComponents.swift
+  VideoHero(compact:) + MonitorPicker(compact:), PairStrip.swift (both
+  arrangements), AuditionController.swift]
 - "Pick one" couple: the video plus the compact candidate picker — each
   candidate with its relative strength bar, "▶" = AUDITION AT BEST FIT (plays
   the video with that audio at the candidate's best-fit lag in a scratch
   session before anything is pinned; readout "▶ <file> at best fit · offset ·
   fit"; "■" or selecting another row stops it; the strip's amber lane redraws
   with that candidate's coverage), "use" = manual pin + re-sync (undoable).
-  [CenterColumn.swift ResolveBanner, PairPreview.swift, AuditionController.swift,
-  Resolver.swift]
+  [PairPreview.swift ResolveBanner (inline, both arrangements),
+  AuditionController.swift, Resolver.swift]
 - After a manual pick: "Change…" link in the preview title; the line "Audio
   chosen by you · Undo · Compare others" — Undo = the ⌘Z inverse (couple
   returns to To fix); Compare others = the same candidate list reopened
   INLINE under the video with the current candidate marked (no popover,
-  nothing floats over content). [PairPreview.swift, CenterColumn.swift
-  ResolveBanner, AppModel.swift RepairSnapshot]
+  nothing floats over content). [PairPreview.swift titleLine /
+  PreviewStatusLine / ResolveBanner, AppModel.swift compareCoupleID +
+  RepairSnapshot]
 - "No audio" couple: one line "No matching audio in this session · Choose
-  file…" (file picker → manual pair). [PairPreview.swift]
+  file…" (file picker → manual pair). [PairPreview.swift NoAudioLine,
+  WindowLayout.swift AppModel.pairWithChosenFile]
 - Couple list (only the rows scroll): sections To fix (HIDDEN when empty) /
   Ready; row = thumbnail, video name + duration, audio name OR the action
   word ("pick one" red / "no audio" grey / "syncing…"), 📌 on a manual pick,
@@ -273,16 +282,19 @@ windows.
   Auto/MOV/MP4/WAV; "keep camera audio as a muted track"; "Export N files"
   (N = included; disabled at 0); after an export, "Reveal in Finder". No
   Files list and no per-file naming in compact (default `<stem>_synced`).
-  [ExportPanel.swift (also the full arrangement's right rail), BatchExport.swift]
+  [Views/ExportPanel.swift (also the top of the full arrangement's ExportRail),
+  BatchExport.swift]
 - Empty session: the drop target (drop zone + "Choose files…") fills the
   preview block; the list shows its empty Ready section; the export panel
-  stays pinned. [CompactLayout.swift, LoadSurface.swift]
+  stays pinned. [Views/CompactLayout.swift, LoadSurface.swift (compact: true)]
 - Activity strip (import → match → sync → export progress) along the bottom,
-  same policy and placement rule as the full arrangement. [ActivityStrip.swift
-  controller; ActivityStripView in RootView.swift]
+  same policy and placement rule as the full arrangement; no footer cheat line
+  in compact. [ActivityStrip.swift controller; ActivityStripView in
+  RootView.swift, placed by CompactLayout.swift]
 - Keys in compact: j/k select, space play/pause, Return = switch to full with
   the selected couple's editor open, esc, a/b monitor; nudges, [ ], l are
-  no-ops (their surfaces are absent). [InputRouter.swift]
+  no-ops (their surfaces are absent), as are ⌘0 and Delete (no overview / no
+  pool list). [InputRouter.swift handleKey, WindowLayout.swift openFullEditor]
 - Dev harness: every existing COUPLE_*_TEST forces the full arrangement
   before driving; COUPLE_COMPACT_TEST (empty / synced / pick-one / exporting
   shots), COUPLE_LAYOUT_TOGGLE_TEST (toggle twice; frames, selection,

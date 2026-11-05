@@ -102,6 +102,33 @@ final class AppModel {
     var syncToolsExpanded = false
     var loupesShown = false
 
+    // MARK: Arrangement (UX §V2.11; PLAN-COMPACT-MODE Phase 4) — see WindowLayout.swift
+
+    /// Compact (session line, fixed preview, couple list, export panel) or full
+    /// (three columns). Persisted in UserDefaults; COMPACT when the key is absent —
+    /// the first launch after the update opens compact, then last-used (§6.1).
+    var layoutMode: LayoutMode = AppModel.storedLayoutMode()
+    /// The couple whose candidate list is reopened inline under the player by
+    /// "Compare others" / "Change…" after a manual pick (§6.3). Model-owned so it
+    /// survives an arrangement switch; selecting a row clears it.
+    var compareCoupleID: CoupleRow.ID?
+    /// The hosting window, handed over once by `WindowAccessor` (the app had no
+    /// NSWindow access before Phase 4).
+    @ObservationIgnored weak var window: NSWindow?
+    /// Each arrangement's last window frame (mirrored to UserDefaults when
+    /// `persistLayout`).
+    @ObservationIgnored var layoutFrames: [LayoutMode: NSRect] = [:]
+    /// False under the dev harness (DebugDrive), so a harness run never writes the
+    /// arrangement or frames into the defaults domain.
+    @ObservationIgnored var persistLayout = true
+    /// Set while the model itself moves the window, so the frame observers do not
+    /// record an intermediate frame as the arrangement's "last" one.
+    @ObservationIgnored var applyingLayoutFrame = false
+    /// D10: a Pan L/R both-mode is heard as Synced (Overlay) while compact; this
+    /// remembers that the user's mode was Pan, restored on returning to full.
+    @ObservationIgnored var panHeldForCompact = false
+    @ObservationIgnored var windowObservers: [NSObjectProtocol] = []
+
     // Export rail (§V2.8 / §6); the batch coordinator lives in BatchExport.swift.
     // Naming is per-file (each couple's filename is edited in place); format is a
     // single global selector — no global template, no per-couple format override
@@ -160,6 +187,7 @@ final class AppModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.preview.stop() // release pool-preview playback before exit (TODO-002)
+                self?.recordWindowFrame()
                 self?.saveAll()
             }
         }
@@ -253,6 +281,7 @@ final class AppModel {
 
     func select(_ id: CoupleRow.ID?) {
         endCandidateAudition() // choosing another row tears the scratch session down
+        compareCoupleID = nil  // a reopened "Compare others" list closes with the row
         selectedID = id
         loupeRects = [:]
         overviewRect = .zero

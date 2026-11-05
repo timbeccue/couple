@@ -1,4 +1,6 @@
-// Root layout (§V2.1): three columns with no modal screens — everything visible
+// Root layout (§V2.1 / §V2.11): the window's two arrangements — COMPACT
+// (CompactLayout: session line, fixed preview, couple list, export panel) or FULL
+// (below). Full: three columns with no modal screens — everything visible
 // at once, INCLUDING the empty session (revised 2026-07-11: no splash screen;
 // an empty pool just renders the import surface in the center column with the
 // rails dimmed-empty around it). Queue rail (left), video-hero center, export
@@ -18,23 +20,42 @@ struct RootView: View {
     var body: some View {
         @Bindable var model = model
         return VStack(spacing: 0) {
-            HSplitView {
-                QueueRail()
-                    .frame(minWidth: 248, idealWidth: 304, maxWidth: 440)
-                CenterColumn()
-                    .frame(minWidth: 460)
-                    .layoutPriority(1)
-                ExportRail()
-                    .frame(minWidth: 224, idealWidth: 280, maxWidth: 400)
+            // One window, two arrangements of the same session (UX §V2.11). The
+            // switch is instant until Phase 5 animates it; the window frame moves to
+            // the arrangement's last frame (AppModel.setLayoutMode).
+            switch model.layoutMode {
+            case .compact:
+                // Width 340–420, height free (min 560) — §6.2. With the scene's
+                // `.windowResizability(.contentSize)` these become the window's
+                // own resize limits while compact.
+                CompactLayout()
+                    .frame(minWidth: AppModel.compactMinSize.width,
+                           maxWidth: AppModel.compactMaxWidth,
+                           minHeight: AppModel.compactMinSize.height)
+            case .full:
+                VStack(spacing: 0) {
+                    HSplitView {
+                        QueueRail()
+                            .frame(minWidth: 248, idealWidth: 304, maxWidth: 440)
+                        CenterColumn()
+                            .frame(minWidth: 460)
+                            .layoutPriority(1)
+                        ExportRail()
+                            .frame(minWidth: 224, idealWidth: 280, maxWidth: 400)
+                    }
+                    // Unified long-running activity strip (TODO-005), pinned full window
+                    // WIDTH at the bottom just above the footer (relocated here from the
+                    // export rail 2026-07-11 to match the Electron shell, where the strip
+                    // spans the whole window under the columns). It renders nothing when
+                    // idle, so the footer sits directly below the columns until work starts.
+                    ActivityStripView()
+                    FooterBar()
+                }
+                .frame(minWidth: AppModel.fullMinSize.width, minHeight: AppModel.fullMinSize.height)
             }
-            // Unified long-running activity strip (TODO-005), pinned full window
-            // WIDTH at the bottom just above the footer (relocated here from the
-            // export rail 2026-07-11 to match the Electron shell, where the strip
-            // spans the whole window under the columns). It renders nothing when
-            // idle, so the footer sits directly below the columns until work starts.
-            ActivityStripView()
-            FooterBar()
         }
+        // Hands the hosting NSWindow to the model once (frame + clamps per arrangement).
+        .background(WindowAccessor { model.attachWindow($0) })
         .background(Theme.windowBg)
         .overlay(ToastOverlay(center: model.toasts))
         // Keep the model's UndoManager current (it is per-window and can be
@@ -145,7 +166,7 @@ struct RootView: View {
 /// the summary carries a trustworthy fraction, and an INDETERMINATE bar otherwise.
 /// Never shows a fabricated percentage — that honesty is enforced upstream in the
 /// pure `ActivitySummaryPolicy`; this view only draws what it is handed.
-private struct ActivityStripView: View {
+struct ActivityStripView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {

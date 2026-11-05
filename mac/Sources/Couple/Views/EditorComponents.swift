@@ -18,11 +18,71 @@ func sectionLabel(_ s: String) -> some View {
 
 struct VideoHero: View {
     @Environment(AppModel.self) private var model
+    /// Compact arrangement (UX §V2.11): a fixed 16:9 player, the PairStrip, then
+    /// one row with play/pause and the 3-way Camera · Synced · External picker —
+    /// no anchor jump buttons, no fullscreen. Full: unchanged.
+    var compact = false
 
     var body: some View {
+        if compact { compactBody } else { fullBody }
+    }
+
+    private var compactBody: some View {
+        let audition = model.audition
+        return VStack(spacing: 6) {
+            PlayerLayerView(player: audition.player)
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .background(Color.black)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            if let couple = model.selectedCouple {
+                HStack(spacing: 6) {
+                    Text(timecode(audition.playheadT))
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .foregroundStyle(audition.isPlaying ? Theme.textPrimary : Theme.textTertiary)
+                        .frame(minWidth: 40, alignment: .leading)
+                    PairStrip(couple: couple,
+                              candidate: model.candidateAudition?.coupleID == couple.id
+                                  ? model.candidateAudition : nil)
+                        .frame(height: 30)
+                    Text(timecode(couple.video.durationS, short: true))
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .foregroundStyle(Theme.textTertiary)
+                        .frame(minWidth: 32, alignment: .trailing)
+                }
+            }
+            HStack(spacing: 8) {
+                playButton(audition)
+                MonitorPicker(compact: true)
+                    .disabled(!audition.isAttached)
+                    .frame(maxWidth: .infinity)
+            }
+            if audition.audioUnavailable {
+                Text("audio output unavailable")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Theme.warn)
+            }
+        }
+    }
+
+    private func playButton(_ audition: AuditionController) -> some View {
+        Button {
+            audition.toggle() // shared transport: starts/resumes at the playhead (TODO-004)
+        } label: {
+            Image(systemName: audition.isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textPrimary)
+                .frame(width: 22, height: 18)
+                .background(Theme.chipBg, in: RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .disabled(!audition.isAttached)
+    }
+
+    private var fullBody: some View {
         let pair = model.pair
         let audition = model.audition
-        VStack(spacing: 6) {
+        return VStack(spacing: 6) {
             // AVPlayerLayer letterboxes internally (.resizeAspect): the video
             // never distorts under any layout change (owner, inviolable).
             PlayerLayerView(player: audition.player)
@@ -105,8 +165,9 @@ struct VideoHero: View {
         }
     }
 
-    private func timecode(_ t: Double) -> String {
+    private func timecode(_ t: Double, short: Bool = false) -> String {
         let s = max(0, t)
+        if short { return String(format: "%d:%02d", Int(s) / 60, Int(s) % 60) }
         return String(format: "%d:%05.2f", Int(s) / 60, s.truncatingRemainder(dividingBy: 60))
     }
 }

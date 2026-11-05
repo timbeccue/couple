@@ -11,6 +11,9 @@ import UniformTypeIdentifiers
 
 struct LoadSurface: View {
     @Environment(AppModel.self) private var model
+    /// Compact arrangement (UX §V2.11): the drop target fills the preview block;
+    /// only the orientation line's directions differ.
+    var compact = false
     @State private var importerShown = false
     @State private var dropHover = false
 
@@ -33,7 +36,9 @@ struct LoadSurface: View {
 
             // Orientation for first-time users (the rails around this surface are
             // visible but empty): where results land and what happens after.
-            Text("Matched pairs appear in the list on the left. Good matches are included in the export; untick any you don't want, then export from the right rail.")
+            Text(compact
+                 ? "Matched pairs appear in the list below. Good matches are included in the export; untick any you don't want, then export."
+                 : "Matched pairs appear in the list on the left. Good matches are included in the export; untick any you don't want, then export from the right rail.")
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.textTertiary)
                 .multilineTextAlignment(.center)
