@@ -35,9 +35,10 @@ enum Theme {
 
     static let accent = Color(red: 0.36, green: 0.62, blue: 0.98)
 
-    // Verdict-model dots (UX-DECISIONS-V2 §V2.3): good / questionable / none.
-    // Hues kept deliberately distinct from the approve-green/amber so the dot
-    // (pairing quality) never reads as the approve state. [TUNE] thresholds.
+    // Verdict-model colors (UX-DECISIONS-V2 §V2.3): good / questionable / none.
+    // Since §V2.12 queue rows carry no dot; these tint the action-word capsules
+    // ("pick one" / "no audio" / "forced"), the candidate strength bar and the
+    // editor's verdict mark. [TUNE] thresholds.
     static let verdictGood = Color(red: 0.28, green: 0.80, blue: 0.58)        // emerald
     static let verdictQuestionable = Color(red: 0.97, green: 0.40, blue: 0.42) // red
     static let verdictNone = Color.white.opacity(0.28)                        // hollow grey
@@ -97,6 +98,16 @@ enum Fmt {
         }
         return String(format: "= %@%.3fs", sign, s)
     }
+
+    /// "HH:mm" wall-clock time — the "✓ <time>" export stamp on queue rows and
+    /// in the Files list (UX §V2.12 / D8).
+    static func clock(_ date: Date) -> String { clockFormatter.string(from: date) }
+
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
 
     static func ms(_ v: Double, decimals: Int = 2) -> String {
         String(format: "%+.\(decimals)f", v)

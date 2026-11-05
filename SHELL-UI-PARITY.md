@@ -45,13 +45,16 @@ is the file the plan creates it in.
   FIX, membership approved / (¬approved ∧ good) / rest, all three always
   visible.) [AppModel.swift ready/toFix; QueueRail.swift → CoupleList.swift
   after Phase 4]
-- Couple row: thumbnail, video identity + duration, the SELECTED PAIRING
-  visible (audio name), the action word in the audio's place when action is
-  needed ("pick one" red / "no audio" grey / "forced"; "syncing…" while
-  pairing), 📌 on a manual pick, the INCLUDE checkbox on includable rows only
-  (verdict good; bound to inclusion, undoable), "✓ <time>" once exported. NO
-  verdict dot and NO coverage strip on rows (coverage lives in the preview's
-  waveform strip; the verdict colors stay on the action-word capsule). A
+- Couple row: thumbnail, video name + duration (mono, tertiary), the
+  SELECTED PAIRING visible (audio name) on the second line, the action-word
+  capsule in the audio's place when action is needed ("pick one" red tint /
+  "no audio" grey / "forced"), "syncing…" (tertiary text) there while the
+  couple's auto-sync runs, 📌 on a manual pick, the INCLUDE checkbox on
+  includable rows only (verdict good; bound to inclusion, undoable),
+  "✓ HH:mm" (muted green, from the persisted `exportedAt`) beside it once
+  exported. NO verdict dot, spine or wash and NO coverage strip on rows
+  (coverage lives in the preview's waveform strip; the verdict colors stay on
+  the action-word capsule). A
   MANUAL pick becomes includable (verdict good, row in Ready) only once its
   pair clears the SAME core classifier the resolver uses
   (`manualMatchConfident` ← `matchPair` classification == match, run on pick /
@@ -125,18 +128,21 @@ is the file the plan creates it in.
   (mac-only until Phase 6 — Electron still shows Approve). [CenterColumn.swift]
 
 ## Export rail (right)
-- The export PANEL (shared with the compact arrangement): INTO = destination
-  path + "Change…" (auto-tracks last import dir until user pins one); AS =
-  segmented Auto/MOV/MP4/WAV; "keep camera audio as a muted track" on its own
-  line (disabled for WAV); "Export N files" where N = included couples
+- The export PANEL (shared with the compact arrangement), no title: INTO =
+  destination path (mono, home-abbreviated, middle-ellipsized) + "Change…"
+  link ("Choose…" while unset; auto-tracks last import dir until user pins
+  one); AS = segmented Auto/MOV/MP4/WAV (one global format); "keep camera
+  audio as a muted track" on its own line (disabled for WAV); "Export N
+  files" where N = included couples
   (disabled at 0); disk preflight, serial continue-past-failure, end toast
   with Reveal in Finder. (mac-only until Phase 6 — Electron still reads
   "Export (n approved)".) [ExportRail.swift → ExportPanel.swift after
   Phase 4, BatchExport.swift]
-- FILES list (full arrangement only, below the panel): one `<stem>_synced.<ext>`
-  per included-or-exported couple (membership rule from core
-  export_include), stem editable in place with ↺ reset, per-file status; on
-  each success the couple's `exportedAt` is stamped (row ✓ time; the couple
+- FILES list (full arrangement only, below the panel, headed "FILES · n"):
+  one `<stem>_synced.<ext>` per included-or-exported couple (membership rule
+  from core export_include), stem editable in place with ↺ reset, per-file
+  status, "✓ HH:mm" on exported rows; on each success the couple's
+  `exportedAt` is stamped (row ✓ time; the couple
   leaves the default include set until ticked again). (mac-only until
   Phase 6 — Electron still lists the approved ROWS.) [ExportRail.swift,
   BatchExport.swift, QueueStore.swift]

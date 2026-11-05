@@ -1,11 +1,14 @@
-// Export rail (right column, §V2.8 / §6): one destination folder, an editable
-// naming template + per-couple stem override, the v1 Auto/MOV/MP4/WAV format
-// selector (global default + per-couple override) with keep-camera-audio, disk
-// preflight, and "Export N files" (N = INCLUDED couples, UX §V2.12 / D1; "Export"
-// disabled at 0) running serial jobs with per-couple status and continue-past-
-// failure. The ROWS list is the Files list: included ∪ already exported (rule in
-// core `export_include`); an exported row shows its ✓ time from `exportedAt` (D8). Each per-couple job is the unchanged Phase-4
-// pipeline, so a batch is byte-identical to the CLI export, couple by couple.
+// Export rail (right column, UX §V2.12 / §V2.8 / §6) = the compact export panel
+// followed by the Files list. Panel: INTO (destination path + Change…; auto-
+// tracks the last import folder until pinned), AS (Auto/MOV/MP4/WAV, one global
+// format), "keep camera audio as a muted track" on its own line (unavailable for
+// WAV), and "Export N files" (N = INCLUDED couples, D1; disabled at 0) running
+// serial jobs with disk preflight and continue-past-failure (BatchExport). FILES:
+// included ∪ already exported (rule in core `export_include`), one
+// `<stem>_synced.<ext>` per couple, stem editable in place with ↺ reset, per-file
+// status; an exported row shows its ✓ time from `exportedAt` (D8). Each
+// per-couple job is the unchanged Phase-4 pipeline, so a batch is byte-identical
+// to the CLI export, couple by couple.
 
 import AppKit
 import CoupleKit
@@ -14,51 +17,58 @@ import SwiftUI
 struct ExportRail: View {
     @Environment(AppModel.self) private var model
 
+    /// Width of the INTO / AS label column so the two values line up.
+    private static let labelWidth: CGFloat = 30
+
     var body: some View {
         @Bindable var m = model
-        VStack(alignment: .leading, spacing: 12) {
-            sectionLabel("EXPORT")
-
-            // Destination folder
-            VStack(alignment: .leading, spacing: 4) {
-                sectionLabel("INTO")
+        VStack(alignment: .leading, spacing: 10) {
+            // INTO — the destination path (mono, ellipsized) + Change…
+            HStack(spacing: 6) {
+                sectionLabel("INTO").frame(width: Self.labelWidth, alignment: .leading)
+                Text(destinationText)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(model.exportDestination == nil ? Theme.textTertiary
+                                                                    : Theme.textSecondary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .help(model.exportDestination?.path ?? "No destination folder yet")
+                Spacer(minLength: 4)
                 Button { chooseDestination() } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder")
-                        Text(model.exportDestination?.lastPathComponent ?? "Choose folder…")
-                            .lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                    }
-                    .font(.system(size: 11))
-                    .foregroundStyle(model.exportDestination == nil ? Theme.textSecondary : Theme.textPrimary)
-                    .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(Theme.chipBg, in: RoundedRectangle(cornerRadius: 6))
+                    Text(model.exportDestination == nil ? "Choose…" : "Change…")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.accent)
                 }
                 .buttonStyle(.plain)
             }
 
-            // Global format + keep-camera-audio (one selector for the whole batch)
-            VStack(alignment: .leading, spacing: 4) {
-                sectionLabel("FORMAT")
+            // AS — one global format for the whole batch
+            HStack(spacing: 6) {
+                sectionLabel("AS").frame(width: Self.labelWidth, alignment: .leading)
                 Picker("", selection: $m.globalFormat) {
                     ForEach(PairSession.ExportFormat.allCases, id: \.self) { f in
                         Text(f.rawValue).tag(f)
                     }
                 }
+                .labelsHidden()
                 .pickerStyle(.segmented).controlSize(.small)
-                Toggle(isOn: $m.globalKeepCameraAudio) {
-                    Text("keep camera audio as muted track")
-                        .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
-                }
-                .toggleStyle(.checkbox).controlSize(.small)
-                .disabled(model.globalFormat == .wav)
+                .fixedSize()
+                Spacer(minLength: 0)
             }
+
+            Toggle(isOn: $m.globalKeepCameraAudio) {
+                Text("keep camera audio as a muted track")
+                    .font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
+            }
+            .toggleStyle(.checkbox).controlSize(.small)
+            .disabled(model.globalFormat == .wav)
+            .help(model.globalFormat == .wav ? "Not available for WAV (audio only)" : "")
 
             exportButton
 
-            // Per-couple export rows: included ∪ exported (D1/D8)
+            // FILES — included ∪ exported (D1/D8)
             if !model.filesList.isEmpty {
-                sectionLabel("ROWS")
+                sectionLabel("FILES · \(model.filesList.count)")
+                    .padding(.top, 6)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(model.filesList) { couple in
@@ -72,6 +82,12 @@ struct ExportRail: View {
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Theme.panelBg)
+    }
+
+    /// The destination as a home-abbreviated path ("~/Movies/bach session").
+    private var destinationText: String {
+        guard let url = model.exportDestination else { return "no folder chosen" }
+        return (url.path as NSString).abbreviatingWithTildeInPath
     }
 
     @ViewBuilder
@@ -158,18 +174,12 @@ private struct ExportRowView: View {
     @ViewBuilder
     private var exportedStamp: some View {
         if let t = couple.exportedAt {
-            Text("✓ \(Self.clock.string(from: t))")
+            Text("✓ \(Fmt.clock(t))")
                 .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(Theme.good)
-                .help("Exported at \(Self.clock.string(from: t))")
+                .foregroundStyle(Theme.good.opacity(0.7))
+                .help("Exported at \(Fmt.clock(t))")
         }
     }
-
-    private static let clock: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm"
-        return f
-    }()
 
     // Width reserved for the status column so the filename baseline never shifts
     // as a row moves between idle/queued (empty), running, done, and failed.

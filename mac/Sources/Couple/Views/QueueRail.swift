@@ -136,57 +136,47 @@ struct CoupleRowView: View {
 
     private var selected: Bool { model.selectedID == couple.id }
 
+    // UX §V2.12 / D3: no verdict dot, spine, wash or coverage strip on rows. The
+    // verdict still decides the section and the action word; coverage is drawn in
+    // the preview's waveform strip.
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
-            VStack(spacing: 3) {
-                VideoThumbnail(url: couple.video.url)
-                    .frame(width: 54, height: 32)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                coverageStrip
-                    .frame(width: 54)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(couple.video.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.middle)
-                Text(audioLine)
-                    .font(.system(size: 10))
-                    .foregroundStyle(audioLineColor)
-                    .lineLimit(1).truncationMode(.middle)
+        HStack(alignment: .center, spacing: 9) {
+            VideoThumbnail(url: couple.video.url)
+                .frame(width: 54, height: 32)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(couple.video.name)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1).truncationMode(.middle)
+                    if couple.video.durationS > 0 {
+                        Text(Fmt.hmmss(couple.video.durationS))
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundStyle(Theme.textTertiary)
+                            .fixedSize()
+                    }
+                }
+                audioLine
             }
             Spacer(minLength: 4)
-            VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 6) {
+                if couple.pinned {
+                    Text("📌").font(.system(size: 9))
+                        .help("Audio chosen by you — a re-pair never replaces it")
+                }
+                exportedStamp
                 // D1: the include checkbox is offered on includable rows only (verdict
                 // good); a "pick one" / "no audio" / forced couple shows none.
                 if couple.canInclude {
                     includeBox
                 }
-                if couple.pinned {
-                    Image(systemName: "pin.fill")
-                        .font(.system(size: 9)).foregroundStyle(Theme.textTertiary)
-                }
             }
         }
-        .padding(.vertical, 8)
-        .padding(.trailing, 8)
-        .padding(.leading, 14) // room for the status spine in the left gutter
-        .background { // faint verdict wash, layered above the base fill
-            if let tint = verdictTint {
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(LinearGradient(
-                        stops: [.init(color: tint, location: 0),
-                                .init(color: .clear, location: 0.45)],
-                        startPoint: .leading, endPoint: .trailing))
-            }
-        }
+        .padding(.vertical, 7)
+        .padding(.horizontal, 8)
         .background(selected ? Theme.accent.opacity(0.14) : Theme.chipBg.opacity(0.5),
                     in: RoundedRectangle(cornerRadius: 7))
-        .overlay(alignment: .leading) { // status spine (replaces the corner dot)
-            VerdictSpine(verdict: couple.verdict)
-                .padding(.vertical, 9)
-                .padding(.leading, 5)
-        }
         .overlay(RoundedRectangle(cornerRadius: 7)
             .strokeBorder(selected ? Theme.accent.opacity(0.6) : .clear))
         .contentShape(Rectangle())
@@ -202,44 +192,43 @@ struct CoupleRowView: View {
         }
     }
 
-    private var audioLine: String {
-        if let word = couple.actionWord { return word }
-        return couple.selectedCandidate?.audioName ?? "—"
-    }
-
-    private var audioLineColor: Color {
-        couple.actionWord != nil ? Theme.verdictColor(couple.verdict) : Theme.textSecondary
-    }
-
-    /// Faint left-anchored wash behind matched / needs-attention rows so the
-    /// spine reads as part of the row, not a stuck-on bar. `none` stays clean.
-    private var verdictTint: Color? {
-        switch couple.verdict {
-        case .good: return Theme.verdictGood.opacity(0.05)
-        case .questionable: return Theme.verdictQuestionable.opacity(0.06)
-        case .none: return nil
+    /// The second line (§V2.12): "syncing…" while this couple's auto-sync runs
+    /// (replaces the old pulse), else the action-word capsule when action is
+    /// needed ("pick one" red tint / "no audio" grey / "forced"), else the chosen
+    /// audio's name.
+    @ViewBuilder
+    private var audioLine: some View {
+        if couple.pair.isSyncRunning {
+            Text("syncing…")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.textTertiary)
+        } else if let word = couple.actionWord {
+            let grey = couple.verdict == .none
+            let tint = Theme.verdictColor(couple.verdict)
+            Text(word)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(grey ? Theme.textSecondary : tint)
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background((grey ? Color.white : tint).opacity(grey ? 0.08 : 0.16),
+                            in: RoundedRectangle(cornerRadius: 3))
+        } else {
+            Text(couple.selectedCandidate?.audioName ?? "—")
+                .font(.system(size: 10))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1).truncationMode(.middle)
         }
     }
 
-    /// Thin amber bar under the thumbnail (§V2.2): the span the audio covers.
-    /// Amber = the external-audio identity; full coverage = full bar; coverage is
-    /// never a quality penalty.
+    /// "✓ HH:mm" once exported (D8), read from the persisted `exportedAt` so it
+    /// survives relaunch.
     @ViewBuilder
-    private var coverageStrip: some View {
-        if let cov = couple.selectedCandidate?.coverage, couple.video.durationS > 0 {
-            GeometryReader { geo in
-                let dur = couple.video.durationS
-                let x0 = CGFloat(cov.t0 / dur) * geo.size.width
-                let w = CGFloat(cov.seconds / dur) * geo.size.width
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.external.opacity(0.12))
-                    Capsule().fill(Theme.external.opacity(0.75))
-                        .frame(width: max(w, 2)).offset(x: x0)
-                }
-            }
-            .frame(height: 2.5)
-        } else {
-            Color.clear.frame(height: 2.5)
+    private var exportedStamp: some View {
+        if let t = couple.exportedAt {
+            Text("✓ \(Fmt.clock(t))")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Theme.good.opacity(0.7))
+                .fixedSize()
+                .help("Exported at \(Fmt.clock(t))")
         }
     }
 
@@ -267,34 +256,6 @@ struct VerdictDot: View {
             .frame(width: 9, height: 9)
             .overlay(Circle().strokeBorder(Theme.verdictColor(verdict),
                                            lineWidth: verdict == .none ? 1.2 : 0))
-    }
-}
-
-/// Left-edge status spine (rail rows, 2026-06-17): replaces the corner dot so the
-/// row itself carries the verdict and the trailing corner is just the approve
-/// control. Solid bar = good / questionable; dashed = no audio paired (none).
-struct VerdictSpine: View {
-    let verdict: Verdict
-    var body: some View {
-        Group {
-            if verdict == .none {
-                VLine().stroke(Theme.verdictColor(.none),
-                               style: StrokeStyle(lineWidth: 3, lineCap: .round, dash: [2, 3]))
-            } else {
-                RoundedRectangle(cornerRadius: 1.5)
-                    .fill(Theme.verdictColor(verdict))
-            }
-        }
-        .frame(width: 3)
-    }
-}
-
-private struct VLine: Shape {
-    func path(in rect: CGRect) -> Path {
-        Path { p in
-            p.move(to: CGPoint(x: rect.midX, y: rect.minY))
-            p.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-        }
     }
 }
 
