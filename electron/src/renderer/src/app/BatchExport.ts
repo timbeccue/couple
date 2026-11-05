@@ -1,13 +1,16 @@
 // BatchExport.ts — serial batch export coordinator (SPEC-V2 §6 / §V2.8); TS
 // port of mac/Sources/Couple/BatchExport.swift. Runs one export job at a time
-// over the approved (queued) couples, with a whole-queue disk preflight,
-// per-couple live status, and continue-past-failure. Each per-couple job is the
+// over the INCLUDED couples (UX §V2.12 / D1), with a whole-queue disk preflight,
+// per-couple live status, and continue-past-failure; each success stamps the
+// couple's `exportedAt` (D8), which drops it out of the default include set so the
+// next batch does not re-emit it. Each per-couple job is the
 // unchanged core export pipeline (cpl_export_start applies the session's mapping —
 // timing is never re-derived here; PLAN-CORE-SHELL-BOUNDARY §1), so a batch is
 // byte-identical to the CLI export, couple by couple.
 import { env } from '../kit/native';
 import type { ExportOptions } from '../kit/Wire';
 import type { AppModel } from './AppModel';
+import { isoNow } from './QueueStore';
 import type { CoupleRow } from './CoupleRow';
 import { Observable } from './observable';
 
@@ -57,6 +60,8 @@ export class BatchExport extends Observable {
   private readonly model: AppModel;
   phase: BatchPhase = { kind: 'idle' };
   lastError: string | null = null;
+  /** The couples of the current/last batch, in order (captured at run start). */
+  batchCouples: CoupleRow[] = [];
 
   constructor(model: AppModel) {
     super();
@@ -67,7 +72,7 @@ export class BatchExport extends Observable {
     return this.phase.kind === 'preflight' || this.phase.kind === 'running';
   }
 
-  /** Export every approved couple, serially, into the destination folder. Disk
+  /** Export every INCLUDED couple, serially, into the destination folder. Disk
    * preflight sums the queue first; per-couple status updates live; a failed
    * couple records its error and the batch proceeds (continue-past-failure); a
    * closing toast reports "n exported, m failed". */
@@ -75,8 +80,9 @@ export class BatchExport extends Observable {
     if (this.isRunning) return;
     const dest = this.model.exportDestination;
     if (!dest) return;
-    const couples = this.model.queued;
+    const couples = this.model.included;
     if (couples.length === 0) return;
+    this.batchCouples = couples;
 
     this.phase = { kind: 'preflight' };
     this.lastError = null;
@@ -109,6 +115,12 @@ export class BatchExport extends Observable {
       try {
         await this.exportCouple(couple, outputPath);
         couple.exportStatus = { kind: 'done', outputPath };
+        // D8: the stamp is the ONLY thing an export changes on the row — `explicit`
+        // is untouched, so a couple the user ticked back on stays included for the
+        // next batch; a default-included one drops out. Persisted at once so a crash
+        // mid-batch keeps the stamps.
+        couple.exportedAt = isoNow();
+        this.model.saveQueue();
         exported += 1;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -121,6 +133,7 @@ export class BatchExport extends Observable {
       this.bump();
     }
 
+    this.model.saveQueue(); // persist per-couple exportedAt before announcing done
     this.phase = { kind: 'finished', exported, failed };
     this.lastError = firstError;
     this.bump();
@@ -137,12 +150,13 @@ export class BatchExport extends Observable {
     }
   }
 
-  /** One approved couple's export: the unchanged core pipeline, awaited, with
+  /** One included couple's export: the unchanged core pipeline, awaited, with
    * per-row progress into `couple.exportStatus`. The session's mapping is applied
-   * by the core (cpl_export_start) — never re-derived here. */
+   * by the core (cpl_export_start) — never re-derived here. The batch is gated by
+   * INCLUSION (the list `run` captured), not by the v1 `verified` flag. */
   private async exportCouple(couple: CoupleRow, outputPath: string): Promise<void> {
     const session = couple.pair.session;
-    if (!session || !couple.approved) throw new Error('not approved');
+    if (!session) throw new Error('no session');
     const opts = exportOptions(this.model.globalFormat, this.model.globalKeepCameraAudio, outputPath);
     const job = session.exportStart(opts);
     job.onProgress((u) => {
@@ -203,8 +217,9 @@ export class BatchExport extends Observable {
 let harnessStarted = false;
 
 /** Dev/CI hook: when COUPLE_EXPORT_TEST names an output folder, wait for ingest
- * to settle, approve every couple, point the destination at that folder, and run
- * the batch. Writes nothing else; the Electron twin of the Swift export harness. */
+ * to settle, tick every includable couple (good verdict) with a session, point the
+ * destination at that folder, and run the batch. Writes nothing else; the Electron
+ * twin of the Swift export harness. */
 export function maybeRunExportHarness(model: AppModel): void {
   const dest = env.COUPLE_EXPORT_TEST;
   if (!dest || harnessStarted) return;
@@ -223,7 +238,9 @@ export function maybeRunExportHarness(model: AppModel): void {
       if (ready) break;
       await new Promise((r) => setTimeout(r, 200));
     }
-    for (const c of model.couples) c.pair.setVerified(true); // no-op when session is null
+    // Include-for-export (D1): every includable couple with a session goes out —
+    // explicitly ticked so an earlier export in this profile does not hold it back.
+    for (const c of model.couples) if (c.pair.session && c.canInclude) c.explicit = true;
     model.exportDestination = dest;
     model.destinationAuto = false;
     model.invalidate();

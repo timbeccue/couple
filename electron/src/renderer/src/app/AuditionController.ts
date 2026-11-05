@@ -4,6 +4,7 @@
 // slaved to this clock by VideoHero (playbackRate micro-slew), the Electron
 // stand-in for the mac shell's AVPlayer-slaved-to-audio-clock.
 import { AuditionStream, type MonitorMode } from '../kit/Audition';
+import type { SessionHandle } from '../kit/Session';
 import { monitorPlan } from '../kit/Policies';
 import { Observable } from './observable';
 import type { CoupleRow } from './CoupleRow';
@@ -41,6 +42,36 @@ export class AuditionController extends Observable {
       this.couple = null;
     }
     this.bump();
+  }
+
+  /** Stream from `session` for `couple`'s preview (PLAN-COMPACT-MODE Phase 3
+   * candidate audition: a SCRATCH session over the couple's camera + a candidate's
+   * audio). The video element stays bound to the couple (`couple` is set), so the
+   * hero keeps slaving to this clock; exactly one stream stays open (§5.3).
+   * Playback stops; the caller decides whether to resume. */
+  attachSession(couple: CoupleRow, session: SessionHandle, tStart: number): void {
+    this.teardown();
+    try {
+      this.stream = new AuditionStream(session.engine, session, this.mode, Math.max(0, tStart));
+      this.couple = couple;
+      this.lastSeekT = Math.max(0, tStart);
+      this.applyGains();
+    } catch {
+      this.stream = null;
+      this.couple = null;
+    }
+    this.bump();
+  }
+
+  /** Where the preview's playhead is for `couple`: the live clock while streaming
+   * for it, else the last seek, else the pair's own playhead. */
+  playheadFor(couple: CoupleRow): number {
+    if (this.couple === couple) {
+      const c = this.clock();
+      if (Number.isFinite(c)) return c;
+      if (this.lastSeekT !== null) return this.lastSeekT;
+    }
+    return couple.pair.playheadT;
   }
 
   teardown(): void {

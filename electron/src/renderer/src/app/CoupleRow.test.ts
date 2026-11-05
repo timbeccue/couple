@@ -28,7 +28,7 @@ function makeEntry(id: string, role: 'video' | 'audio', path: string): PoolEntry
 }
 
 function cand(audioKey: string): RowCandidate {
-  return { audioKey, audioName: `${audioKey}.wav`, z: 12, lagMs: 0, coverage: { start: 0, end: 1 } };
+  return { audioKey, audioName: `${audioKey}.wav`, z: 12, lagMs: 0, coverage: { t0: 0, t1: 1, seconds: 1, fraction: 0.1 } };
 }
 
 function makeRow(

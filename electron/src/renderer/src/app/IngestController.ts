@@ -73,7 +73,8 @@ export class IngestController {
   }
 
   /** Run the §3.3 row resolution over the pool, then build/update couples —
-   * pinned/approved selections survive (§3.6, via the pure row-merge policy). */
+   * pinned selections survive (§3.6, via the pure row-merge policy; pinned ONLY
+   * since PLAN-COMPACT-MODE D6). */
   async resolveQueue(): Promise<void> {
     const { pool, engine } = this.model;
     if (pool.videos.length === 0 && pool.audios.length === 0) return;
@@ -170,7 +171,7 @@ export class IngestController {
   private mergeResolution(couple: CoupleRow, row: ResolvedRow): void {
     const fresh = (row.selected ? [row.selected] : []).concat(row.alternates);
     const plan = Policies.rowMergePlan({
-      protected: couple.pinned || couple.approved,
+      protected: couple.pinned, // D6: pinned only — inclusion is not "a human looked at this"
       currentSelectedKey: couple.selectedAudioKey,
       currentCandidateKeys: couple.candidates.map((c) => c.audioKey),
       freshSelectedKey: row.selected?.audioKey ?? null,
@@ -202,7 +203,10 @@ export class IngestController {
     const model = this.model;
     // Close the shared audition's stream before freeing this couple's old core
     // session (audio-graph teardown ordering — the stream was opened from it).
-    if (couple.id === model.selectedID) model.audition.teardown();
+    if (couple.id === model.selectedID) {
+      model.endCandidateAudition(); // a scratch session over this couple's camera closes first
+      model.audition.teardown();
+    }
     const key = couple.selectedAudioKey;
     const cam = couple.video.handle;
     const audio = key ? model.pool.entry(key)?.handle : null;

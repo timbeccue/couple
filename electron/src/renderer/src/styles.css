@@ -68,9 +68,11 @@ body {
 }
 
 .root {
+  position: relative; /* the FLIP pins the four blocks against this box */
   display: flex;
   flex-direction: column;
   height: 100%;
+  background: var(--bg);
 }
 
 /* hiddenInset titlebar (mac): SwiftUI windows drag by background; Electron
@@ -86,38 +88,7 @@ body {
   z-index: 40;
 }
 
-.columns {
-  padding-top: 30px;
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-
-.queue-rail {
-  width: 300px;
-  min-width: 248px;
-  max-width: 440px;
-  border-right: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-}
-
-.center-column {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.export-rail {
-  width: 260px;
-  min-width: 224px;
-  max-width: 400px;
-  border-left: 1px solid var(--border);
-  overflow-y: auto;
-  padding: 12px;
-}
+/* The arrangement columns (compact / full) live in views/layout.css. */
 
 .footer-bar {
   height: 26px;
@@ -207,7 +178,7 @@ body {
   }
 }
 
-.drop-active .columns {
+.drop-active .arrangement {
   outline: 2px dashed var(--accent);
   outline-offset: -8px;
 }
@@ -235,42 +206,19 @@ body {
   opacity: 0.45;
 }
 
-/* Couple card (QueueRail.swift CoupleRowView): a 54x32 thumbnail with an amber
-   coverage strip, camera-over-pairing lines, a trailing approve checkbox, and a
-   left verdict spine + faint verdict wash. */
+/* Couple row (CoupleList.swift CoupleRowView, UX §V2.12 / D3): a 54x32 thumbnail,
+   video name + duration over the pairing line, trailing 📌 / ✓ time / include
+   checkbox. NO verdict dot, spine, wash or coverage strip on rows. */
 .couple-item {
   position: relative;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 9px;
   margin: 0 12px 6px;
-  padding: 8px 8px 8px 14px;
+  padding: 7px 8px;
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.03);
   cursor: default;
-}
-
-/* Content rides above the faint verdict wash (::before). */
-.couple-item > * {
-  position: relative;
-  z-index: 1;
-}
-
-/* Faint left-anchored verdict wash, fading out by 45% width (Swift verdictTint). */
-.couple-item::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 7px;
-  pointer-events: none;
-}
-
-.couple-item.good::before {
-  background: linear-gradient(to right, rgba(62, 207, 110, 0.05), transparent 45%);
-}
-
-.couple-item.questionable::before {
-  background: linear-gradient(to right, rgba(224, 166, 60, 0.06), transparent 45%);
 }
 
 .couple-item.selected {
@@ -280,39 +228,6 @@ body {
 
 .couple-item.drop-hover {
   box-shadow: inset 0 0 0 1px var(--external);
-}
-
-/* Left verdict spine (Swift VerdictSpine): solid bar for good/questionable,
-   dashed/segmented for none, pulsing while a sync runs. */
-.couple-spine {
-  position: absolute;
-  left: 5px;
-  top: 9px;
-  bottom: 9px;
-  width: 3px;
-  border-radius: 1.5px;
-  z-index: 2;
-}
-
-.couple-spine.good {
-  background: var(--good);
-}
-
-.couple-spine.questionable {
-  background: var(--questionable);
-}
-
-.couple-spine.none {
-  background: repeating-linear-gradient(
-    to bottom,
-    var(--none) 0 2px,
-    transparent 2px 5px
-  );
-}
-
-.couple-spine.syncing {
-  background: var(--accent);
-  animation: pulse 1s ease-in-out infinite;
 }
 
 @keyframes pulse {
@@ -347,13 +262,6 @@ body {
   animation: pulse 1s ease-in-out infinite;
 }
 
-.couple-media {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  flex: none;
-}
-
 .couple-thumb {
   width: 54px;
   height: 32px;
@@ -375,27 +283,6 @@ body {
   font-size: 11px;
   font-weight: 700;
   color: var(--camera);
-}
-
-.coverage-strip {
-  position: relative;
-  width: 54px;
-  height: 2.5px;
-}
-
-.coverage-track {
-  position: absolute;
-  inset: 0;
-  border-radius: 2px;
-  background: rgba(224, 166, 60, 0.12);
-}
-
-.coverage-fill {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  border-radius: 2px;
-  background: rgba(224, 166, 60, 0.75);
 }
 
 .couple-lines {
@@ -422,34 +309,8 @@ body {
   white-space: nowrap;
 }
 
-.couple-spacer {
-  flex: none;
-  width: 4px;
-}
-
-.couple-approve {
-  flex: none;
-  align-self: flex-start;
-  border: none;
-  background: none;
-  padding: 0;
-  font-size: 13px;
-  line-height: 1;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-
-.couple-approve:hover {
-  background: none;
-}
-
-.couple-approve.on {
-  color: var(--good);
-}
-
 .couple-pin {
   flex: none;
-  align-self: flex-start;
   font-size: 9px;
   filter: grayscale(1);
   opacity: 0.6;

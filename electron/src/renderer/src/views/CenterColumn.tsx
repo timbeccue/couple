@@ -1,10 +1,11 @@
-// CenterColumn.tsx — the selected-pair editor (§V2.1 layout, port of
-// CenterColumn.swift): video hero (greedy), the §V2.6 resolve banner, the loupe
-// area (summoned on demand), the waveform stage + drift sparkline, and the
-// persistent bottom tool bar (⚙ sync tools / ◫ loupes / Approve). Re-picking
-// routes through the ingest controller's ensureSession so the session/sync
-// lifecycle stays single-path. Presentation only — decisions live in core
-// policies (PLAN-CORE-SHELL-BOUNDARY §1).
+// CenterColumn.tsx — the full arrangement's editing surfaces under the preview
+// (§V2.1 layout, port of the CenterColumn.swift editor below PairPreview): the
+// loupe area (summoned on demand), the waveform stage + drift sparkline, and the
+// persistent bottom tool bar (⚙ sync tools / ◫ loupes). There is NO Approve
+// control (UX §V2.12 / D4) — inclusion is the row checkbox only. The preview block
+// above (title, video, PairStrip, candidate list) is PairPreview, shared with the
+// compact arrangement. Presentation only — decisions live in core policies
+// (PLAN-CORE-SHELL-BOUNDARY §1).
 import React, { useEffect, useState } from 'react';
 import { appModel } from '../app/AppModel';
 import type { CoupleRow } from '../app/CoupleRow';
@@ -13,107 +14,51 @@ import { useModel } from '../app/observable';
 import { env } from '../kit/native';
 import type { MonitorMode } from '../kit/Audition';
 import type { DriftMode } from '../kit/Session';
-import type { RowCandidate } from '../kit/Wire';
 import { WaveformStage } from './WaveformStage';
 import { LoupeArea } from './LoupeView';
-import { VideoHero } from './VideoHero';
-import { LoadSurface } from './LoadSurface';
 
-function pickCandidate(coupleId: string, candidate: RowCandidate): void {
-  const couple = appModel.couples.find((c) => c.id === coupleId);
-  if (!couple || couple.selectedAudioKey === candidate.audioKey) return;
-  couple.applyManualPick(candidate.audioKey, candidate.z, appModel.zMin);
-  appModel.ingest.ensureSession(couple);
-  void appModel.reevaluateManualMatch(couple); // TODO-009: green only if this pair clears the classifier
-  appModel.invalidate();
-}
-
-export function CenterColumn(): React.JSX.Element {
+/** The editor surfaces below the preview (full arrangement only). */
+export function EditorTools(): React.JSX.Element | null {
   const model = useModel(appModel);
-  useModel(model.pool);
-  // Empty session (UX-DECISIONS 2026-07-11): the import surface takes the hero
-  // slot inside the always-visible three-column shell — no separate splash.
-  if (!model.hasContent) {
-    return (
-      <div className="center-column">
-        <LoadSurface />
-      </div>
-    );
-  }
   const couple = model.selected;
-  if (!couple) {
-    return (
-      <div className="center-column">
-        <div className="center-empty">Select a couple from the queue</div>
-      </div>
-    );
-  }
-  return <PairEditor key={couple.id} couple={couple} />;
+  if (!model.hasContent || !couple) return null;
+  return <PairEditorTools key={couple.id} couple={couple} />;
 }
 
-function PairEditor({ couple }: { couple: CoupleRow }): React.JSX.Element {
+function PairEditorTools({ couple }: { couple: CoupleRow }): React.JSX.Element | null {
+  const model = useModel(appModel);
   useModel(couple);
   const pair = useModel(couple.pair);
   const [loupesShown, setLoupesShown] = useState(false);
-  const [toolsExpanded, setToolsExpanded] = useState(false);
   const hasSession = pair.session !== null;
+  const toolsExpanded = model.syncToolsExpanded;
+  const setToolsExpanded = (v: boolean): void => {
+    appModel.syncToolsExpanded = v;
+    appModel.invalidate();
+  };
 
   // Headless verification: reveal the on-demand surfaces so a screenshot run can
   // confirm the loupes + sync tools render.
   useEffect(() => {
     if (env.COUPLE_ANCHOR_TEST && pair.syncStatus === 'synced') {
       setLoupesShown(true);
-      setToolsExpanded(true);
+      appModel.syncToolsExpanded = true;
+      appModel.invalidate();
     }
   }, [pair.syncStatus]);
 
+  if (!hasSession) return null;
   return (
-    <div className="center-column">
-      <div className="editor-stack">
-        <div className="editor-title">
-          <span className={`verdict-dot ${couple.verdict}`} />
-          <h2>{couple.video.name}</h2>
-          {couple.selectedCandidate && (
-            <span className="editor-audio">× {couple.selectedCandidate.audioName}</span>
-          )}
-        </div>
-
-        <VideoHero couple={couple} />
-
-        {(couple.needsResolve || couple.alternates.length > 0) && (
-          <div className="resolve-banner">
-            <div className="title">{couple.resolveTitle}</div>
-            {couple.candidates.map((c) => (
-              <div
-                key={c.audioKey}
-                className={`candidate-row${c.audioKey === couple.selectedAudioKey ? ' selected' : ''}`}
-                onClick={() => pickCandidate(couple.id, c)}
-              >
-                <span className="role-tag audio">A</span>
-                <span className="couple-name">{c.audioName}</span>
-                <span className="z">z {c.z.toFixed(1)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {hasSession && loupesShown && pair.anchors.length > 0 && <LoupeArea couple={couple} pair={pair} />}
-
-        {hasSession && (
-          <WaveformStage couple={couple} pair={pair} onShowLoupes={() => setLoupesShown(true)} />
-        )}
-
-        {hasSession && (
-          <SyncToolsBar
-            couple={couple}
-            pair={pair}
-            loupesShown={loupesShown}
-            setLoupesShown={setLoupesShown}
-            toolsExpanded={toolsExpanded}
-            setToolsExpanded={setToolsExpanded}
-          />
-        )}
-      </div>
+    <div className="editor-tools">
+      {loupesShown && pair.anchors.length > 0 && <LoupeArea couple={couple} pair={pair} />}
+      <WaveformStage couple={couple} pair={pair} onShowLoupes={() => setLoupesShown(true)} />
+      <SyncToolsBar
+        pair={pair}
+        loupesShown={loupesShown}
+        setLoupesShown={setLoupesShown}
+        toolsExpanded={toolsExpanded}
+        setToolsExpanded={setToolsExpanded}
+      />
     </div>
   );
 }
@@ -121,14 +66,12 @@ function PairEditor({ couple }: { couple: CoupleRow }): React.JSX.Element {
 // MARK: - Bottom tool bar (§V2.4) + expandable sync readouts
 
 function SyncToolsBar({
-  couple,
   pair,
   loupesShown,
   setLoupesShown,
   toolsExpanded,
   setToolsExpanded,
 }: {
-  couple: CoupleRow;
   pair: PairSession;
   loupesShown: boolean;
   setLoupesShown: (v: boolean) => void;
@@ -138,7 +81,6 @@ function SyncToolsBar({
   const audition = useModel(appModel.audition);
   const state = pair.session ? pair.session.state() : null;
   const driftMode = (state?.driftMode as DriftMode | undefined) ?? 'resample';
-  const busy = pair.syncStatus === 'syncing';
   const fit = pair.fitStatus();
 
   return (
@@ -240,18 +182,6 @@ function SyncToolsBar({
           ◫ loupes
         </button>
         <span className="wave-spacer" />
-        <button
-          className={`approve-btn${couple.approved ? ' approved' : ''}`}
-          disabled={busy}
-          onClick={() => {
-            pair.setVerified(!couple.approved);
-            appModel.invalidate();
-          }}
-        >
-          <span>{couple.approved ? '✓' : '○'}</span>
-          <span>{couple.approved ? 'Approved' : 'Approve'}</span>
-          <span className="approve-key">v</span>
-        </button>
       </div>
     </div>
   );

@@ -203,11 +203,13 @@ export class ActivityController extends Observable {
     // Batch export: BatchExport phase + the running row's per-row fraction.
     const phase = m.batch.phase;
     if (phase.kind === 'preflight') {
-      req.exporting = { index: 0, total: m.queued.length, rowFraction: 0, preflight: true };
+      req.exporting = { index: 0, total: m.includedCount, rowFraction: 0, preflight: true };
     } else if (phase.kind === 'running') {
       let index = phase.done + 1;
       let rowFraction = 0;
-      const queued = m.queued;
+      // The batch's own couple list (captured at run start): each success stamps
+      // exportedAt, which drops a default-included couple out of `included`.
+      const queued = m.batch.batchCouples;
       for (let i = 0; i < queued.length; i++) {
         const s = queued[i].exportStatus;
         if (s.kind === 'running') {

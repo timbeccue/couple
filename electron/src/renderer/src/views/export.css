@@ -1,102 +1,133 @@
-/* export.css — right-rail batch export (§V2.8): destination picker, format
- * selector, per-row editable filenames + status. Scoped to .export-rail so it
- * never bleeds into the shared shell styles (styles.css). */
+/* export.css — the export panel (§V2.12 / §V2.8; shared by both arrangements) and
+ * the full arrangement's Files list: destination path, format selector, the
+ * Export N files button, per-file editable filenames + status. Scoped to
+ * .export-panel / .files-list so it never bleeds into the shared shell styles. */
 
-.export-rail .dest-button {
+.export-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.export-panel .export-line {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
-  text-align: left;
-  overflow: hidden;
-  font-size: 11px;
-  padding: 5px 8px;
-  border-radius: 6px;
-  border: none;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text);
+  min-width: 0;
 }
 
-.export-rail .dest-button .dest-glyph {
-  flex: 0 0 auto;
+.export-panel .export-label {
+  flex: 0 0 30px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--none);
+}
+
+.export-panel .dest-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-dim);
 }
 
-.export-rail .dest-button .dest-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.export-panel .dest-path.unset {
+  color: var(--none);
+}
+
+.middle-ellipsis {
+  display: flex;
+  min-width: 0;
   white-space: nowrap;
 }
 
-.export-rail .dest-button.unset {
-  color: var(--text-dim);
+.middle-ellipsis .head {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.middle-ellipsis .tail {
+  flex: none;
+}
+
+.link-button {
+  flex: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 10px;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.link-button:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
 }
 
 /* Segmented Auto/MOV/MP4/WAV selector. */
-.export-rail .format-seg {
-  display: flex;
-  gap: 0;
+.export-panel .format-seg {
+  display: inline-flex;
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
 }
 
-.export-rail .format-seg button {
-  flex: 1;
+.export-panel .format-seg button {
   border: none;
   border-radius: 0;
   border-left: 1px solid var(--border);
-  padding: 4px 0;
-  font-size: 11px;
+  padding: 3px 10px;
+  font-size: 10px;
   background: var(--bg-raised);
+  color: var(--text-dim);
 }
 
-.export-rail .format-seg button:first-child {
+.export-panel .format-seg button:first-child {
   border-left: none;
 }
 
-.export-rail .format-seg button.on {
+.export-panel .format-seg button.on {
   background: rgba(255, 255, 255, 0.14);
   color: var(--text);
 }
 
-.export-rail .keep-audio {
+.export-panel .keep-audio {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 10px;
   color: var(--text-dim);
-  margin-top: 6px;
   cursor: default;
 }
 
-.export-rail .keep-audio.disabled {
+.export-panel .keep-audio.disabled {
   opacity: 0.4;
 }
 
-.export-rail .export-run {
+.export-panel .export-run {
   width: 100%;
-  margin-top: 4px;
   padding: 8px 0;
   font-size: 13px;
   font-weight: 600;
   color: #fff;
-  background: var(--good);
-  border: 1px solid var(--good);
+  background: rgba(62, 207, 110, 0.85);
+  border: 1px solid transparent;
   border-radius: 6px;
 }
 
-.export-rail .export-run:disabled {
+.export-panel .export-run:disabled {
   opacity: 0.5;
 }
 
-.export-rail .export-progress {
-  margin-top: 4px;
-  font-size: 11px;
+.export-panel .export-progress {
+  font-size: 10px;
   color: var(--text-dim);
 }
 
-.export-rail .export-progress .bar {
+.export-panel .export-progress .bar {
   height: 4px;
   border-radius: 2px;
   background: var(--border);
@@ -104,78 +135,92 @@
   margin-bottom: 4px;
 }
 
-.export-rail .export-progress .bar > span {
+.export-panel .export-progress .bar > span {
   display: block;
   height: 100%;
   background: var(--good);
   transition: width 0.15s linear;
 }
 
-/* Per-couple export rows. */
-.export-rail .export-rows {
+/* ---------- Files list (full arrangement) ---------- */
+
+.files-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.files-list .section-label {
+  padding: 16px 0 6px;
+}
+
+.files-list .export-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
   overflow-y: auto;
+  min-height: 0;
 }
 
-.export-rail .export-row {
-  padding: 5px 6px;
+.files-list .export-row {
+  padding: 4px 6px;
   border-radius: 5px;
-  background: var(--bg-raised);
+  background: rgba(255, 255, 255, 0.04);
 }
 
-.export-rail .export-row.selected {
-  box-shadow: inset 2px 0 0 var(--accent);
+.files-list .export-row.selected {
+  background: rgba(74, 158, 218, 0.1);
 }
 
-.export-rail .export-row .row-head {
+.files-list .export-row .row-head {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.export-rail .status-dot {
+.files-list .status-dot {
   flex: 0 0 12px;
   font-size: 10px;
   text-align: center;
 }
 
-.export-rail .status-dot.done {
+.files-list .status-dot.done {
   color: var(--good);
 }
 
-.export-rail .status-dot.failed {
+.files-list .status-dot.failed {
   color: var(--danger);
 }
 
-.export-rail .status-dot .mini-spin {
+.files-list .status-dot .mini-spin {
   display: inline-block;
   font-variant-numeric: tabular-nums;
   font-size: 8px;
   color: var(--accent);
 }
 
-.export-rail .filename {
+.files-list .filename {
   flex: 1;
   min-width: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
+  font-weight: 500;
   display: flex;
   align-items: center;
 }
 
-.export-rail .filename .stem {
+.files-list .filename .stem {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.export-rail .filename .ext {
+.files-list .filename .ext {
   color: var(--text-dim);
 }
 
-.export-rail .filename input {
+.files-list .filename input {
   font-family: inherit;
   font-size: inherit;
   color: var(--text);
@@ -186,7 +231,7 @@
   min-width: 40px;
 }
 
-.export-rail .filename .reset {
+.files-list .filename .reset {
   margin-left: 5px;
   padding: 0 4px;
   font-size: 9px;
@@ -195,10 +240,17 @@
   border: none;
 }
 
-.export-rail .row-error {
+.files-list .row-error {
   margin-top: 3px;
   padding-left: 18px;
   font-size: 9px;
   color: var(--danger);
   line-height: 1.3;
+}
+
+.exported-stamp {
+  flex: none;
+  font: 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(62, 207, 110, 0.7);
+  white-space: nowrap;
 }

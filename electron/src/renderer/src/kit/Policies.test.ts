@@ -71,13 +71,13 @@ describe('repairDrop', () => {
     videoAvailable: true,
     currentSelectedKey: 'a1',
     droppedKey: 'a1',
-    approved: false,
+    pinned: false,
   };
 
-  it('P6 outcomes: same-key no-op, unapproved accept, approved confirm, non-audio reject', () => {
+  it('P6 outcomes: same-key no-op, unpinned accept, pinned confirm, non-audio reject', () => {
     expect(Policies.repairDrop({ ...base, droppedKey: 'a1' })).toBe('noOp');
-    expect(Policies.repairDrop({ ...base, droppedKey: 'a2', approved: false })).toBe('accept');
-    expect(Policies.repairDrop({ ...base, droppedKey: 'a2', approved: true })).toBe('needsConfirmation');
+    expect(Policies.repairDrop({ ...base, droppedKey: 'a2', pinned: false })).toBe('accept');
+    expect(Policies.repairDrop({ ...base, droppedKey: 'a2', pinned: true })).toBe('needsConfirmation');
     expect(Policies.repairDrop({ ...base, droppedKey: 'a2', payloadIsAudio: false })).toBe('reject');
   });
 });
@@ -110,7 +110,7 @@ describe('conservative fallbacks', () => {
       removableKeys: [],
       needsConfirmation: false,
       affectedCouples: 0,
-      affectedApproved: 0,
+      affectedIncluded: 0,
     });
   });
 });

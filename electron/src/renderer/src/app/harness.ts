@@ -19,14 +19,19 @@ async function waitSettled(model: AppModel): Promise<void> {
 }
 
 export function runParityHarnesses(model: AppModel): void {
-  // PERSIST: ingest (COUPLE_OPEN_DIR), approve every synced couple, persist, and
+  // PERSIST: ingest (COUPLE_OPEN_DIR), leave the first includable couple OUT of the
+  // export (an explicit untick — the only stored include state, D1/D8), persist, and
   // let COUPLE_AUTOQUIT exit. Relaunch with COUPLE_RESTORE_TEST reads it back.
   if (env.COUPLE_PERSIST_TEST) {
     void (async () => {
       await waitSettled(model);
-      for (const c of model.couples) if (c.pair.session) model.toggleApprove(c);
+      const first = model.couples.find((c) => c.pair.session && c.canInclude);
+      if (first && first.included) model.toggleInclude(first);
       model.saveAll();
-      console.log(`[persist-test] approved=${model.queued.length} couples=${model.couples.length} saved`);
+      console.log(
+        `[persist-test] included=${model.includedCount} excluded=${first?.explicit === false ? 1 : 0} ` +
+          `couples=${model.couples.length} saved`
+      );
     })();
   }
 
@@ -44,7 +49,8 @@ export function runParityHarnesses(model: AppModel): void {
         c.pair.session ? Number(c.pair.session.state().offsetMs.toFixed(3)) : null
       );
       console.log(
-        `[restore-test] couples=${model.couples.length} approved=${model.queued.length} ` +
+        `[restore-test] couples=${model.couples.length} included=${model.includedCount} ` +
+          `excluded=${model.couples.filter((c) => c.explicit === false).length} ` +
           `syncRan=${model.ingest.syncTotal} offsets=${JSON.stringify(offsets)}`
       );
     })();
@@ -78,22 +84,24 @@ export function runParityHarnesses(model: AppModel): void {
     })();
   }
 
-  // UNDO: approve the first couple, undo, assert it un-approved (TODO-015).
+  // UNDO: untick the first included couple, undo, assert it is included again (TODO-015).
   if (env.COUPLE_UNDO_TEST) {
     void (async () => {
       await waitSettled(model);
-      const c = model.orderedCouples.find((x) => x.pair.session);
+      const c = model.orderedCouples.find((x) => x.pair.session && x.canInclude);
       if (!c) {
-        console.log('[undo-test] no couple with a session');
+        console.log('[undo-test] no includable couple with a session');
         return;
       }
       model.select(c.id);
-      model.toggleApprove(c);
-      const afterApprove = c.approved;
+      const before = c.included;
+      model.toggleInclude(c);
+      const afterToggle = c.included;
       model.performUndo();
-      const afterUndo = c.approved;
+      const afterUndo = c.included;
       console.log(
-        `[undo-test] approve=${afterApprove} undo=${afterUndo} pass=${afterApprove === true && afterUndo === false}`
+        `[undo-test] before=${before} toggle=${afterToggle} undo=${afterUndo} ` +
+          `pass=${afterToggle === !before && afterUndo === before && c.explicit === null}`
       );
     })();
   }

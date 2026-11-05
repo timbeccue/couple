@@ -1,5 +1,7 @@
-// QueueRail.tsx — left rail (QueueRail.swift port): the couples list in the three
-// live workflow sections + the media pool. The pool is a bottom-pinned box
+// QueueRail.tsx — the left rail's media pool (QueueRail.swift MediaPoolSection
+// port), a FULL-arrangement surface (UX §V2.11: compact has "+ Add" only). The rail
+// above it is the shared SessionLine + CoupleList (PLAN-COMPACT-MODE Phase 4.1
+// extraction; the arrangement composes them). The pool is a bottom-pinned box
 // (redesign 2026-06-15): a fixed header, a bounded inner scroll of Finder-style
 // selectable rows, and a STICKY footer preview player that never scrolls, so the box
 // height stays constant. Selection/preview/removal decisions come from the core
@@ -7,7 +9,6 @@
 // presents them.
 import React from 'react';
 import { appModel } from '../app/AppModel';
-import type { CoupleRow } from '../app/CoupleRow';
 import type { PoolEntry } from '../app/MediaPool';
 import { useModel } from '../app/observable';
 import type { PoolSelectModifier } from '../app/PoolController';
@@ -15,25 +16,17 @@ import { poolListHeight } from '../app/PoolController';
 import { env } from '../kit/native';
 import { MediaMetaPopover } from './MediaMetaPopover';
 import { useCanvas } from './useCanvas';
+import { useThumbnail } from './thumbnails';
 import './pool.css';
-
-import { mediaUrl as fileURL } from '../app/mediaUrl';
-import { CoupleWordmark } from './CoupleWordmark';
 
 const { ipcRenderer } = (window as unknown as { require: NodeRequire }).require(
   'electron'
 ) as typeof import('electron');
 
-const POOL_DRAG_MIME = 'application/x-couple-pool-key';
+export const POOL_DRAG_MIME = 'application/x-couple-pool-key';
 const CAMERA = '#2ec8c2';
 const EXTERNAL = '#e0a63c';
 const MAX_SEEK_COLS = 1024;
-
-/** Verdict → the CSS color var the spine and action-word line use (Swift
- * Theme.verdictColor twin). */
-function verdictColorVar(verdict: CoupleRow['verdict']): string {
-  return verdict === 'good' ? 'var(--good)' : verdict === 'questionable' ? 'var(--questionable)' : 'var(--none)';
-}
 
 function fmtDuration(s: number): string {
   const m = Math.floor(s / 60);
@@ -44,228 +37,6 @@ function fmtDuration(s: number): string {
 function fmtClock(s: number): string {
   const t = Math.max(0, Math.floor(s));
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
-}
-
-// ---------- couples sections ----------
-
-function CoupleItem({ couple }: { couple: CoupleRow }): React.JSX.Element {
-  const model = useModel(appModel);
-  useModel(couple);
-  const [dropHover, setDropHover] = React.useState(false);
-  const thumb = useThumbnail(couple.video);
-  const selected = model.selectedID === couple.id;
-  const verdict = couple.verdict;
-  const syncing = couple.pair.syncStatus === 'syncing';
-  // Second line = the PAIRING (the row's whole meaning): the action word when
-  // action is needed, else the selected audio name, with NO "×" prefix. It reads
-  // in the verdict color only when it's an action word.
-  const audioName = couple.selectedCandidate?.audioName ?? null;
-  const secondLine = couple.actionWord ?? audioName ?? '—';
-  const secondLineColor = couple.actionWord != null ? verdictColorVar(verdict) : 'var(--text-dim)';
-  // Amber coverage strip under the thumbnail (§V2.2): the span the audio covers.
-  // Wire's Coverage carries start/end seconds (the Swift t0/seconds twin).
-  const cov = couple.selectedCandidate?.coverage ?? null;
-  const dur = couple.video.durationS;
-  return (
-    <div
-      className={`couple-item ${verdict}${selected ? ' selected' : ''}${dropHover ? ' drop-hover' : ''}`}
-      onClick={() => appModel.select(couple.id)}
-      onDragOver={(e) => {
-        if (e.dataTransfer.types.includes(POOL_DRAG_MIME)) {
-          e.preventDefault();
-          e.stopPropagation();
-          setDropHover(true);
-        }
-      }}
-      onDragLeave={() => setDropHover(false)}
-      onDrop={(e) => {
-        const key = e.dataTransfer.getData(POOL_DRAG_MIME);
-        setDropHover(false);
-        if (!key) return;
-        e.preventDefault();
-        e.stopPropagation();
-        appModel.select(couple.id);
-        appModel.repairDrop(couple, key);
-      }}
-    >
-      <span
-        className={`couple-spine ${verdict}${syncing ? ' syncing' : ''}`}
-      />
-      <span className="couple-media">
-        <span className="couple-thumb">
-          {thumb ? <img src={thumb} alt="" draggable={false} /> : <span className="couple-thumb-glyph">V</span>}
-        </span>
-        <span className="coverage-strip">
-          {cov && dur > 0 && (
-            <>
-              <span className="coverage-track" />
-              <span
-                className="coverage-fill"
-                style={{
-                  left: `${(cov.start / dur) * 100}%`,
-                  width: `${Math.max(((cov.end - cov.start) / dur) * 100, 3.7)}%`,
-                }}
-              />
-            </>
-          )}
-        </span>
-      </span>
-      <span className="couple-lines">
-        <span className="couple-name" title={couple.video.name}>
-          {couple.video.name}
-        </span>
-        <span className="couple-audio" style={{ color: secondLineColor }}>
-          {secondLine}
-        </span>
-      </span>
-      <span className="couple-spacer" />
-      {couple.hasSession ? (
-        <button
-          className={`couple-approve${couple.approved ? ' on' : ''}`}
-          title="Approve — queue this couple for export (v)"
-          onClick={(e) => {
-            e.stopPropagation();
-            appModel.toggleApprove(couple);
-          }}
-        >
-          {couple.approved ? '☑' : '☐'}
-        </button>
-      ) : couple.pinned ? (
-        <span className="couple-pin" title="Pinned">
-          📌
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-function Section({ title, couples }: { title: string; couples: CoupleRow[] }): React.JSX.Element {
-  return (
-    <div className={couples.length === 0 ? 'section-empty' : undefined}>
-      <div className="section-label">
-        <span>{title}</span>
-        <span className="section-count">{couples.length}</span>
-      </div>
-      {couples.length === 0 ? (
-        <div className="section-dash">—</div>
-      ) : (
-        couples.map((c) => <CoupleItem key={c.id} couple={c} />)
-      )}
-    </div>
-  );
-}
-
-// ---------- rail header (session title + counts, QueueRail.swift:64-96) ----------
-
-function RailHeader(): React.JSX.Element {
-  const model = useModel(appModel);
-  useModel(model.pool);
-  useModel(model.batch);
-  return (
-    <div className="rail-header">
-      <div className="rail-header-top">
-        <CoupleWordmark height={12} />
-        <button
-          className="clear-session"
-          disabled={model.batch.isRunning || !model.hasContent}
-          title="Discard this session and start over (does not delete source or exported files)"
-          onClick={() => appModel.requestClearSession()}
-        >
-          Clear Session…
-        </button>
-      </div>
-      <div className="rail-counts">
-        {model.pool.videos.length} video · {model.pool.audios.length} audio
-      </div>
-      <div className="rail-approved">
-        Approve to queue · {model.approvedCount}/{model.couples.length} approved
-      </div>
-    </div>
-  );
-}
-
-// ---------- pool: video thumbnails (AVAssetImageGenerator twin) ----------
-
-// Cache per content key: a captured frame is stable for the file's lifetime, and
-// fixture mpeg4 that never decodes caches `null` so we don't retry each render.
-const thumbCache = new Map<string, string | null>();
-
-/** Capture a frame from a video file via a hidden <video> + canvas. Resolves to a
- * data URL, or null when the codec can't decode (fixture mpeg4) — the caller then
- * shows the role glyph, never a broken image. */
-function captureThumbnail(path: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const v = document.createElement('video');
-    v.muted = true;
-    v.preload = 'auto';
-    // CORS-clean load (couple-media:// sends ACAO *): without it the frame
-    // grab taints the canvas and toDataURL throws — glyph fallback forever.
-    v.crossOrigin = 'anonymous';
-    let settled = false;
-    const finish = (url: string | null): void => {
-      if (settled) return;
-      settled = true;
-      v.removeAttribute('src');
-      v.load();
-      resolve(url);
-    };
-    v.addEventListener('error', () => finish(null));
-    v.addEventListener('loadeddata', () => {
-      const grab = (): void => {
-        try {
-          const w = 64;
-          const ratio = v.videoWidth > 0 ? v.videoHeight / v.videoWidth : 0.5625;
-          const h = Math.max(1, Math.round(w * ratio));
-          const c = document.createElement('canvas');
-          c.width = w;
-          c.height = h;
-          const ctx = c.getContext('2d');
-          if (!ctx) return finish(null);
-          ctx.drawImage(v, 0, 0, w, h);
-          finish(c.toDataURL('image/png'));
-        } catch {
-          finish(null);
-        }
-      };
-      v.addEventListener('seeked', grab, { once: true });
-      try {
-        v.currentTime = Math.min(1.0, (v.duration || 2) / 2 || 1);
-      } catch {
-        grab();
-      }
-    });
-    v.src = fileURL(path);
-    // Guard: a file that never fires loadeddata/error (won't decode) falls back.
-    setTimeout(() => finish(null), 4000);
-  });
-}
-
-function useThumbnail(entry: PoolEntry): string | null {
-  const [url, setUrl] = React.useState<string | null>(() => thumbCache.get(entry.id) ?? null);
-  React.useEffect(() => {
-    if (entry.role !== 'video') return;
-    if (thumbCache.has(entry.id)) {
-      setUrl(thumbCache.get(entry.id) ?? null);
-      return;
-    }
-    let cancelled = false;
-    void captureThumbnail(entry.path)
-      .then(async (u) => {
-        // The first grab can lose its <video> decode slot to import/sync load
-        // and time out; one retry after the rush is nearly always enough. Only
-        // successes are cached — a cached null would pin the glyph forever.
-        if (u === null && !cancelled) u = await captureThumbnail(entry.path);
-        return u;
-      })
-      .then((u) => {
-        if (u !== null) thumbCache.set(entry.id, u);
-        if (!cancelled) setUrl(u);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [entry.id, entry.role, entry.path]);
-  return url;
 }
 
 // ---------- pool: one row ----------
@@ -509,7 +280,7 @@ function StickyBar(): React.JSX.Element {
  * the couples list leaves unused, bounded by its own content, never below the floor.
  * Measures the two scroll regions (their viewport sum is invariant under the split,
  * so `poolListHeight` converges) and returns the pool list's max-height. */
-function useRailLayout(): {
+export function useRailLayout(remeasureKey: unknown = null): {
   couplesRef: React.RefObject<HTMLDivElement | null>;
   listRef: React.RefObject<HTMLDivElement | null>;
   poolMax: number;
@@ -539,7 +310,8 @@ function useRailLayout(): {
     ro.observe(couples);
     ro.observe(list);
     return () => ro.disconnect();
-  }, [recompute]);
+    // The pool list exists in the full arrangement only: re-observe on a switch.
+  }, [recompute, remeasureKey]);
 
   return { couplesRef, listRef, poolMax };
 }
@@ -600,13 +372,20 @@ function PoolBox({
   );
 }
 
-// ---------- rail ----------
+// ---------- pool section (full arrangement) ----------
 
-export function QueueRail(): React.JSX.Element {
+/** The full arrangement's pool box plus the pool-scoped keys and harness hooks
+ * (they run in the full arrangement only — the harness forces it). */
+export function PoolSection({
+  listRef,
+  poolMax,
+}: {
+  listRef: React.RefObject<HTMLDivElement | null>;
+  poolMax: number;
+}): React.JSX.Element {
   const model = useModel(appModel);
   useModel(model.pool);
   useModel(model.poolController);
-  const { couplesRef, listRef, poolMax } = useRailLayout();
 
   // Delete/Backspace removes the pool selection (TODO-001) — the Delete-key twin of
   // the trash button. Scoped to the rail: it only acts when the pool has a selection
@@ -713,15 +492,5 @@ export function QueueRail(): React.JSX.Element {
     })();
   });
 
-  return (
-    <div className="queue-rail">
-      <RailHeader />
-      <div className="rail-couples" ref={couplesRef}>
-        <Section title="QUEUED FOR EXPORT" couples={model.queued} />
-        <Section title="TO APPROVE" couples={model.toApprove} />
-        <Section title="TO FIX" couples={model.toFix} />
-      </div>
-      <PoolBox listRef={listRef} poolMax={poolMax} />
-    </div>
-  );
+  return <PoolBox listRef={listRef} poolMax={poolMax} />;
 }

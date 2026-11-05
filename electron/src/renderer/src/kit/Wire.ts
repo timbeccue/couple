@@ -124,9 +124,13 @@ export interface ProgressUpdate {
 
 // ---------- pairing / evidence (SPEC-V2 §3, PLAN-SPECTRAL §14) ----------
 
+/** Video-timeline span the audio covers (core `resolve::Coverage`, camelCase
+ * serde): t0/t1 in video seconds, `seconds` = t1 − t0, `fraction` of the video. */
 export interface Coverage {
-  start: number;
-  end: number;
+  t0: number;
+  t1: number;
+  seconds: number;
+  fraction: number;
 }
 
 export type MatchClassification =
@@ -186,6 +190,9 @@ export interface RowCandidate {
   z: number;
   lagMs: number;
   coverage: Coverage;
+  /** §4.5 fine-verify telemetry (display only; present on the fingerprint path). */
+  fitRmsMs?: number | null;
+  fitWindows?: number | null;
 }
 
 export interface TriangleCheck {

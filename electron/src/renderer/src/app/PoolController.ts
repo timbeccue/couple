@@ -206,7 +206,7 @@ export class PoolController extends Observable {
     return this.model.couples.map((c) => ({
       videoKey: c.id,
       selectedAudioKey: c.selectedAudioKey,
-      approved: c.approved,
+      included: c.included, // D7: removal warns for INCLUDED couples
     }));
   }
 
@@ -214,7 +214,7 @@ export class PoolController extends Observable {
    * SHARED entry point for the trash button and the Delete key. The pure
    * `mediaRemovalPlan` decides: an empty plan no-ops; an UNUSED-only removal happens
    * immediately; a removal touching ≥1 referenced file asks ONE confirmation stating
-   * the affected couple/approved counts. Never deletes source media from disk. */
+   * the affected couple/included counts. Never deletes source media from disk. */
   removeSelectedMedia(): void {
     const plan = Policies.mediaRemovalPlan({
       selectedKeys: [...this.poolSelection],
@@ -223,10 +223,16 @@ export class PoolController extends Observable {
     });
     if (plan.removableKeys.length === 0) return;
     if (plan.needsConfirmation) {
+      // Same consequence copy as the mac shell's removal dialog (RootView.removalMessage).
       const couples = `${plan.affectedCouples} couple${plan.affectedCouples === 1 ? '' : 's'}`;
-      const approved =
-        plan.affectedApproved > 0 ? ` (${plan.affectedApproved} approved)` : '';
-      if (!window.confirm(`Remove the selected media? This re-resolves ${couples}${approved}.`)) return;
+      let msg =
+        `Remove selected media?\n\nThis affects ${couples}. Affected video rows re-resolve over the ` +
+        `remaining files; a removed video's row is removed. `;
+      if (plan.affectedIncluded > 0) {
+        msg += `${plan.affectedIncluded} of them ${plan.affectedIncluded === 1 ? 'is' : 'are'} included in the export and will leave it. `;
+      }
+      msg += 'This removes the files from this session only — your source files are not deleted.';
+      if (!window.confirm(msg)) return;
     }
     this.performMediaRemoval(new Set(plan.removableKeys));
   }
@@ -248,6 +254,7 @@ export class PoolController extends Observable {
     // session (and the shared audition, if selected) closes before its tracks are
     // freed. A removed-video couple is dropped; a removed-audio couple is reset to a
     // clean unresolved row so the re-resolve treats it as never-paired.
+    model.endCandidateAudition(); // a scratch session may reference a leaving track
     const survivingCouples: typeof model.couples = [];
     for (const couple of model.couples) {
       if (keys.has(couple.id)) {
@@ -301,7 +308,7 @@ export class PoolController extends Observable {
     });
     // eslint-disable-next-line no-console
     console.log(
-      `[remove-test] plan removableKeys=${plan.removableKeys.length} needsConfirmation=${plan.needsConfirmation} affectedCouples=${plan.affectedCouples} affectedApproved=${plan.affectedApproved}`
+      `[remove-test] plan removableKeys=${plan.removableKeys.length} needsConfirmation=${plan.needsConfirmation} affectedCouples=${plan.affectedCouples} affectedIncluded=${plan.affectedIncluded}`
     );
     this.performMediaRemoval(new Set(plan.removableKeys));
     // eslint-disable-next-line no-console

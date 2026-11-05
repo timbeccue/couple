@@ -3,19 +3,9 @@
    inner list, and a sticky preview player. Semantic colors are the fixed SPEC §13.3
    hues (camera teal / external amber), applied inline from the row's role. */
 
-/* The rail splits into a greedy couples scroll region and a bottom-pinned pool box,
-   so the sticky player stays put while either list scrolls independently. Neutralize
-   the base rail's own scroll — the two inner regions own their overflow. */
-.queue-rail {
-  overflow: hidden;
-}
-
-.rail-couples {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 8px;
-}
+/* The full rail splits into a greedy couples scroll region (CoupleList, sized in
+   layout.css) and a bottom-pinned pool box, so the sticky player stays put while
+   either list scrolls independently. */
 
 /* ---------- rail header (session title + counts, QueueRail.swift:64-96) ---------- */
 
@@ -72,7 +62,7 @@
   color: var(--text-dim);
 }
 
-.rail-approved {
+.rail-to-export {
   font-size: 10px;
   font-family: ui-monospace, monospace;
   font-variant-numeric: tabular-nums;

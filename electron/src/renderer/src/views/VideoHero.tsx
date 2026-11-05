@@ -4,6 +4,13 @@
 // skew hard-seeks, a small one micro-slews playbackRate (±5%). The HUD
 // (COUPLE_HUD=1) surfaces measured skew + pump underruns — the budget is
 // verified, not assumed.
+//
+// PLAN-COMPACT-MODE Phase 3/4: the two-lane PairStrip seek surface sits between
+// the playhead time and the clip length under the video, in both arrangements;
+// `compact` gives the fixed 16:9 player, play/pause and the 3-way Camera · Synced ·
+// External picker (D10) — no anchor jumps, no fullscreen. The <video> element is
+// the same node in both arrangements (the root never remounts it), so a switch
+// never reloads the video or stops playback.
 import React, { useEffect, useRef, useState } from 'react';
 import { appModel } from '../app/AppModel';
 import type { CoupleRow } from '../app/CoupleRow';
@@ -11,6 +18,7 @@ import { useModel } from '../app/observable';
 import { env } from '../kit/native';
 import { mediaUrl } from '../app/mediaUrl';
 import type { MonitorMode } from '../kit/Audition';
+import { PairStrip, useFrameTicker } from './PairStrip';
 
 const HARD_SEEK_S = 0.25;
 const SLEW_GAIN = 1.0; // rate delta per second of skew…
@@ -24,12 +32,74 @@ const MONITOR_LABEL: Record<MonitorMode, string> = {
   null: 'Null', // test oracle; never rendered
 };
 
-function timecode(t: number): string {
+function timecode(t: number, short = false): string {
   const s = Math.max(0, t);
+  if (short) return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   return `${Math.floor(s / 60)}:${(s % 60).toFixed(2).padStart(5, '0')}`;
 }
 
-export function VideoHero({ couple }: { couple: CoupleRow }): React.JSX.Element {
+/** The compact picker's segments (Synced ≡ Overlay; MonitorPicker(compact:) twin). */
+export const COMPACT_MONITOR_CASES: MonitorMode[] = ['camera', 'overlay', 'external'];
+
+/** Which compact segment a (possibly Pan) mode is shown as. */
+export function compactSegment(mode: MonitorMode): MonitorMode {
+  return mode === 'camera' || mode === 'external' ? mode : 'overlay';
+}
+
+/** The monitor picker. Full: Camera · Pan L/R · Overlay · External — the ends are
+ * the A/B solos (UX-DECISIONS 2026-11-03; `a` flips, `b` restores both; Null is a
+ * test oracle only). Compact (D10): Camera · Synced · External, where Synced
+ * selects Overlay and a remembered Pan L/R both-mode is SHOWN as Synced.
+ * Presentation only — every selection goes through the policy (`selectMode`). */
+export function MonitorPicker({ compact, disabled }: { compact: boolean; disabled: boolean }): React.JSX.Element {
+  const audition = useModel(appModel.audition);
+  if (compact) {
+    const current = compactSegment(audition.mode);
+    return (
+      <div
+        className="seg monitor-seg compact"
+        title="Camera / External: hear one track only (a flips, b = both) · Synced: both, mixed"
+      >
+        {COMPACT_MONITOR_CASES.map((m) => (
+          <button
+            key={m}
+            className={current === m ? 'on' : undefined}
+            disabled={disabled}
+            onClick={() => {
+              // Re-picking Synced while a remembered Pan is playing keeps it.
+              if (m !== current) audition.selectMode(m);
+            }}
+          >
+            {m === 'overlay' ? 'Synced' : MONITOR_LABEL[m]}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="seg monitor-seg">
+      {(['camera', 'pan', 'overlay', 'external'] as MonitorMode[]).map((m) => (
+        <button
+          key={m}
+          className={audition.mode === m ? 'on' : undefined}
+          disabled={disabled}
+          title={
+            m === 'camera' || m === 'external'
+              ? 'Hear this track only (a flips, b = both)'
+              : m === 'pan'
+                ? 'Camera left, external right'
+                : 'Both mixed'
+          }
+          onClick={() => audition.selectMode(m)}
+        >
+          {MONITOR_LABEL[m]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function VideoHero({ couple, compact = false }: { couple: CoupleRow; compact?: boolean }): React.JSX.Element {
   const audition = useModel(appModel.audition);
   const pair = useModel(couple.pair);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -40,6 +110,9 @@ export function VideoHero({ couple }: { couple: CoupleRow }): React.JSX.Element 
 
   const isAttachedHere = audition.couple === couple;
   const playing = isAttachedHere && audition.playing;
+  useFrameTicker(playing); // the strip-row time follows the clock while playing
+  // The transport works with the couple's own session or a candidate audition's.
+  const canPlay = couple.hasSession || isAttachedHere;
   const clock = audition.clock();
   const headT = Number.isFinite(clock)
     ? clock
@@ -114,7 +187,7 @@ export function VideoHero({ couple }: { couple: CoupleRow }): React.JSX.Element 
   }, [playing]);
 
   return (
-    <div className="video-hero-wrap">
+    <div className={`video-hero-wrap${compact ? ' compact' : ''}`}>
       <div className="video-hero" ref={containerRef}>
         <video
           ref={videoRef}
@@ -147,10 +220,15 @@ export function VideoHero({ couple }: { couple: CoupleRow }): React.JSX.Element 
           </div>
         )}
       </div>
+      <div className="hero-strip-row">
+        <span className={`hero-time${playing ? ' live' : ''}`}>{timecode(headT)}</span>
+        <PairStrip couple={couple} />
+        <span className="hero-time dur">{timecode(couple.video.durationS, compact)}</span>
+      </div>
       <div className="hero-transport">
         <button
           className="hero-btn"
-          disabled={!couple.hasSession}
+          disabled={!canPlay}
           onClick={() => {
             if (!isAttachedHere) appModel.attachAudition(couple);
             appModel.audition.toggle();
@@ -158,46 +236,30 @@ export function VideoHero({ couple }: { couple: CoupleRow }): React.JSX.Element 
         >
           {playing ? '❚❚' : '▶'}
         </button>
-        <span className={`hero-time${playing ? ' live' : ''}`}>{timecode(headT)}</span>
-        <span className="wave-spacer" />
-        {pair.anchors.map((a, i) => (
-          <button
-            key={i}
-            className="hero-anchor"
-            style={{
-              background: `${ANCHOR_COLORS[i % 4]}${pair.focusedAnchor === i ? 'e6' : '73'}`,
-            }}
-            title={`Play from anchor ${i + 1} (−0.8 s)`}
-            onClick={() => jumpToAnchor(i, a.t)}
-          >
-            {i + 1}
-          </button>
-        ))}
-        <div className="seg">
-          {/* Camera · Pan L/R · Overlay · External — the ends are the A/B solos
-              (UX-DECISIONS 2026-11-03; `a` flips, `b` restores both). Null is a
-              test oracle only, matching CoupleKit MonitorMode.allCases. */}
-          {(['camera', 'pan', 'overlay', 'external'] as MonitorMode[]).map((m) => (
-            <button
-              key={m}
-              className={audition.mode === m ? 'on' : undefined}
-              disabled={!couple.hasSession}
-              title={
-                m === 'camera' || m === 'external'
-                  ? 'Hear this track only (a flips, b = both)'
-                  : m === 'pan'
-                    ? 'Camera left, external right'
-                    : 'Both mixed'
-              }
-              onClick={() => audition.selectMode(m)}
-            >
-              {MONITOR_LABEL[m]}
+        {compact ? (
+          <MonitorPicker compact disabled={!canPlay} />
+        ) : (
+          <>
+            <span className="wave-spacer" />
+            {pair.anchors.map((a, i) => (
+              <button
+                key={i}
+                className="hero-anchor"
+                style={{
+                  background: `${ANCHOR_COLORS[i % 4]}${pair.focusedAnchor === i ? 'e6' : '73'}`,
+                }}
+                title={`Play from anchor ${i + 1} (−0.8 s)`}
+                onClick={() => jumpToAnchor(i, a.t)}
+              >
+                {i + 1}
+              </button>
+            ))}
+            <MonitorPicker compact={false} disabled={!canPlay} />
+            <button className="hero-btn" title="Fullscreen video" onClick={toggleFullscreen}>
+              ⤢
             </button>
-          ))}
-        </div>
-        <button className="hero-btn" title="Fullscreen video" onClick={toggleFullscreen}>
-          ⤢
-        </button>
+          </>
+        )}
       </div>
     </div>
   );

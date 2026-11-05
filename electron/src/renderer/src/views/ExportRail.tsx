@@ -1,139 +1,45 @@
-// ExportRail.tsx — right column (§V2.8 / §6): one destination folder, the v1
-// Auto/MOV/MP4/WAV format selector with keep-camera-audio, editable per-couple
-// filename stems, "Export (n files)" running serial jobs with per-couple status
-// and continue-past-failure, and a whole-queue disk preflight. TS port of
-// mac/Sources/Couple/Views/ExportRail.swift. Each per-couple job is the unchanged
-// core export pipeline, so a batch is byte-identical to the CLI export.
+// ExportRail.tsx — the full arrangement's right column (UX §V2.12 / §V2.8 / §6;
+// port of ExportRail.swift) = the shared ExportPanel (INTO / AS / keep camera audio
+// / Export N files — also the compact arrangement's pinned bottom block) followed
+// by the FILES list: included ∪ already exported (rule in core `export_include`),
+// one `<stem>_synced.<ext>` per couple, stem editable in place with ↺ reset,
+// per-file status; an exported row shows its ✓ time from `exportedAt` (D8). Each
+// per-couple job is the unchanged core export pipeline, so a batch is
+// byte-identical to the CLI export, couple by couple. The arrangement composes the
+// panel and this list (CompactLayout.tsx).
 import React, { useEffect, useRef, useState } from 'react';
 import { appModel } from '../app/AppModel';
 import { useModel } from '../app/observable';
-import { EXPORT_FORMATS, extForFormat, maybeRunExportHarness, type ExportFormat } from '../app/BatchExport';
+import { extForFormat } from '../app/BatchExport';
 import type { CoupleRow } from '../app/CoupleRow';
+import { fmtClock } from './CoupleList';
 import './export.css';
 
-const { ipcRenderer } = (window as unknown as { require: NodeRequire }).require('electron');
-
-export function ExportRail(): React.JSX.Element {
+/** FILES · n — included ∪ exported (D1/D8); hidden while empty. */
+export function FilesList(): React.JSX.Element | null {
   const model = useModel(appModel);
   useModel(model.batch);
-
-  // Headless export harness (verification only): fires once COUPLE_EXPORT_TEST is set.
-  useEffect(() => {
-    maybeRunExportHarness(model);
-  }, [model]);
-
-  const phase = model.batch.phase;
-  const running = model.batch.isRunning;
-
+  const files = model.filesList;
+  if (files.length === 0) return null;
   return (
-    <div className="export-rail">
-      <div className="section-label" style={{ padding: '0 0 4px' }}>
-        EXPORT
+    <div className="files-list">
+      <div className="section-label">
+        <span>FILES · {files.length}</span>
       </div>
-
-      {/* Destination folder */}
-      <div className="section-label">INTO</div>
-      <button
-        className={`dest-button${model.exportDestination ? '' : ' unset'}`}
-        onClick={async () => {
-          const dir = (await ipcRenderer.invoke('couple:pick-folder', 'Choose export folder')) as
-            | string
-            | null;
-          if (dir) model.chooseExportDestination(dir);
-        }}
-      >
-        <svg
-          className="dest-glyph"
-          width="12"
-          height="12"
-          viewBox="0 0 16 16"
-          fill="none"
-          aria-hidden="true"
-        >
-          <path
-            d="M1.5 4.5a1 1 0 0 1 1-1h3.3a1 1 0 0 1 .7.3l.9.9a1 1 0 0 0 .7.3h4.7a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7.5Z"
-            stroke="currentColor"
-            strokeWidth="1.1"
-          />
-        </svg>
-        <span className="dest-name">
-          {model.exportDestination ? model.exportDestination.split('/').pop() : 'Choose folder…'}
-        </span>
-      </button>
-
-      {/* Global format + keep-camera-audio (one selector for the whole batch) */}
-      <div className="section-label" style={{ marginTop: 12 }}>
-        FORMAT
-      </div>
-      <div className="format-seg">
-        {EXPORT_FORMATS.map((f) => (
-          <button
-            key={f}
-            className={model.globalFormat === f ? 'on' : ''}
-            disabled={running}
-            onClick={() => {
-              model.globalFormat = f;
-              model.invalidate();
-            }}
-          >
-            {f}
-          </button>
+      <div className="export-rows">
+        {files.map((couple) => (
+          <ExportRow key={couple.id} couple={couple} />
         ))}
       </div>
-      <label className={`keep-audio${model.globalFormat === 'WAV' ? ' disabled' : ''}`}>
-        <input
-          type="checkbox"
-          checked={model.globalKeepCameraAudio}
-          disabled={running || model.globalFormat === 'WAV'}
-          onChange={(e) => {
-            model.globalKeepCameraAudio = e.target.checked;
-            model.invalidate();
-          }}
-        />
-        keep camera audio as muted track
-      </label>
-
-      {/* Export button / progress */}
-      {phase.kind === 'preflight' ? (
-        <div className="export-progress">Checking disk…</div>
-      ) : phase.kind === 'running' ? (
-        <div className="export-progress">
-          <div className="bar">
-            <span style={{ width: `${(phase.done / Math.max(phase.total, 1)) * 100}%` }} />
-          </div>
-          Exporting {phase.done}/{phase.total}…
-        </div>
-      ) : (
-        <button
-          className="export-run"
-          disabled={model.approvedCount === 0 || model.exportDestination === null}
-          onClick={() => void model.batch.run()}
-        >
-          Export ({model.approvedCount} file{model.approvedCount === 1 ? '' : 's'})
-        </button>
-      )}
-
-      {/* Per-couple export rows */}
-      {model.queued.length > 0 && (
-        <>
-          <div className="section-label" style={{ marginTop: 12 }}>
-            ROWS
-          </div>
-          <div className="export-rows">
-            {model.queued.map((couple) => (
-              <ExportRow key={couple.id} couple={couple} />
-            ))}
-          </div>
-        </>
-      )}
     </div>
   );
 }
 
-/** One export row: status dot, an in-place editable filename (stem + fixed
- * extension), and a failure line. The filename IS the row (§V2.8). */
+/** One file row: status column, an in-place editable filename (stem + fixed
+ * extension), the ✓ export time, and a failure line. The filename IS the row (§V2.8). */
 function ExportRow({ couple }: { couple: CoupleRow }): React.JSX.Element {
   const model = useModel(appModel);
+  useModel(couple);
   const status = couple.exportStatus;
   const ext = extForFormat(model.globalFormat, couple.video.path);
   const selected = model.selectedID === couple.id;
@@ -157,6 +63,11 @@ function ExportRow({ couple }: { couple: CoupleRow }): React.JSX.Element {
           )}
         </span>
         <EditableFilename couple={couple} ext={ext} />
+        {couple.exportedAt !== null && (
+          <span className="exported-stamp" title={`Exported at ${fmtClock(couple.exportedAt)}`}>
+            ✓ {fmtClock(couple.exportedAt)}
+          </span>
+        )}
       </div>
       {status.kind === 'failed' && <div className="row-error">{status.message}</div>}
     </div>

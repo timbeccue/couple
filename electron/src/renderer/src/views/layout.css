@@ -1,0 +1,717 @@
+/* layout.css — the window's two arrangements (UX §V2.11; CompactLayout.tsx) and
+   the blocks they share: session line, couple list rows, pair preview (title,
+   PairStrip, monitor picker, status lines, inline candidate list), plus the FLIP
+   classes layoutFlip.ts toggles. One DOM tree: in compact the column wrappers are
+   `display: contents` and `order` stacks the four blocks; in full they are the
+   three columns. */
+
+.arrangement {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* ---------- full: three columns ---------- */
+
+.arrangement.full {
+  flex-direction: row;
+}
+
+.platform-darwin .arrangement.full {
+  padding-top: 30px; /* hiddenInset traffic-light clearance */
+}
+
+.arrangement.full .col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.arrangement.full .col-rail {
+  flex: none;
+  width: 300px;
+  border-right: 1px solid var(--border);
+}
+
+.arrangement.full .col-center {
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.arrangement.full .col-export {
+  flex: none;
+  width: 260px;
+  border-left: 1px solid var(--border);
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.arrangement.full .blk-hd,
+.arrangement.full .pool-slot,
+.arrangement.full .blk-ex,
+.arrangement.full .tools-slot {
+  flex: none;
+}
+
+.arrangement.full .blk-ls {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.arrangement.full .blk-pv {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.arrangement.full .files-slot {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- compact: four blocks top to bottom ---------- */
+
+.arrangement.compact {
+  flex-direction: column;
+}
+
+.arrangement.compact .col {
+  display: contents;
+}
+
+.arrangement.compact .blk-hd {
+  order: 1;
+  flex: none;
+}
+
+.arrangement.compact .blk-pv {
+  order: 2;
+  flex: none; /* the preview block is fixed: the list yields height first */
+  padding: 0 12px 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+.arrangement.compact .blk-ls {
+  order: 3;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: 10px;
+}
+
+.arrangement.compact .blk-ex {
+  order: 4;
+  flex: none;
+  padding: 12px;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
+}
+
+/* Empty session in compact: the drop target fills the preview area; the list keeps
+   its (empty) Ready section at its natural height under it. */
+.arrangement.compact.empty .blk-pv {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-bottom: none;
+}
+
+.arrangement.compact.empty .blk-ls {
+  flex: none;
+  padding-top: 0;
+}
+
+/* ---------- FLIP (layoutFlip.ts; mockup toggleFullD) ---------- */
+
+.full-only {
+  transition: opacity 0.3s ease 0.1s;
+}
+
+.root.animating .full-only {
+  opacity: 0;
+  transition: none;
+}
+
+.root.animating .blk {
+  position: absolute;
+  overflow: hidden;
+  z-index: 2;
+  transition:
+    left 0.5s cubic-bezier(0.2, 0.75, 0.2, 1),
+    top 0.5s cubic-bezier(0.2, 0.75, 0.2, 1),
+    width 0.5s cubic-bezier(0.2, 0.75, 0.2, 1),
+    height 0.5s cubic-bezier(0.2, 0.75, 0.2, 1);
+}
+
+.root.animating .blk-pv {
+  background: var(--bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .full-only,
+  .root.animating .blk {
+    transition: none;
+  }
+}
+
+/* ---------- session line ---------- */
+
+.session-spacer,
+.preview-spacer {
+  flex: 1 1 auto;
+}
+
+.rail-header-top .clear-session {
+  margin-right: 8px;
+}
+
+.arrangement-toggle {
+  position: relative;
+  z-index: 41; /* above the title-bar drag strip */
+  -webkit-app-region: no-drag;
+  flex: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.arrangement-toggle:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
+}
+
+.session-line.compact {
+  padding: 0 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-titlebar {
+  height: 28px;
+  display: flex;
+  align-items: center;
+}
+
+.platform-darwin .session-titlebar {
+  height: 30px;
+}
+
+.session-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.session-dot {
+  color: var(--none);
+}
+
+.session-counts {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.session-add {
+  flex: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.session-add:hover:not(:disabled) {
+  background: none;
+  color: var(--text);
+}
+
+/* ---------- couple list ---------- */
+
+.couple-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+
+.couple-list.scrolls {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.arrangement.compact .couple-list .section-label {
+  padding-top: 0;
+}
+
+.couple-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.couple-dur {
+  flex: none;
+  font: 9.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--none);
+}
+
+.couple-audio {
+  color: var(--text-dim);
+}
+
+.couple-audio.syncing {
+  color: var(--none);
+}
+
+.couple-marks {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.couple-include {
+  flex: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.couple-include:hover:not(:disabled) {
+  background: none;
+}
+
+.couple-include.on {
+  color: var(--good);
+}
+
+/* The action word ("pick one" red tint / "no audio" grey / "forced"). */
+.action-word {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--questionable);
+  background: rgba(224, 166, 60, 0.16);
+}
+
+.action-word.none {
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.action-word.good {
+  color: var(--good);
+  background: rgba(62, 207, 110, 0.16);
+}
+
+.action-chip {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 2px 5px;
+  border-radius: 8px;
+  color: var(--questionable);
+  background: rgba(224, 166, 60, 0.15);
+}
+
+.action-chip.none {
+  color: var(--none);
+  background: rgba(107, 111, 118, 0.15);
+}
+
+/* ---------- pair preview ---------- */
+
+.pair-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.arrangement.full .pair-preview {
+  flex: 1 1 auto;
+  padding: 22px 16px 8px;
+}
+
+.arrangement.full .pair-preview.empty {
+  padding: 0;
+}
+
+.pair-preview.compact {
+  gap: 6px;
+}
+
+.arrangement.compact .pair-preview.empty {
+  flex: 1 1 auto;
+}
+
+.arrangement.compact .import-surface {
+  margin: 0;
+}
+
+.preview-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.pair-preview.compact .preview-title {
+  gap: 6px;
+}
+
+.preview-title h2 {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.preview-join {
+  color: var(--none);
+}
+
+.preview-audio {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.preview-audio.external {
+  font-size: 12px;
+  color: var(--external);
+}
+
+/* Compact hero: a fixed 16:9 player (full keeps the greedy hero, editor.css). */
+.video-hero-wrap.compact {
+  flex: none;
+  min-height: 0;
+}
+
+.video-hero-wrap.compact .video-hero {
+  flex: none;
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  min-height: 0;
+  max-height: none;
+}
+
+.video-hero-wrap.compact .video-hero video {
+  width: 100%;
+  height: 100%;
+}
+
+.hero-strip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.hero-strip-row .hero-time {
+  flex: none;
+  min-width: 52px;
+}
+
+.hero-strip-row .hero-time.dur {
+  text-align: right;
+}
+
+.video-hero-wrap.compact .hero-strip-row {
+  gap: 6px;
+}
+
+.video-hero-wrap.compact .hero-strip-row .hero-time {
+  min-width: 40px;
+  font-size: 9.5px;
+}
+
+.video-hero-wrap.compact .hero-strip-row .hero-time.dur {
+  min-width: 32px;
+}
+
+.pair-strip {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.35);
+  cursor: default;
+  touch-action: none;
+}
+
+.video-hero-wrap.compact .pair-strip {
+  height: 30px;
+}
+
+.video-hero-wrap.compact .hero-transport {
+  gap: 8px;
+}
+
+.monitor-seg.compact {
+  flex: 1 1 auto;
+  display: flex;
+}
+
+.monitor-seg.compact button {
+  flex: 1 1 0;
+  padding: 3px 0;
+  font-size: 10.5px;
+}
+
+.offset-fit-line,
+.preview-status,
+.no-audio-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+  flex: none;
+  min-width: 0;
+}
+
+.offset-fit-line {
+  font: 9.5px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--none);
+}
+
+.preview-status {
+  font-size: 10px;
+}
+
+.preview-status .dim,
+.no-audio-line .dim {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.preview-status.audition .readout {
+  font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.preview-status .link-button {
+  font-size: 10px;
+}
+
+.no-audio-line {
+  font-size: 10.5px;
+  gap: 6px;
+}
+
+.no-audio-line .sep {
+  color: var(--none);
+}
+
+.no-audio-line .link-button {
+  font-size: 10.5px;
+}
+
+.link-button.strong {
+  font-weight: 600;
+  font-size: 11px;
+}
+
+/* Inline candidate list (§V2.6 resolve banner; PairPreview.swift ResolveBanner). */
+.pair-preview .resolve-banner {
+  flex: none;
+  margin: 0;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(224, 166, 60, 0.08);
+  border: 1px solid rgba(224, 166, 60, 0.3);
+}
+
+.pair-preview .resolve-banner.none {
+  background: rgba(107, 111, 118, 0.08);
+  border-color: rgba(107, 111, 118, 0.3);
+}
+
+.pair-preview .resolve-banner.good {
+  background: rgba(62, 207, 110, 0.06);
+  border-color: rgba(62, 207, 110, 0.25);
+}
+
+.resolve-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.resolve-head .title {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.resolve-icon {
+  font-size: 11px;
+  color: var(--questionable);
+}
+
+.resolve-reason {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.resolve-reason.dim {
+  color: var(--none);
+}
+
+.candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.pair-preview .candidate-row {
+  padding: 4px 6px;
+  border-radius: 5px;
+  gap: 8px;
+}
+
+.pair-preview .candidate-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.pair-preview .candidate-row.selected {
+  background: rgba(74, 158, 218, 0.06);
+  box-shadow: none;
+}
+
+.pair-preview .candidate-row.playing {
+  background: rgba(74, 158, 218, 0.12);
+}
+
+.cand-play {
+  flex: none;
+  width: 20px;
+  height: 16px;
+  padding: 0;
+  font-size: 8px;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-dim);
+  background: var(--bg-raised);
+}
+
+.cand-play.on {
+  color: var(--accent);
+  background: rgba(74, 158, 218, 0.18);
+}
+
+.cand-name {
+  font-size: 11px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.cand-strength {
+  flex: none;
+  position: relative;
+  width: 54px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.cand-strength > span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
+  background: rgba(62, 207, 110, 0.8);
+}
+
+.cand-cov {
+  flex: none;
+  width: 34px;
+  text-align: right;
+  font: 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--none);
+}
+
+.cand-current,
+.cand-use {
+  flex: none;
+  width: 58px;
+  text-align: right;
+}
+
+.cand-current {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.pair-preview .center-empty {
+  flex: 1 1 auto;
+  min-height: 120px;
+}
+
+/* Full arrangement: the editor tools under the preview. */
+.editor-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+
+.footer-bar > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}

@@ -1,11 +1,31 @@
 // Electron main process — deliberately thin (the plan's process model): window,
 // menus, native dialogs, reveal-in-file-manager. The engine lives in the
 // renderer (nodeIntegration) so hot-path calls stay synchronous in-process.
-import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, shell, type MenuItemConstructorOptions } from 'electron';
-import { createReadStream, existsSync } from 'node:fs';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  protocol,
+  screen,
+  shell,
+  type MenuItemConstructorOptions,
+  type Rectangle,
+} from 'electron';
+import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { Readable } from 'node:stream';
+import {
+  COMPACT_DEFAULT_SIZE,
+  COMPACT_MAX_WIDTH,
+  COMPACT_MIN_SIZE,
+  FULL_DEFAULT_SIZE,
+  FULL_MIN_SIZE,
+  LAYOUT_ANIMATION_MS,
+  type LayoutMode,
+} from '../renderer/src/app/layoutMode';
 
 function nativeDir(): string {
   // Dev: the repo's electron/native (the main bundle runs from out/main).
@@ -35,6 +55,33 @@ function licensesDir(): string {
  * renderer's own panel (which links to Acknowledgements) instead of the
  * native about box, and Acknowledgements listed under Help as well. */
 function installMenu(): void {
+  // View ▸ Compact Window / Full Window (⌘⇧C / Ctrl+Shift+C) — the same action as
+  // the session line's ⤢ Full / ⤡ Compact (UX §V2.11); the renderer runs the
+  // switch (window move + the blocks' FLIP).
+  const layoutItem: MenuItemConstructorOptions = {
+    label: layout.mode === 'compact' ? 'Full Window' : 'Compact Window',
+    accelerator: 'CmdOrCtrl+Shift+C',
+    click: () => {
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      win?.webContents.send('couple:toggle-layout');
+    },
+  };
+  const viewMenu: MenuItemConstructorOptions = {
+    label: 'View',
+    submenu: [
+      layoutItem,
+      { type: 'separator' },
+      { role: 'reload' },
+      { role: 'forceReload' },
+      { role: 'toggleDevTools' },
+      { type: 'separator' },
+      { role: 'resetZoom' },
+      { role: 'zoomIn' },
+      { role: 'zoomOut' },
+      { type: 'separator' },
+      { role: 'togglefullscreen' },
+    ],
+  };
   const send = (channel: string) => () => {
     const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
     win?.webContents.send(channel);
@@ -66,19 +113,284 @@ function installMenu(): void {
       : []),
     { role: 'fileMenu' },
     { role: 'editMenu' },
-    { role: 'viewMenu' },
+    viewMenu,
     { role: 'windowMenu' },
     { role: 'help', submenu: mac ? [acknowledgements] : [acknowledgements, about] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// ---------- arrangement + window frame (UX §V2.11; PLAN-COMPACT-MODE Phase 6) ----------
+// One window, two arrangements. Main owns the frame: each arrangement's last frame
+// and the mode persist in userData/Couple/window-layout.json (mode COMPACT when
+// absent — the first launch after the update opens compact, then last-used).
+// Compact: default 360 × 700, width 340–420, height free (min 560). Full: default
+// 1280 × 820, min 640 × 400. A dev-harness run forces the arrangement (full for
+// every existing COUPLE_*_TEST, compact for COMPACT / LAYOUT_TOGGLE) and never
+// writes the file, so a harness run cannot leak into the user's layout.
+
+interface LayoutFile {
+  mode?: LayoutMode;
+  frames?: Partial<Record<LayoutMode, Rectangle>>;
+}
+
+const harnessRun =
+  Object.keys(process.env).some((k) => /^COUPLE_[A-Z_]+_TEST$/.test(k) && !!process.env[k]) ||
+  !!process.env.COUPLE_SHOT_PATH ||
+  !!process.env.COUPLE_OPEN_DIR ||
+  !!process.env.COUPLE_AUTOQUIT_MS;
+
+const layout = {
+  mode: 'compact' as LayoutMode,
+  frames: {} as Partial<Record<LayoutMode, Rectangle>>,
+  persist: !harnessRun,
+  /** Set while main itself moves the window: frame events are not recorded. */
+  applying: false,
+};
+
+function layoutFile(): string {
+  return join(app.getPath('userData'), 'Couple', 'window-layout.json');
+}
+
+function loadLayout(): void {
+  if (harnessRun) {
+    const compactRun = !!process.env.COUPLE_COMPACT_TEST || !!process.env.COUPLE_LAYOUT_TOGGLE_TEST;
+    layout.mode = compactRun ? 'compact' : 'full';
+    return;
+  }
+  try {
+    const saved = JSON.parse(readFileSync(layoutFile(), 'utf8')) as LayoutFile;
+    layout.mode = saved.mode === 'full' ? 'full' : 'compact';
+    for (const m of ['compact', 'full'] as LayoutMode[]) {
+      const f = saved.frames?.[m];
+      if (f && f.width > 0 && f.height > 0) layout.frames[m] = f;
+    }
+  } catch {
+    layout.mode = 'compact'; // nothing stored ⇒ the first launch after the update
+  }
+}
+
+function saveLayout(): void {
+  if (!layout.persist) return;
+  try {
+    mkdirSync(join(app.getPath('userData'), 'Couple'), { recursive: true });
+    writeFileSync(layoutFile(), JSON.stringify({ mode: layout.mode, frames: layout.frames }, null, 2));
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Resize limits per arrangement: [min w, min h], [max w, max h] (0 = unbounded). */
+function limitsFor(mode: LayoutMode): { min: [number, number]; max: [number, number] } {
+  return mode === 'compact'
+    ? { min: [COMPACT_MIN_SIZE.width, COMPACT_MIN_SIZE.height], max: [COMPACT_MAX_WIDTH, 0] }
+    : { min: [FULL_MIN_SIZE.width, FULL_MIN_SIZE.height], max: [0, 0] };
+}
+
+/** The frame the window takes for `mode`: its last frame (clamped), else the
+ * default size anchored at the current top-left; kept on the current display. */
+function targetBounds(mode: LayoutMode, current: Rectangle | null): Rectangle {
+  const size = mode === 'compact' ? COMPACT_DEFAULT_SIZE : FULL_DEFAULT_SIZE;
+  let f: Rectangle = layout.frames[mode] ?? {
+    x: current?.x ?? 0,
+    y: current?.y ?? 0,
+    width: size.width,
+    height: size.height,
+  };
+  if (mode === 'compact') {
+    f = {
+      ...f,
+      width: Math.min(Math.max(f.width, COMPACT_MIN_SIZE.width), COMPACT_MAX_WIDTH),
+      height: Math.max(f.height, COMPACT_MIN_SIZE.height),
+    };
+  } else {
+    f = { ...f, width: Math.max(f.width, FULL_MIN_SIZE.width), height: Math.max(f.height, FULL_MIN_SIZE.height) };
+  }
+  const area = screen.getDisplayMatching(current ?? f).workArea;
+  const width = Math.min(f.width, area.width);
+  const height = Math.min(f.height, area.height);
+  const x = Math.min(Math.max(f.x, area.x), area.x + area.width - width);
+  const y = Math.min(Math.max(f.y, area.y), area.y + area.height - height);
+  return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+}
+
+/** Remember the window frame as the current arrangement's last frame — unless main
+ * is moving it, or the frame is outside the arrangement's clamps (a transient). */
+function recordFrame(win: BrowserWindow): void {
+  if (layout.applying || win.isDestroyed() || win.isFullScreen() || win.isMinimized()) return;
+  const b = win.getBounds();
+  if (b.width <= 0) return;
+  if (layout.mode === 'compact' && b.width > COMPACT_MAX_WIDTH + 0.5) return;
+  if (layout.mode === 'full' && b.width < FULL_MIN_SIZE.width - 0.5) return;
+  layout.frames[layout.mode] = b;
+}
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+function recordAndSaveSoon(win: BrowserWindow): void {
+  recordFrame(win);
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveLayout, 400);
+}
+
+function applyLimits(win: BrowserWindow, mode: LayoutMode): void {
+  const l = limitsFor(mode);
+  win.setMinimumSize(l.min[0], l.min[1]);
+  win.setMaximumSize(l.max[0], l.max[1]);
+}
+
+/** Move the window to `mode`'s frame. The outgoing arrangement's limits would
+ * refuse the incoming frame, so they are lifted for the move and the incoming
+ * ones applied once the window has arrived. macOS: the native animated
+ * `setBounds(…, true)`; elsewhere a ~0.5 s eased tween of setBounds. */
+function applyLayout(win: BrowserWindow, mode: LayoutMode, animate: boolean): void {
+  const target = targetBounds(mode, win.getBounds());
+  layout.mode = mode;
+  layout.applying = true;
+  win.setMinimumSize(COMPACT_MIN_SIZE.width, FULL_MIN_SIZE.height);
+  win.setMaximumSize(0, 0);
+  const finish = (): void => {
+    if (win.isDestroyed()) return;
+    const b = win.getBounds();
+    if (b.x !== target.x || b.y !== target.y || b.width !== target.width || b.height !== target.height) {
+      win.setBounds(target, false);
+    }
+    applyLimits(win, mode);
+    layout.applying = false;
+    recordFrame(win);
+    saveLayout();
+    installMenu(); // the View item's label follows the mode
+    win.webContents.send('couple:layout-settled', mode);
+  };
+  if (!animate) {
+    win.setBounds(target, false);
+    finish();
+    return;
+  }
+  if (process.platform === 'darwin') {
+    win.setBounds(target, true);
+    // The native animation may run asynchronously: wait until the frame arrives.
+    const started = Date.now();
+    const poll = setInterval(() => {
+      const b = win.isDestroyed() ? target : win.getBounds();
+      const there = b.width === target.width && b.height === target.height && b.x === target.x && b.y === target.y;
+      if (there || Date.now() - started > 1500) {
+        clearInterval(poll);
+        finish();
+      }
+    }, 16);
+    return;
+  }
+  const from = win.getBounds();
+  const t0 = Date.now();
+  // cubic-bezier(.2,.75,.2,1)-like ease-out (the mockup's curve), as an easeOutCubic.
+  const ease = (u: number): number => 1 - Math.pow(1 - u, 3);
+  const tick = setInterval(() => {
+    if (win.isDestroyed()) {
+      clearInterval(tick);
+      return;
+    }
+    const u = Math.min(1, (Date.now() - t0) / LAYOUT_ANIMATION_MS);
+    const k = ease(u);
+    const lerp = (a: number, b: number): number => Math.round(a + (b - a) * k);
+    win.setBounds(
+      {
+        x: lerp(from.x, target.x),
+        y: lerp(from.y, target.y),
+        width: lerp(from.width, target.width),
+        height: lerp(from.height, target.height),
+      },
+      false
+    );
+    if (u >= 1) {
+      clearInterval(tick);
+      finish();
+    }
+  }, 16);
+}
+
+/** Content size for window bounds `b` (the frame insets measured on `win`). */
+function contentSizeFor(win: BrowserWindow, b: Rectangle): { width: number; height: number } {
+  const outer = win.getBounds();
+  const inner = win.getContentBounds();
+  return { width: b.width - (outer.width - inner.width), height: b.height - (outer.height - inner.height) };
+}
+
+function installLayoutIpc(): void {
+  ipcMain.on('couple:layout-get', (e) => {
+    e.returnValue = { mode: layout.mode, persist: layout.persist };
+  });
+  ipcMain.handle('couple:layout-target', (e, mode: LayoutMode) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) return null;
+    recordFrame(win); // the outgoing arrangement's last frame
+    return contentSizeFor(win, targetBounds(mode, win.getBounds()));
+  });
+  ipcMain.on('couple:layout-apply', (e, req: { mode: LayoutMode; animate: boolean }) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) return;
+    recordFrame(win);
+    applyLayout(win, req.mode === 'full' ? 'full' : 'compact', !!req.animate);
+  });
+  ipcMain.handle('couple:layout-state', (e) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) return null;
+    return {
+      mode: layout.mode,
+      bounds: win.getBounds(),
+      minSize: win.getMinimumSize(),
+      maxSize: win.getMaximumSize(),
+      frames: layout.frames,
+      persist: layout.persist,
+    };
+  });
+  ipcMain.handle('couple:layout-set-bounds', async (e, frame: Rectangle) => {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) return;
+    win.setBounds(frame, false);
+    await new Promise((r) => setTimeout(r, 150));
+    recordFrame(win);
+  });
+  // Harness-only page capture (COUPLE_COMPACT_TEST / COUPLE_LAYOUT_TOGGLE_TEST shots).
+  ipcMain.handle('couple:capture', async (e, path: string) => {
+    if (!harnessRun) return false;
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win) return false;
+    const image = await win.webContents.capturePage();
+    writeFileSync(path, image.toPNG());
+    return true;
+  });
+  // A native context menu (the compact session line's Clear Session…): resolves to
+  // the picked item's id, or null when dismissed.
+  ipcMain.handle(
+    'couple:context-menu',
+    (e, items: Array<{ id: string; label: string; enabled?: boolean }>) =>
+      new Promise<string | null>((resolve) => {
+        const win = BrowserWindow.fromWebContents(e.sender);
+        let done = false;
+        const settle = (v: string | null): void => {
+          if (!done) {
+            done = true;
+            resolve(v);
+          }
+        };
+        const menu = Menu.buildFromTemplate(
+          items.map((i) => ({ label: i.label, enabled: i.enabled !== false, click: () => settle(i.id) }))
+        );
+        // The close callback can precede the click handler: let a click win.
+        menu.popup({ window: win ?? undefined, callback: () => setTimeout(() => settle(null), 100) });
+      })
+  );
+}
+
 function createWindow(): void {
+  const initial = targetBounds(layout.mode, null);
+  const limits = limitsFor(layout.mode);
+  const hasFrame = layout.frames[layout.mode] !== undefined;
   const win = new BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 980,
-    minHeight: 600,
+    ...(hasFrame ? initial : { width: initial.width, height: initial.height }),
+    minWidth: limits.min[0],
+    minHeight: limits.min[1],
+    ...(limits.max[0] > 0 ? { maxWidth: limits.max[0] } : {}),
     backgroundColor: '#161719',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
@@ -88,6 +400,13 @@ function createWindow(): void {
       contextIsolation: false,
       sandbox: false,
     },
+  });
+
+  win.on('resize', () => recordAndSaveSoon(win));
+  win.on('move', () => recordAndSaveSoon(win));
+  win.on('close', () => {
+    recordFrame(win);
+    saveLayout();
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -155,6 +474,18 @@ ipcMain.handle('couple:pick-media', async () => {
     properties: ['openFile', 'openDirectory', 'multiSelections'],
   });
   return r.canceled ? [] : r.filePaths;
+});
+// "No audio" → Choose file… (compact preview): one audio file.
+ipcMain.handle('couple:pick-audio', async () => {
+  const r = await dialog.showOpenDialog({
+    title: 'Choose the audio for this take',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Audio', extensions: ['wav', 'aif', 'aiff', 'mp3', 'm4a', 'flac', 'ogg', 'caf', 'mov', 'mp4'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  return r.canceled ? null : r.filePaths[0];
 });
 ipcMain.handle('couple:reveal', (_e, path: string) => {
   shell.showItemInFolder(path);
@@ -251,6 +582,8 @@ app.whenReady().then(() => {
       },
     });
   });
+  loadLayout();
+  installLayoutIpc();
   installMenu();
   createWindow();
   app.on('activate', () => {

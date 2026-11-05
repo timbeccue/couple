@@ -44,12 +44,18 @@ export function repairDrop(req: {
   videoAvailable: boolean;
   currentSelectedKey: string | null;
   droppedKey: string;
-  /** Carries PINNED (a manual pick) since PLAN-COMPACT-MODE D9; key name kept until Phase 6 (D12). */
-  approved: boolean;
+  /** The couple is PINNED (a manual pick) — the only gate for the replace
+   * confirmation since PLAN-COMPACT-MODE D9. */
+  pinned: boolean;
 }): RepairDropOutcome {
+  // D12: the wire key stays `approved` (it carries `pinned`); renamed here only.
+  const { pinned, ...rest } = req;
   // Conservative fallback: reject — mutates NO state.
-  return call<{ outcome: RepairDropOutcome }>(native.policyRepairDrop, req, { outcome: 'reject' })
-    .outcome;
+  return call<{ outcome: RepairDropOutcome }>(
+    native.policyRepairDrop,
+    { ...rest, approved: pinned },
+    { outcome: 'reject' }
+  ).outcome;
 }
 
 export function repairForced(req: { candidateZ: number; zMin: number; syncFailed: boolean }): boolean {
@@ -92,15 +98,24 @@ export interface RemovalPlan {
   removableKeys: string[];
   needsConfirmation: boolean;
   affectedCouples: number;
-  /** Affected couples INCLUDED for export (PLAN-COMPACT-MODE D7; key name kept until Phase 6, D12). */
-  affectedApproved: number;
+  /** Affected couples INCLUDED for export (PLAN-COMPACT-MODE D7). */
+  affectedIncluded: number;
 }
 
 export interface RemovalCouple {
   videoKey: string;
   selectedAudioKey: string | null;
-  /** Included for export (PLAN-COMPACT-MODE D7; was approved ≡ queued; key name kept per D12). */
-  approved: boolean;
+  /** Included for export (PLAN-COMPACT-MODE D7). */
+  included: boolean;
+}
+
+/** D12: the wire keys stay `approved` / `affectedApproved` (they carry "included");
+ * the TS surface uses the new names and maps at this boundary only. */
+function wireCouples(couples: RemovalCouple[]): unknown {
+  // A malformed (non-array) input passes through untouched so core rejects it and
+  // the caller gets the conservative fallback.
+  if (!Array.isArray(couples)) return couples;
+  return couples.map((c) => ({ videoKey: c.videoKey, selectedAudioKey: c.selectedAudioKey, approved: c.included }));
 }
 
 export function mediaRemovalPlan(req: {
@@ -109,21 +124,36 @@ export function mediaRemovalPlan(req: {
   couples: RemovalCouple[];
 }): RemovalPlan {
   // Conservative fallback: the EMPTY plan — a failure removes nothing.
-  return call<RemovalPlan>(native.policyMediaRemoval, { op: 'plan', ...req }, {
-    removableKeys: [],
-    needsConfirmation: false,
-    affectedCouples: 0,
-    affectedApproved: 0,
-  });
+  const wire = call<{
+    removableKeys: string[];
+    needsConfirmation: boolean;
+    affectedCouples: number;
+    affectedApproved: number;
+  }>(
+    native.policyMediaRemoval,
+    { op: 'plan', selectedKeys: req.selectedKeys, poolKeys: req.poolKeys, couples: wireCouples(req.couples) },
+    { removableKeys: [], needsConfirmation: false, affectedCouples: 0, affectedApproved: 0 }
+  );
+  return {
+    removableKeys: wire.removableKeys,
+    needsConfirmation: wire.needsConfirmation,
+    affectedCouples: wire.affectedCouples,
+    affectedIncluded: wire.affectedApproved,
+  };
 }
 
 export function clearSessionCounts(req: { mediaCount: number; couples: RemovalCouple[] }): {
   media: number;
   couples: number;
-  /** Couples included for export (D7; key name kept per D12). */
-  approved: number;
+  /** Couples included for export (D7). */
+  included: number;
 } {
-  return call(native.policyMediaRemoval, { op: 'clearCounts', ...req }, { media: 0, couples: 0, approved: 0 });
+  const wire = call<{ media: number; couples: number; approved: number }>(
+    native.policyMediaRemoval,
+    { op: 'clearCounts', mediaCount: req.mediaCount, couples: wireCouples(req.couples) },
+    { media: 0, couples: 0, approved: 0 }
+  );
+  return { media: wire.media, couples: wire.couples, included: wire.approved };
 }
 
 // ---------- anchors ----------

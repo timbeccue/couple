@@ -3,6 +3,8 @@
 // inside the always-visible three-column shell — there is no separate splash
 // screen. Drop anywhere in the window (App.tsx owns the drop target), or choose
 // files; a plain spinner (no percentage bar) while a drop is actively importing.
+// Compact (UX §V2.11): the same drop target fills the preview block; only the
+// orientation line's directions differ.
 import React from 'react';
 import { appModel } from '../app/AppModel';
 import { useModel } from '../app/observable';
@@ -16,11 +18,11 @@ async function pickAndIngest(): Promise<void> {
   if (paths.length > 0) appModel.ingest.importDropped(paths);
 }
 
-export function LoadSurface(): React.JSX.Element {
+export function LoadSurface({ compact = false }: { compact?: boolean }): React.JSX.Element {
   const model = useModel(appModel);
   useModel(model.pool);
   return (
-    <div className="import-surface">
+    <div className={`import-surface${compact ? ' compact' : ''}`}>
       <svg
         className="import-icon"
         width="34"
@@ -46,8 +48,9 @@ export function LoadSurface(): React.JSX.Element {
         Choose files…
       </button>
       <p className="import-hint">
-        Matched pairs appear in the queue on the left. Approve them here, then export from the
-        right rail.
+        {compact
+          ? "Matched pairs appear in the list below. Good matches are included in the export; untick any you don't want, then export."
+          : "Matched pairs appear in the list on the left. Good matches are included in the export; untick any you don't want, then export from the right rail."}
       </p>
       {model.pool.importing && (
         <div className="import-busy">
