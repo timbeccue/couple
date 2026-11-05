@@ -164,7 +164,7 @@ function RailHeader(): React.JSX.Element {
   return (
     <div className="rail-header">
       <div className="rail-header-top">
-        <CoupleWordmark height={12} />
+        <CoupleWordmark height={15} />
         <button
           className="clear-session"
           disabled={model.batch.isRunning || !model.hasContent}

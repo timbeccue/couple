@@ -66,7 +66,7 @@ struct QueueRail: View {
             HStack(alignment: .firstTextBaseline) {
                 // Brand wordmark: the C and O are the interlocked mark, UPLE the
                 // outlined glyphs — one lockup identical to design/logo/couple-wordmark.svg.
-                CoupleWordmark(height: 12)
+                CoupleWordmark(height: 15)
                 Spacer()
                 // Clear Session (TODO-001): a clearly-visible session control that
                 // returns to the initial import screen. Confirms with media/couple/

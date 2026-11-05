@@ -5,7 +5,7 @@
 // with the viewBox cropped to the lockup's bbox: x 21 (mark) .. 671.98 (the E's
 // advance end, CoupleWordmarkGlyphs.endX), y 41..159 in the file's 700x200
 // coordinates. The mark is 118 units tall, so `height` in px IS the mark height;
-// the Mac rail draws CoupleWordmark(height: 12) with the same frame. Dark-surface
+// both rails draw it at 15 (CoupleWordmark(height: 15) on the Mac). Dark-surface
 // art only, which is the only chrome the Electron shell has. Re-inline the paths
 // here whenever outline-uple.py regenerates the SVG.
 
