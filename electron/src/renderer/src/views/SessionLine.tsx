@@ -53,30 +53,33 @@ export function SessionLine({ compact }: { compact: boolean }): React.JSX.Elemen
     return (
       <div className="rail-header session-line">
         <div className="rail-header-top">
-          {/* 22 px (was 15; owner 2026-11-05: larger). */}
+          {/* 22 px (was 15; owner 2026-11-05: larger). At the rail's minimum width
+              this leaves room for ONE control beside it, so Clear Session… sits on
+              the counts row (SessionLine.swift). */}
           <CoupleWordmark height={22} />
           <span className="session-spacer" />
-          {/* Clear Session (TODO-001): returns to the import screen; confirms with
-              media/couple/included counts; disabled mid-export (the batch owns the
-              files). Hidden while the session is empty: nothing to clear (UX §V2.13). */}
-          {model.hasContent && (
-            <button
-              className="clear-session"
-              disabled={clearDisabled}
-              title="Discard this session and start over (does not delete source or exported files)"
-              onClick={() => appModel.requestClearSession()}
-            >
-              Clear Session…
-            </button>
-          )}
           <ArrangementToggle />
         </div>
         {/* Counts only once there is media (UX §V2.13): an empty rail reads as
-            quiet, not as a list of zeros. */}
+            quiet, not as a list of zeros. Clear Session (TODO-001) at the right of
+            the row: returns to the import screen; confirms with media/couple/
+            included counts; disabled mid-export (the batch owns the files); hidden
+            with the row while the session is empty (nothing to clear). */}
         {model.hasContent && (
           <>
             <div className="rail-counts">
-              {model.pool.videos.length} video · {model.pool.audios.length} audio
+              <span>
+                {model.pool.videos.length} video · {model.pool.audios.length} audio
+              </span>
+              <span className="session-spacer" />
+              <button
+                className="clear-session"
+                disabled={clearDisabled}
+                title="Discard this session and start over (does not delete source or exported files)"
+                onClick={() => appModel.requestClearSession()}
+              >
+                Clear Session…
+              </button>
             </div>
             <div className="rail-to-export">{model.includedCount} to export</div>
           </>

@@ -231,8 +231,12 @@
   gap: 5px;
 }
 
+/* One table per group: a FIXED first column keeps the action column aligned
+   across groups (KeyboardShortcutsView.swift uses the same fixed width). */
 .shortcuts-group table {
   border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
 }
 
 .shortcuts-group td {
@@ -242,7 +246,7 @@
 }
 
 .shortcuts-group td.keys {
-  min-width: 96px;
+  width: 112px;
   padding-right: 16px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11.5px;

@@ -113,7 +113,10 @@ struct KeyboardShortcutsView: View {
                                     Text(row.0)
                                         .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                                         .foregroundStyle(Theme.textSecondary)
-                                        .frame(minWidth: 96, alignment: .leading)
+                                        // Fixed, not minimum: each group is its own
+                                        // Grid, so only a fixed width keeps the
+                                        // action column aligned across groups.
+                                        .frame(width: 112, alignment: .leading)
                                     Text(row.1)
                                         .font(.system(size: 12))
                                         .foregroundStyle(Theme.textPrimary)

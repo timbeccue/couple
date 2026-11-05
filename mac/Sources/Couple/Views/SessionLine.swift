@@ -29,25 +29,28 @@ struct SessionLine: View {
             HStack(alignment: .firstTextBaseline) {
                 // Brand wordmark: the C and O are the interlocked mark, UPLE the
                 // outlined glyphs — one lockup identical to design/logo/couple-wordmark.svg.
-                // 22 pt (was 15; owner 2026-11-05: larger).
+                // 22 pt (was 15; owner 2026-11-05: larger). At the rail's minimum
+                // width this leaves room for ONE control beside it, so Clear
+                // Session… moved down to the counts row (it wrapped here).
                 CoupleWordmark(height: 22)
-                Spacer()
-                // Clear Session (TODO-001): a clearly-visible session control that
-                // returns to the initial import screen. Confirms with media/couple/
-                // included counts; disabled mid-export (the batch owns the files).
-                // Hidden while the session is empty: nothing to clear (UX §V2.13).
-                if model.hasContent {
-                    clearSessionButton
-                }
+                Spacer(minLength: 8)
                 ArrangementToggle()
-                    .padding(.leading, 6)
             }
             // Counts only once there is media (UX §V2.13): an empty rail reads as
-            // quiet, not as a list of zeros.
+            // quiet, not as a list of zeros. Clear Session… (TODO-001) sits at the
+            // right of this row: a clearly-visible session control that returns to
+            // the import screen; confirms with media/couple/included counts;
+            // disabled mid-export (the batch owns the files); hidden with the row
+            // while the session is empty (nothing to clear).
             if model.hasContent {
-                Text("\(model.pool.videos.count) video · \(model.pool.audios.count) audio")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.textSecondary)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("\(model.pool.videos.count) video · \(model.pool.audios.count) audio")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    clearSessionButton
+                }
                 Text("\(model.includedCount) to export")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(Theme.textTertiary)
@@ -65,6 +68,8 @@ struct SessionLine: View {
             Text("Clear Session…")
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .fixedSize()
         }
         .buttonStyle(.plain)
         .disabled(model.batch.isRunning || !model.hasContent)
@@ -136,6 +141,8 @@ struct ArrangementToggle: View {
             Text(compact ? "⤢ Full" : "⤡ Compact")
                 .font(.system(size: 10.5))
                 .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .fixedSize()
         }
         .buttonStyle(.plain)
         .help(compact ? "Open the full window: overview, loupes, sync tools, media pool (⌘⇧C)"

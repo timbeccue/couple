@@ -46,6 +46,7 @@
   font-size: 10px;
   color: var(--text-dim);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .clear-session:hover:not(:disabled) {
@@ -58,8 +59,12 @@
 }
 
 .rail-counts {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-size: 10px;
   color: var(--text-dim);
+  white-space: nowrap;
 }
 
 .rail-to-export {

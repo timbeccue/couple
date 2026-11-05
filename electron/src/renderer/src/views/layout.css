@@ -174,10 +174,6 @@
   flex: 1 1 auto;
 }
 
-.rail-header-top .clear-session {
-  margin-right: 8px;
-}
-
 .arrangement-toggle {
   position: relative;
   z-index: 41; /* above the title-bar drag strip */
