@@ -1523,3 +1523,64 @@ documented at both ends. Both sides rename in Phase 6. ADDITIVE —
   arrangements). The queue header's "N to export" status line (Phase 1 step
   5) is not in the design record's session line; recorded in PARITY as the
   plan states it.
+
+## 2026-11-05 — Compact mode Phases 1–4 (PLAN-COMPACT-MODE)
+
+Implemented on `claude/minimal-compact-ui-963b4a`, one commit per phase, mac
+shell first (`Shell-parity: n/a mac-first per PLAN-COMPACT-MODE Phase 6` on
+each; the Electron port is Phase 6). The plan was amended before Phase 1
+after an independent review: inclusion is **derived shell state**
+(`included = verdict good ∧ (explicit ?? exportedAt == nil)`) with the rule
+in `core/src/policy/export_include.rs`; `PairSession.verified` is NOT reused
+because core clears it on every sync success (`session.rs`), `resetAlignment`
+clears it and the per-pair session file restores it — reusing it would have
+silently dropped couples from the export after each auto-sync. D9–D12 were
+added in the same amendment.
+
+- **Phase 1a (d13dd6e)** — `export_include` policy (unit + proptests,
+  98 policy tests), `cpl_policy_export_include` envelope (ABI 1, header
+  regenerated), napi passthrough + `kit/Policies.ts exportInclude`, CoupleKit
+  `ExportIncludePolicy` mirror (exact-rule fallback) + tests. `row_merge`
+  protected = pinned only (D6); `media_removal` / `repair_drop` inputs carry
+  included / pinned under the kept wire keys (D7, D9, D12).
+- **Phase 1b (eb07be8)** — `CoupleRow.approved` → stored `explicit`/
+  `exportedAt` + derived `included`/`inFilesList`; `queue.json` optional
+  fields, schema string unchanged (a file saved under the approve model loads
+  with every good couple included — D1 as recorded). AppModel ready/toFix,
+  undoable `toggleInclude`, repair clears both inputs and `RepairSnapshot`
+  restores them; batch export exports `included`, stamps `exportedAt` per
+  success; `PairSession.exportAwait` no longer gates on the v1 `verified`
+  flag (the batch rows are never verified). Approve button and `v` removed.
+  Harness `COUPLE_INCLUDE_TEST` (23 checks).
+- **Phase 2 (4bfbcd4)** — dot-free rows (no verdict spine, no coverage strip,
+  "syncing…" text), ✓ HH:mm on exported rows, export rail in the D form with
+  the Files list (included ∪ exported).
+- **Phase 3 (86799df)** — `PairStrip` two-lane seek strip under the video;
+  candidate audition through a scratch session at the candidate's lag
+  (nothing pinned by listening); Change… / Undo / Compare others after a
+  manual pick; `MonitorPicker` compact variant. Harness
+  `COUPLE_CAND_AUDITION_TEST` (13 checks).
+- **8f2c1cb** — export-status race found by the include harness: a buffered
+  progress update could flip a row from `.done` back to `.running` after the
+  job finished; the progress reader now stops once cancelled. Files,
+  `exportedAt` and `queue.json` were never affected. The same unguarded loop
+  exists in `MediaPool.swift`, `IngestController.swift` and two other
+  `PairSession` loops — left for a separate change.
+- **Phase 4 (cf0d1f2)** — SessionLine / CoupleList / PairPreview /
+  ExportPanel extracted and shared by both arrangements; `CompactLayout`;
+  `LayoutMode` persisted (default compact on first launch after the update,
+  §6.1); per-arrangement frames; width clamped 340–420 while compact via
+  `.windowResizability(.contentSize)` (manual `NSWindow.minSize/maxSize` was
+  overwritten by SwiftUI, so the `.defaultSize` 1280×820 now lives in the
+  layout's target frame); Pan ↔ Synced mapping (D10); View menu ⌘⇧C.
+  Existing harness cases force the full arrangement; `COUPLE_COMPACT_TEST`
+  (11 checks, 5 shots) and `COUPLE_LAYOUT_TOGGLE_TEST` (22 checks: playback
+  continues across switches, frames and monitor mode round-trip) pass
+  headless on a synthetic session (3 takes + a second recorder on take 2 +
+  one video with no recorder audio; generated with ffmpeg lavfi sources —
+  the resolver gives confident / 2 sources / confident / no match).
+- Verification per phase: `cargo test --release -p couple-core --lib policy`,
+  `cargo build --release -p couple-ffi`, both `swift build -c release`
+  variants, `swift test` (134), the harness cases above. `golden-pair-rows`
+  unaffected (no resolver decision changed). The realdata verdict gate from
+  Phase 0 is STILL OUTSTANDING (no owner media on this machine).
