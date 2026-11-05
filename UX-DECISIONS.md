@@ -894,12 +894,13 @@ couples, deal with what is flagged, export.
   single-couple export button beside Export N (round 3 open question, dropped
   in round 4); no per-couple format or naming in compact.
 
-## V2.13 Quiet empty state, drop-zone copy, shortcut reference (DRAFT, 2026-11-05 — pending owner review)
+## V2.13 Quiet empty state, drop-zone copy, shortcut reference (DECIDED, owner 2026-11-05)
 
-Drafted from the owner's annotated screenshot of the empty full window
-(2026-11-05). Revises §V2.12 "Ready always shows" and the 2026-07-11 empty
-session entry for the EMPTY-SESSION case only; nothing changes once media is
-imported. Mark DECIDED (or strike) after the owner has seen it live.
+From the owner's annotated screenshot of the empty full window (2026-11-05);
+decided after the owner's live look the same day (the shortcuts button moved
+from a footer row into the export rail during that review). Revises §V2.12
+"Ready always shows" and the 2026-07-11 empty session entry for the
+EMPTY-SESSION case only; nothing changes once media is imported.
 
 - **Logo larger.** The wordmark in the rail header is 22 pt (was 15).
 - **An empty session shows no zeros.** With nothing imported the left rail is
