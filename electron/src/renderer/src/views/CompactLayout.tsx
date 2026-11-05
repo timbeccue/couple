@@ -21,6 +21,7 @@ import React from 'react';
 import { appModel } from '../app/AppModel';
 import { useModel } from '../app/observable';
 import { CoupleList } from './CoupleList';
+import { ShortcutsButton } from './ShortcutsView';
 import { EditorTools } from './CenterColumn';
 import { ExportPanel } from './ExportPanel';
 import { FilesList } from './ExportRail';
@@ -67,6 +68,11 @@ export function Arrangement(): React.JSX.Element {
         {!compact && (
           <div className="full-only files-slot">
             <FilesList />
+          </div>
+        )}
+        {!compact && (
+          <div className="full-only shortcuts-slot">
+            <ShortcutsButton />
           </div>
         )}
       </div>

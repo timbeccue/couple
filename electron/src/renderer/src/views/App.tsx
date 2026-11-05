@@ -19,6 +19,7 @@ import './layout.css';
 import { ToastStack } from './ToastStack';
 import { AboutView } from './AboutView';
 import { AcknowledgementsView } from './AcknowledgementsView';
+import { ShortcutsView, SHOW_SHORTCUTS_EVENT } from './ShortcutsView';
 
 const { webUtils, ipcRenderer } = (window as unknown as { require: NodeRequire }).require(
   'electron'
@@ -57,20 +58,29 @@ export function App(): React.JSX.Element {
       unlisten();
     };
   }, []);
-  // About / Acknowledgements overlays, opened from the application menu (main
-  // process) — the About panel is the way into Acknowledgements (docs/LICENSING §3).
-  // COUPLE_ACK_TEST opens Acknowledgements at startup for a harness screenshot.
-  const [panel, setPanel] = useState<'about' | 'acknowledgements' | null>(() =>
+  // About / Acknowledgements / Keyboard Shortcuts overlays, opened from the
+  // application menu (main process) — the About panel is the way into
+  // Acknowledgements (docs/LICENSING §3); shortcuts also open from the export
+  // rail's button and the `?` key (UX §V2.13). COUPLE_ACK_TEST opens Acknowledgements
+  // at startup for a harness screenshot.
+  const [panel, setPanel] = useState<'about' | 'acknowledgements' | 'shortcuts' | null>(() =>
     env.COUPLE_ACK_TEST ? 'acknowledgements' : null
   );
   useEffect(() => {
     const showAbout = () => setPanel('about');
     const showAck = () => setPanel('acknowledgements');
+    const showShortcuts = () => setPanel((p) => (p === 'shortcuts' ? null : 'shortcuts'));
     ipcRenderer.on('couple:show-about', showAbout);
     ipcRenderer.on('couple:show-acknowledgements', showAck);
+    ipcRenderer.on('couple:show-shortcuts', showShortcuts);
+    // The export rail's ShortcutsButton (CompactLayout.tsx) raises the same
+    // request as a DOM event — it sits below this component, so no prop drilling.
+    window.addEventListener(SHOW_SHORTCUTS_EVENT, showShortcuts);
     return () => {
       ipcRenderer.removeListener('couple:show-about', showAbout);
       ipcRenderer.removeListener('couple:show-acknowledgements', showAck);
+      ipcRenderer.removeListener('couple:show-shortcuts', showShortcuts);
+      window.removeEventListener(SHOW_SHORTCUTS_EVENT, showShortcuts);
     };
   }, []);
 
@@ -189,6 +199,10 @@ export function App(): React.JSX.Element {
         case 'Escape':
           appModel.audition.pause();
           break;
+        case '?': // the keyboard-shortcut reference (UX §V2.13); also Help ▸ ⌘/
+          setPanel('shortcuts');
+          e.preventDefault();
+          break;
       }
     };
     window.addEventListener('keydown', onKey);
@@ -211,27 +225,12 @@ export function App(): React.JSX.Element {
       {platform === 'darwin' && <div className="titlebar-drag" />}
       <Arrangement />
       <ActivityStrip />
-      {!compact && (
-      <div className="footer-bar full-only">
-        <span
-          style={{
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-            fontSize: 10,
-            color: 'rgba(216, 218, 222, 0.32)',
-          }}
-        >
-          j/k move · space play · ⏎ sync tools · l loupes · a camera/external · b both · esc stop · ⌘⇧C compact
-          <span style={{ marginLeft: 24 }}>
-            ←/→ offset 1 ms · ⇧ 10 · ⌥ 0.1 · [ ] drift · drag loupe = offset · ⇧-drag = pivot
-          </span>
-        </span>
-      </div>
-      )}
       <ToastStack />
       {panel === 'about' && (
         <AboutView onClose={() => setPanel(null)} onAcknowledgements={() => setPanel('acknowledgements')} />
       )}
       {panel === 'acknowledgements' && <AcknowledgementsView onClose={() => setPanel(null)} />}
+      {panel === 'shortcuts' && <ShortcutsView onClose={() => setPanel(null)} />}
     </div>
   );
 }

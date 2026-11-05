@@ -40,9 +40,10 @@ struct CoupleApp: App {
         .defaultSize(width: 1280, height: 820)
         .commands {
             // About opens our own panel (the standard one cannot link to
-            // Acknowledgements); Help lists Acknowledgements directly too.
+            // Acknowledgements); Help lists Keyboard Shortcuts (⌘/, UX §V2.13)
+            // and Acknowledgements directly too.
             CommandGroup(replacing: .appInfo) { AboutCommands() }
-            CommandGroup(after: .help) { AcknowledgementsCommands() }
+            CommandGroup(after: .help) { HelpCommands(model: model) }
             // View ▸ Compact Window / Full Window (⌘⇧C) — same action as the
             // session line's ⤢ Full / ⤡ Compact (UX §V2.11).
             CommandGroup(before: .toolbar) { LayoutCommands(model: model) }
@@ -71,9 +72,12 @@ private struct AboutCommands: View {
     }
 }
 
-private struct AcknowledgementsCommands: View {
+private struct HelpCommands: View {
     @Environment(\.openWindow) private var openWindow
+    let model: AppModel
     var body: some View {
+        Button("Keyboard Shortcuts") { model.shortcutsShown.toggle() }
+            .keyboardShortcut("/", modifiers: .command)
         Button("Acknowledgements") { openWindow(id: "acknowledgements") }
     }
 }

@@ -358,7 +358,9 @@ function PoolBox({
           + import
         </button>
       </div>
-      {!collapsed && (
+      {/* An EMPTY pool is just its header line (UX §V2.13): no empty list, no
+          placeholder player — "+ import" is all it has to offer. */}
+      {!collapsed && count > 0 && (
         <>
           <div className="pool-list" ref={listRef} style={{ maxHeight: poolMax }}>
             {model.pool.entries.map((entry) => (

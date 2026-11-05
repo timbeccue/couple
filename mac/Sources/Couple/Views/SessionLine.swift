@@ -2,7 +2,9 @@
 // media counts, the arrangement toggle and — per arrangement — the session controls.
 // One view for BOTH arrangements:
 //  - full (the left rail's header): the wordmark, Clear Session…, "⤡ Compact",
-//    the media counts and "N to export";
+//    the media counts and "N to export". In an EMPTY session only the wordmark
+//    and the toggle show (sidebar cleanup, UX §V2.13): no zero counts, no
+//    Clear Session… — the import surface is already the start screen;
 //  - compact: a title-bar row carrying "⤢ Full" at the right (the window is
 //    `.hiddenTitleBar`; the traffic lights sit at the left of that row), then
 //    "<session> · N video · N audio" with "+ Add" — the ONLY media-pool affordance
@@ -27,21 +29,29 @@ struct SessionLine: View {
             HStack(alignment: .firstTextBaseline) {
                 // Brand wordmark: the C and O are the interlocked mark, UPLE the
                 // outlined glyphs — one lockup identical to design/logo/couple-wordmark.svg.
-                CoupleWordmark(height: 15)
+                // 22 pt (was 15; owner 2026-11-05: larger).
+                CoupleWordmark(height: 22)
                 Spacer()
                 // Clear Session (TODO-001): a clearly-visible session control that
                 // returns to the initial import screen. Confirms with media/couple/
                 // included counts; disabled mid-export (the batch owns the files).
-                clearSessionButton
+                // Hidden while the session is empty: nothing to clear (UX §V2.13).
+                if model.hasContent {
+                    clearSessionButton
+                }
                 ArrangementToggle()
                     .padding(.leading, 6)
             }
-            Text("\(model.pool.videos.count) video · \(model.pool.audios.count) audio")
-                .font(.system(size: 10))
-                .foregroundStyle(Theme.textSecondary)
-            Text("\(model.includedCount) to export")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(Theme.textTertiary)
+            // Counts only once there is media (UX §V2.13): an empty rail reads as
+            // quiet, not as a list of zeros.
+            if model.hasContent {
+                Text("\(model.pool.videos.count) video · \(model.pool.audios.count) audio")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.textSecondary)
+                Text("\(model.includedCount) to export")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Theme.textTertiary)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 26) // traffic-light clearance
@@ -79,11 +89,15 @@ struct SessionLine: View {
                         .lineLimit(1).truncationMode(.middle)
                     Text("·").foregroundStyle(Theme.textTertiary)
                 }
-                Text("\(model.pool.videos.count) video · \(model.pool.audios.count) audio")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-                    .layoutPriority(1)
+                // Counts only once there is media (UX §V2.13); "+ Add" stays — it is
+                // the only pool affordance in compact (§6.4).
+                if model.hasContent {
+                    Text("\(model.pool.videos.count) video · \(model.pool.audios.count) audio")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                }
                 Spacer(minLength: 6)
                 Button { importerShown = true } label: {
                     Text("+ Add")

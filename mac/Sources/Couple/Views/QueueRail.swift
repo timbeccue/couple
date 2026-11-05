@@ -76,7 +76,9 @@ private struct MediaPoolSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             header
-            if !collapsed {
+            // An EMPTY pool is just its header line (UX §V2.13): no empty list, no
+            // placeholder player — the "+ import" affordance is all it has to offer.
+            if !collapsed, !model.pool.isEmpty {
                 // Bounded so a long pool scrolls WITHIN the box instead of pushing
                 // the sticky footer off-screen. The bound is no longer a fixed cap
                 // (SPEC-CHANGE 2026-07-01): the list may grow into rail height the

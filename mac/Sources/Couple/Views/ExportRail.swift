@@ -5,7 +5,9 @@
 // `<stem>_synced.<ext>` per couple, stem editable in place with ↺ reset, per-file
 // status; an exported row shows its ✓ time from `exportedAt` (D8). Each
 // per-couple job is the unchanged Phase-4 pipeline, so a batch is byte-identical
-// to the CLI export, couple by couple.
+// to the CLI export, couple by couple. The rail's bottom-right corner carries the
+// "Keyboard shortcuts" button (ShortcutsButton, UX §V2.13) — inside the rail
+// rather than on a footer row of its own, so no window height goes to it.
 
 import AppKit
 import CoupleKit
@@ -34,6 +36,11 @@ struct ExportRail: View {
                 .layoutExtra()
             }
             Spacer(minLength: 0)
+            HStack {
+                Spacer(minLength: 0)
+                ShortcutsButton()
+            }
+            .layoutExtra()
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

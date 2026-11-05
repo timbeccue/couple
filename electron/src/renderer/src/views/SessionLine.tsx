@@ -2,7 +2,9 @@
 // toggle and the session controls (UX §V2.11; port of SessionLine.swift). One view
 // for BOTH arrangements:
 //  - full (the left rail's header): the wordmark, Clear Session…, "⤡ Compact",
-//    the media counts and "N to export";
+//    the media counts and "N to export". In an EMPTY session only the wordmark
+//    and the toggle show (sidebar cleanup, UX §V2.13): no zero counts, no
+//    Clear Session… — the import surface is already the start screen;
 //  - compact: a title-bar row carrying "⤢ Full" at the right (the window has a
 //    hidden title bar; the traffic lights sit at the left of that row on macOS),
 //    then "<session> · N video · N audio" with "+ Add" — the ONLY media-pool
@@ -51,24 +53,34 @@ export function SessionLine({ compact }: { compact: boolean }): React.JSX.Elemen
     return (
       <div className="rail-header session-line">
         <div className="rail-header-top">
-          <CoupleWordmark height={15} />
+          {/* 22 px (was 15; owner 2026-11-05: larger). */}
+          <CoupleWordmark height={22} />
           <span className="session-spacer" />
           {/* Clear Session (TODO-001): returns to the import screen; confirms with
-              media/couple/included counts; disabled mid-export (the batch owns the files). */}
-          <button
-            className="clear-session"
-            disabled={clearDisabled}
-            title="Discard this session and start over (does not delete source or exported files)"
-            onClick={() => appModel.requestClearSession()}
-          >
-            Clear Session…
-          </button>
+              media/couple/included counts; disabled mid-export (the batch owns the
+              files). Hidden while the session is empty: nothing to clear (UX §V2.13). */}
+          {model.hasContent && (
+            <button
+              className="clear-session"
+              disabled={clearDisabled}
+              title="Discard this session and start over (does not delete source or exported files)"
+              onClick={() => appModel.requestClearSession()}
+            >
+              Clear Session…
+            </button>
+          )}
           <ArrangementToggle />
         </div>
-        <div className="rail-counts">
-          {model.pool.videos.length} video · {model.pool.audios.length} audio
-        </div>
-        <div className="rail-to-export">{model.includedCount} to export</div>
+        {/* Counts only once there is media (UX §V2.13): an empty rail reads as
+            quiet, not as a list of zeros. */}
+        {model.hasContent && (
+          <>
+            <div className="rail-counts">
+              {model.pool.videos.length} video · {model.pool.audios.length} audio
+            </div>
+            <div className="rail-to-export">{model.includedCount} to export</div>
+          </>
+        )}
       </div>
     );
   }
@@ -99,9 +111,13 @@ export function SessionLine({ compact }: { compact: boolean }): React.JSX.Elemen
             <span className="session-dot">·</span>
           </>
         )}
-        <span className="session-counts">
-          {model.pool.videos.length} video · {model.pool.audios.length} audio
-        </span>
+        {/* Counts only once there is media (UX §V2.13); "+ Add" stays — the only
+            pool affordance in compact (§6.4). */}
+        {model.hasContent && (
+          <span className="session-counts">
+            {model.pool.videos.length} video · {model.pool.audios.length} audio
+          </span>
+        )}
         <span className="session-spacer" />
         <button
           className="session-add"

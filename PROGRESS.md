@@ -1627,3 +1627,35 @@ added in the same amendment.
   match, `scripts/shell-drift-check.sh main` ok, `third-party-notices --check`
   up to date, `swift test` 134 passed, Electron typecheck/vitest 76/parity/
   smoke green (Phase 6).
+
+## 2026-11-05 — Empty-state cleanup, drop-zone copy, shortcut reference (draft)
+
+Drafted from the owner's annotated screenshot of the empty full window; recorded
+as UX-DECISIONS §V2.13 (DRAFT — pending the owner's live look). Both shells.
+
+- **Wordmark 22 pt** in the rail header (was 15). `SessionLine.swift` /
+  `SessionLine.tsx`; SHELL-UI-PARITY updated.
+- **Quiet empty session**: counts, "N to export", Clear Session… (full header),
+  the compact line's counts, the Ready section and the pool's empty list +
+  placeholder player are all gated on `hasContent` / a non-empty pool. The
+  pool header ("MEDIA POOL · 0", "+ import") stays as the rail's bottom line.
+  `SessionLine`, `CoupleList`, `QueueRail` (MediaPoolSection) in both shells.
+  The compact empty state still mounts the (now empty) list block so the
+  arrangement FLIP has its frame.
+- **Drop zone**: "Drop audio and video files"; the rails-orientation paragraph
+  removed. `LoadSurface.swift` lost its `compact` parameter (nothing differed
+  any more); `LoadSurface.tsx` keeps the prop (it drives the margin class).
+- **Shortcut reference** replaces the footer cheat strip — and the footer
+  row itself (owner, same day: no window height for it): `ShortcutsButton`
+  sits at the bottom-right of the export rail with the reference as its
+  popover (`KeyboardShortcutsView.swift`, new; `FooterBar` removed from
+  RootView); `AppModel.shortcutsShown`; `?` toggles and Esc closes it
+  (`InputRouter`); Help ▸ Keyboard Shortcuts ⌘/ (`CoupleApp.swift`
+  HelpCommands, replacing AcknowledgementsCommands); compact presents it as a
+  sheet (RootView) with the compact-only rows. Electron: `ShortcutsView.tsx`
+  (modal overlay, `useModalKeys`), footer button, `?` key, Help menu item
+  `CmdOrCtrl+/` → `couple:show-shortcuts`; the rail button
+  (`ShortcutsButton` in ShortcutsView.tsx, placed by CompactLayout.tsx) raises
+  a DOM event App.tsx listens for. The `.footer-bar` CSS is gone.
+- Not a SPEC-CHANGE: §2.1 / §12 never specified the empty rail's contents or
+  the footer; the keys themselves are unchanged.

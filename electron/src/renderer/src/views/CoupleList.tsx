@@ -1,5 +1,6 @@
 // CoupleList.tsx — the two workflow sections (UX §V2.11 / §V2.12; port of
-// CoupleList.swift): TO FIX (hidden when empty, D11) above READY (always shown,
+// CoupleList.swift): TO FIX (hidden when empty, D11) above READY (always shown
+// once the session has media — an EMPTY session shows no sections, UX §V2.13;
 // dimmed "—" when empty), and the couple rows. One view for BOTH arrangements: the
 // full window's left rail and the compact arrangement's flexible middle block.
 // Only the rows scroll; selecting a row previews it and never moves the list
@@ -159,9 +160,14 @@ export function CoupleList({
   const model = useModel(appModel);
   return (
     <div className={`couple-list${scrolls ? ' scrolls' : ''}`} ref={scrollRef}>
-      {/* D2/D11: To fix above Ready; an empty To fix is hidden, Ready always shows. */}
-      {model.toFix.length > 0 && <Section title="TO FIX" couples={model.toFix} />}
-      <Section title="READY" couples={model.ready} />
+      {/* D2/D11: To fix above Ready; an empty To fix is hidden, Ready always shows —
+          once there is media. Nothing imported yet ⇒ no sections (UX §V2.13). */}
+      {model.hasContent && (
+        <>
+          {model.toFix.length > 0 && <Section title="TO FIX" couples={model.toFix} />}
+          <Section title="READY" couples={model.ready} />
+        </>
+      )}
     </div>
   );
 }

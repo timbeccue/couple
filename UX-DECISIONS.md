@@ -893,3 +893,39 @@ couples, deal with what is flagged, export.
   line (round 2 → round 3: the checkbox alone is the opt-out); no "This one"
   single-couple export button beside Export N (round 3 open question, dropped
   in round 4); no per-couple format or naming in compact.
+
+## V2.13 Quiet empty state, drop-zone copy, shortcut reference (DRAFT, 2026-11-05 — pending owner review)
+
+Drafted from the owner's annotated screenshot of the empty full window
+(2026-11-05). Revises §V2.12 "Ready always shows" and the 2026-07-11 empty
+session entry for the EMPTY-SESSION case only; nothing changes once media is
+imported. Mark DECIDED (or strike) after the owner has seen it live.
+
+- **Logo larger.** The wordmark in the rail header is 22 pt (was 15).
+- **An empty session shows no zeros.** With nothing imported the left rail is
+  the wordmark and the arrangement toggle, then the media pool's header line
+  ("MEDIA POOL · 0", "+ import") at the bottom. Hidden until there is media:
+  the "N video · N audio" and "N to export" lines, Clear Session… (nothing to
+  clear — the import surface is already the start screen), the Ready section
+  (§V2.12's "Ready always shows" now reads "always shows once the session has
+  media"), the pool's empty list and its placeholder player. The compact
+  session line drops its counts the same way and keeps "+ Add".
+- **Drop zone copy.** Title "Drop audio and video files" (was "Drop a
+  recording session"); the explanatory line and "Choose files…" stay; the
+  orientation paragraph about the rails ("Matched pairs appear in the list on
+  the left…") is gone — it added noise, and the rails are now quiet instead.
+- **Keyboard shortcuts are a reference, not a strip.** The footer's one-line
+  mono cheat strip was too small to read. A single "Keyboard shortcuts"
+  button at the **bottom-right of the export rail** opens a readable list
+  grouped Session / Monitor / Sync tools / Media pool, each row a key and a
+  plain-language action. The footer row itself is gone (owner, same day: the
+  button must not cost a row of window height — it lives in the export
+  rail's grey box instead); the activity strip still appears along the
+  bottom while work runs. The same list opens from **Help ▸ Keyboard
+  Shortcuts (⌘/)** and the **`?`** key; Esc closes it. In compact (no
+  button) the menu item and `?` open it as a sheet, listing only the keys
+  that apply there (§V2.11). Electron: a modal overlay in both arrangements.
+- **Not done (deliberately):** no change to what the keys do; no onboarding
+  or first-run tour; the pool's "+ import" stays in the empty header (it is
+  the pool's own add affordance, and the compact line's "+ Add" has the
+  same role).

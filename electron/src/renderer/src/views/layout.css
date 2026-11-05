@@ -75,6 +75,11 @@
   flex-direction: column;
 }
 
+.arrangement.full .col-export {
+  display: flex;
+  flex-direction: column;
+}
+
 /* ---------- compact: four blocks top to bottom ---------- */
 
 .arrangement.compact {
@@ -709,9 +714,9 @@
   padding: 0 16px 12px;
 }
 
-.footer-bar > span {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
+.arrangement.full .shortcuts-slot {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
 }

@@ -29,12 +29,13 @@ struct CompactLayout: View {
                     .layoutBlock(.list)
                     .padding(.top, 10)
             } else {
-                LoadSurface(compact: true)
+                LoadSurface()
                     .layoutBlock(.preview)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 10)
                     .frame(maxHeight: .infinity)
-                // The list keeps its (empty) Ready section under the drop target.
+                // The list block stays (the arrangement switch FLIPs it) but draws
+                // nothing in an empty session (UX §V2.13).
                 CoupleList(scrolls: false)
                     .layoutBlock(.list)
                     .padding(.bottom, 8)

@@ -101,6 +101,9 @@ final class AppModel {
     // Bottom-bar toggles (§V2.4): same-place on/off switches, nothing repositions.
     var syncToolsExpanded = false
     var loupesShown = false
+    /// The keyboard-shortcut reference (KeyboardShortcutsView): footer button,
+    /// Help ▸ Keyboard Shortcuts (⌘/) or `?`; Esc closes it (UX §V2.13).
+    var shortcutsShown = false
 
     // MARK: Arrangement (UX §V2.11; PLAN-COMPACT-MODE Phase 4) — see WindowLayout.swift
 
