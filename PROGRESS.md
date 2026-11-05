@@ -1631,7 +1631,7 @@ added in the same amendment.
 ## 2026-11-05 — Empty-state cleanup, drop-zone copy, shortcut reference (draft)
 
 Drafted from the owner's annotated screenshot of the empty full window; recorded
-as UX-DECISIONS §V2.13 (DRAFT — pending the owner's live look). Both shells.
+as UX-DECISIONS §V2.13 (DECIDED after the owner's live look the same day). Both shells.
 
 - **Wordmark 22 pt** in the rail header (was 15). `SessionLine.swift` /
   `SessionLine.tsx`; SHELL-UI-PARITY updated.
