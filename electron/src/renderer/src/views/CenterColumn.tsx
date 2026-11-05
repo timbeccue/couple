@@ -19,6 +19,29 @@ import { LoupeArea } from './LoupeView';
 import { VideoHero } from './VideoHero';
 import { LoadSurface } from './LoadSurface';
 
+/** Loupes glyph: inline-SVG twin of the SF Symbol `rectangle.split.3x1` the Swift
+ * CenterColumn toggle uses. Drawn rather than typed as ◫ (U+25EB) because that
+ * code point is not in the UI font stack (-apple-system / Segoe UI / Roboto) and
+ * only renders via per-platform fallback fonts — tofu where none has it. */
+function LoupesIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ verticalAlign: '-2px', marginRight: 2 }}
+    >
+      <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+      <path d="M5.8 3.5 V12.5 M10.2 3.5 V12.5" />
+    </svg>
+  );
+}
+
 function pickCandidate(coupleId: string, candidate: RowCandidate): void {
   const couple = appModel.couples.find((c) => c.id === coupleId);
   if (!couple || couple.selectedAudioKey === candidate.audioKey) return;
@@ -237,7 +260,7 @@ function SyncToolsBar({
           disabled={pair.anchors.length === 0}
           onClick={() => setLoupesShown(!loupesShown)}
         >
-          ◫ loupes
+          <LoupesIcon /> loupes
         </button>
         <span className="wave-spacer" />
         <button
