@@ -130,6 +130,16 @@ rename them.
   bundle a dev build, and warns if it links non-system dylibs (a Homebrew copy
   breaks on `brew upgrade` — the 2026-11-01 "unsupported format" failure).
 - `cd mac && swift test`
+- `scripts/side-by-side.sh [ref] [--open <dir>] [--mac-only|--electron-only] [--no-tile] [--fresh]`
+  — build and launch the mac dev-harness binary and `electron-vite dev` from one
+  checkout, tiled side by side, for manual parity checks. No ref = this checkout
+  as on disk; a ref checked out in any worktree uses that worktree; any other
+  ref gets a reusable detached worktree under `~/.couple-compare/<slug>/`
+  (shared cargo `target/` there). `--open` preloads the same folder into both
+  (`COUPLE_PAIR_DIR` / `COUPLE_OPEN_DIR`; both shells then start in the full
+  arrangement and skip layout persistence — without it, both start compact).
+  Ctrl-C quits both; logs in `$TMPDIR/couple-side-by-side/`. From a Claude
+  session: `/side-by-side [args]` (project skill, `.claude/skills/side-by-side/`).
 - Release (Electron installers → DRAFT GitHub Release; `.github/workflows/release.yml`):
   fires ONLY on a pushed `v*` tag (`git tag v0.1.0 && git push origin v0.1.0`),
   never on ordinary pushes; the draft is published by hand. The tag is the
