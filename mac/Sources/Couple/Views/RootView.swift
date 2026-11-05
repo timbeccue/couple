@@ -19,19 +19,16 @@ struct RootView: View {
 
     var body: some View {
         @Bindable var model = model
-        return VStack(spacing: 0) {
-            // One window, two arrangements of the same session (UX §V2.11). The
-            // switch is instant until Phase 5 animates it; the window frame moves to
-            // the arrangement's last frame (AppModel.setLayoutMode).
+        // One window, two arrangements of the same session (UX §V2.11). The switch
+        // is animated (AppModel.animateLayoutSwitch, WindowLayout.swift): the
+        // incoming arrangement is swapped in at once, pinned at its final size
+        // (top-left) while the window frame moves, and its four blocks FLIP from
+        // their old frames to their new ones; Reduce Motion ⇒ instant.
+        let pinned = model.layoutAnimating ? model.layoutTransitionSize : nil
+        return ZStack(alignment: .topLeading) {
             switch model.layoutMode {
             case .compact:
-                // Width 340–420, height free (min 560) — §6.2. With the scene's
-                // `.windowResizability(.contentSize)` these become the window's
-                // own resize limits while compact.
                 CompactLayout()
-                    .frame(minWidth: AppModel.compactMinSize.width,
-                           maxWidth: AppModel.compactMaxWidth,
-                           minHeight: AppModel.compactMinSize.height)
             case .full:
                 VStack(spacing: 0) {
                     HSplitView {
@@ -50,10 +47,22 @@ struct RootView: View {
                     // idle, so the footer sits directly below the columns until work starts.
                     ActivityStripView()
                     FooterBar()
+                        .layoutExtra()
                 }
-                .frame(minWidth: AppModel.fullMinSize.width, minHeight: AppModel.fullMinSize.height)
             }
         }
+        .id(model.layoutRenderEpoch)
+        // While the switch animates: the incoming arrangement at its final size,
+        // anchored top-left (the moving window edge reveals / covers it).
+        .frame(width: pinned?.width, height: pinned?.height, alignment: .topLeading)
+        // Per-arrangement limits — with the scene's `.windowResizability(.contentSize)`
+        // these are the window's own resize limits: compact width 340–420, height
+        // free (min 560) — §6.2; full min 640 × 400. Lifted while animating.
+        .frame(minWidth: rootMinSize.width,
+               maxWidth: model.layoutAnimating ? .infinity : (model.layoutMode == .compact ? AppModel.compactMaxWidth : nil),
+               minHeight: rootMinSize.height,
+               maxHeight: model.layoutAnimating ? .infinity : nil,
+               alignment: .topLeading)
         // Hands the hosting NSWindow to the model once (frame + clamps per arrangement).
         .background(WindowAccessor { model.attachWindow($0) })
         .background(Theme.windowBg)
@@ -123,6 +132,13 @@ struct RootView: View {
         } message: { pending in
             Text(clearMessage(pending))
         }
+    }
+
+    private var rootMinSize: CGSize {
+        if model.layoutAnimating {
+            return CGSize(width: AppModel.compactMinSize.width, height: AppModel.fullMinSize.height)
+        }
+        return model.layoutMode == .compact ? AppModel.compactMinSize : AppModel.fullMinSize
     }
 
     /// Consequence-focused copy for the per-file removal dialog (TODO-001): how many

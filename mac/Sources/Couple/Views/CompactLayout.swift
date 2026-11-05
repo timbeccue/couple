@@ -15,8 +15,10 @@ struct CompactLayout: View {
     var body: some View {
         VStack(spacing: 0) {
             SessionLine(compact: true)
+                .layoutBlock(.session)
             if model.hasContent {
                 PairPreview(compact: true, candidateMaxHeight: 132)
+                    .layoutBlock(.preview)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 10)
                     // The preview block is fixed: the list yields height first, so
@@ -24,14 +26,17 @@ struct CompactLayout: View {
                     .layoutPriority(1)
                 Rectangle().fill(Theme.panelStroke).frame(height: 1)
                 CoupleList()
+                    .layoutBlock(.list)
                     .padding(.top, 10)
             } else {
                 LoadSurface(compact: true)
+                    .layoutBlock(.preview)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 10)
                     .frame(maxHeight: .infinity)
                 // The list keeps its (empty) Ready section under the drop target.
                 CoupleList(scrolls: false)
+                    .layoutBlock(.list)
                     .padding(.bottom, 8)
             }
             ExportPanel()
@@ -41,6 +46,7 @@ struct CompactLayout: View {
                 .overlay(alignment: .top) {
                     Rectangle().fill(Theme.panelStroke).frame(height: 1)
                 }
+                .layoutBlock(.export)
             ActivityStripView()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

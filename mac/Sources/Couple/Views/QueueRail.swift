@@ -25,6 +25,7 @@ struct QueueRail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SessionLine()
+                .layoutBlock(.session)
             // Two independent scroll regions (redesign 2026-06-15): the couples take
             // the GREEDY top region (CoupleList's own bounded ScrollView, shared with
             // the compact arrangement — PLAN-COMPACT-MODE 4.1), and the media pool is
@@ -32,9 +33,11 @@ struct QueueRail: View {
             // player, so the sticky bar stays put while either list scrolls.
             CoupleList(onContentHeight: { couplesContentH = $0 },
                        onViewportHeight: { couplesViewportH = $0 })
+                .layoutBlock(.list)
             MediaPoolSection(listMaxHeight: poolListMax,
                              listViewportH: $poolListViewportH,
                              listContentH: $poolListContentH)
+                .layoutExtra()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Theme.panelBg)

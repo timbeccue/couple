@@ -128,6 +128,26 @@ final class AppModel {
     /// remembers that the user's mode was Pan, restored on returning to full.
     @ObservationIgnored var panHeldForCompact = false
     @ObservationIgnored var windowObservers: [NSObjectProtocol] = []
+    /// Phase 5 (WindowLayout.swift): true while the arrangement switch animates —
+    /// the root pins its content at the incoming arrangement's size and the window
+    /// frame moves alongside.
+    var layoutAnimating = false
+    /// The incoming arrangement's content size while `layoutAnimating`.
+    var layoutTransitionSize: CGSize = .zero
+    /// Surfaces unique to one arrangement (overview, loupes, bottom bar, Files list,
+    /// media pool, footer) stay transparent until the four blocks settle, then fade in.
+    var layoutExtrasHidden = false
+    /// FLIP: each block's outgoing frame while the switch plays (empty at rest).
+    var layoutFlipFrom: [String: CGRect] = [:]
+    /// Split-view panes unclipped for the move: (view, clipsToBounds, masksToBounds).
+    @ObservationIgnored var unclippedViews: [(NSView, Bool, Bool)] = []
+    /// Harness override for Reduce Motion (nil = follow the system setting).
+    @ObservationIgnored var layoutMotionOverride: Bool?
+    /// Each block's last frame in window coordinates (harness checks only).
+    @ObservationIgnored var layoutBlockFrames: [String: CGRect] = [:]
+    /// Bumped by the harness to force a fresh render of the arrangement (the
+    /// leftover-offset check compares settled block frames against it).
+    var layoutRenderEpoch = 0
 
     // Export rail (§V2.8 / §6); the batch coordinator lives in BatchExport.swift.
     // Naming is per-file (each couple's filename is edited in place); format is a

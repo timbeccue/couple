@@ -72,18 +72,22 @@ struct CenterColumn: View {
     private var content: some View {
         VStack(spacing: 8) {
             PairPreview(candidateMaxHeight: CenterLayout.candidateScrollCap(containerHeight: containerHeight))
+                .layoutBlock(.preview)
 
             if model.selectedCouple?.pair.session != nil {
                 if model.loupesShown {
                     LoupeArea()
                         .frame(height: model.pair.loupeLayout == .grid ? 220 : loupeStackHeight)
                         .padding(.horizontal, 14)
+                        .layoutExtra()
                 }
                 WaveformRow()
                     .frame(height: 124)
+                    .layoutExtra()
             }
 
             BottomBar()
+                .layoutExtra()
         }
     }
 

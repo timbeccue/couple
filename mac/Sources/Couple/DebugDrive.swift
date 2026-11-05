@@ -196,7 +196,7 @@ final class DebugDrive {
             await candidateAuditionTest(shotDir: env["COUPLE_SHOT_DIR"])
         }
         if env["COUPLE_LAYOUT_TOGGLE_TEST"] == "1" {
-            await layoutToggleTest()
+            await layoutToggleTest(shotDir: env["COUPLE_SHOT_DIR"])
         }
         if env["COUPLE_COMPACT_TEST"] == "1" {
             await compactTest(shotDir: env["COUPLE_SHOT_DIR"])
@@ -327,7 +327,7 @@ final class DebugDrive {
     /// unchanged, playhead advanced (never reset), inclusion flags unchanged, the
     /// window restored to each arrangement's last frame, and the monitor mode round-
     /// trips Pan (full) → Synced (compact) → Pan (full) (D10).
-    private func layoutToggleTest() async {
+    private func layoutToggleTest(shotDir: String?) async {
         guard let model else { return }
         var pass = 0, fail = 0
         func check(_ name: String, _ ok: Bool) {
@@ -339,6 +339,83 @@ final class DebugDrive {
                 && abs(a.width - b.width) < 1 && abs(a.height - b.height) < 1
         }
         func fs(_ r: NSRect) -> String { String(format: "%.0f,%.0f %.0f×%.0f", r.minX, r.minY, r.width, r.height) }
+        // Phase 5: every switch below animates (whatever the machine's Reduce Motion).
+        model.layoutMotionOverride = true
+        func rs(_ r: CGRect?) -> String {
+            guard let r else { return "–" }
+            return String(format: "%.0f,%.0f %.0f×%.0f", r.minX, r.minY, r.width, r.height)
+        }
+        var midwayShot = false
+        /// Animated switch: start it, sample the window + blocks ~200 ms in (and
+        /// shoot "toggle-midway" on the first compact → full), wait until the window
+        /// frame is stable (max 2 s) and the extras have faded in, then check that no
+        /// block carries a leftover offset/transform: its settled frame equals the
+        /// frame a fresh render of the same arrangement gives it.
+        func switchAnimated(_ mode: LayoutMode) async {
+            let from = model.layoutMode
+            let w0 = model.window?.frame ?? .zero
+            let before = model.layoutBlockFrames
+            let t0 = CACurrentMediaTime()
+            model.setLayoutMode(mode)
+            var unclipped = 0
+            // Sample the window while it moves: any strictly-intermediate width counts.
+            var wMid = w0
+            var mid: [String: CGRect] = [:]
+            var tMove: Double?
+            var last = model.window?.frame ?? .zero
+            var stable = 0
+            let wantShot = from == .compact && mode == .full && !midwayShot && shotDir != nil
+            while CACurrentMediaTime() - t0 < 2.0 {
+                try? await Task.sleep(nanoseconds: 16_000_000)
+                let f = model.window?.frame ?? .zero
+                if tMove == nil && f != w0 { tMove = CACurrentMediaTime() }
+                if let tm = tMove, mid.isEmpty, CACurrentMediaTime() - tm >= 0.2 {
+                    // ~200 ms into the move (the first switch also pays the full
+                    // arrangement's cold build before the move starts).
+                    wMid = f
+                    mid = model.layoutBlockFrames
+                    unclipped = model.unclippedViews.count
+                    if wantShot, let dir = shotDir {
+                        midwayShot = true
+                        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                        capture(to: "\(dir)/toggle-midway.png")
+                        print(String(format: "LAYOUT-TOGGLE-TEST: screenshot %@/toggle-midway.png (%.0f ms after the switch, %.0f ms into the move)",
+                                     dir, (CACurrentMediaTime() - t0) * 1000, (CACurrentMediaTime() - tm) * 1000))
+                    }
+                }
+                stable = (f == last && !model.layoutAnimating) ? stable + 1 : 0
+                last = f
+                if stable >= 9 { break }
+            }
+            print(String(format: "LAYOUT-TOGGLE-TEST:   move started %.0f ms after the switch; %d split views/panes unclipped mid-move",
+                         ((tMove ?? t0) - t0) * 1000, unclipped))
+            let settleS = CACurrentMediaTime() - t0
+            check(String(format: "%@ → %@: animation settled within 2 s (%.2f s)", from.rawValue, mode.rawValue, settleS),
+                  stable >= 9)
+            check("\(from.rawValue) → \(mode.rawValue): window frame moved through an intermediate width (\(fs(w0)) → \(fs(wMid)) → \(fs(last)))",
+                  wMid.width > min(w0.width, last.width) + 1 && wMid.width < max(w0.width, last.width) - 1)
+            try? await Task.sleep(nanoseconds: 400_000_000) // extras fade (0.25 s)
+            check("\(from.rawValue) → \(mode.rawValue): unique surfaces faded back in", !model.layoutExtrasHidden)
+            for b in LayoutBlock.allCases {
+                print("LAYOUT-TOGGLE-TEST:   \(b.rawValue): before \(rs(before[b.rawValue])) · ~200 ms into the move \(rs(mid[b.rawValue])) · settled \(rs(model.layoutBlockFrames[b.rawValue]))")
+            }
+            let settled = model.layoutBlockFrames
+            model.layoutBlockFrames = [:]
+            model.layoutRenderEpoch += 1
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let fresh = model.layoutBlockFrames
+            for b in LayoutBlock.allCases {
+                print("LAYOUT-TOGGLE-TEST:   \(b.rawValue): fresh render \(rs(fresh[b.rawValue]))")
+            }
+            let leftovers = LayoutBlock.allCases.filter { b in
+                guard let s = settled[b.rawValue], let f = fresh[b.rawValue] else { return false }
+                return abs(s.minX - f.minX) > 1 || abs(s.minY - f.minY) > 1
+                    || abs(s.width - f.width) > 1 || abs(s.height - f.height) > 1
+            }
+            let present = LayoutBlock.allCases.filter { settled[$0.rawValue] != nil && fresh[$0.rawValue] != nil }
+            check("\(from.rawValue) → \(mode.rawValue): no leftover offset/transform (\(present.count) blocks match a fresh render\(leftovers.isEmpty ? "" : "; off: " + leftovers.map(\.rawValue).joined(separator: ",")))",
+                  leftovers.isEmpty && present.count == LayoutBlock.allCases.count)
+        }
         await settleQueue()
         guard let ready = model.ready.first(where: { $0.pair.session != nil }) else {
             print("LAYOUT-TOGGLE-TEST: SKIPPED (no Ready couple with a session)")
@@ -371,8 +448,7 @@ final class DebugDrive {
         let win = model.window
         let c0 = win?.frame ?? .zero
 
-        model.setLayoutMode(.full)
-        try? await Task.sleep(nanoseconds: 900_000_000)
+        await switchAnimated(.full)
         check("→ full: arrangement full", model.layoutMode == .full)
         check("→ full: selection unchanged", model.selectedID == ready.id)
         check(String(format: "→ full: playhead advanced (%.2f s)", a.playheadT), playheadOK())
@@ -389,8 +465,7 @@ final class DebugDrive {
         a.selectMonitor(.pan)
         check("full: monitor set to Pan L/R", a.monitorMode == .pan)
 
-        model.setLayoutMode(.compact)
-        try? await Task.sleep(nanoseconds: 900_000_000)
+        await switchAnimated(.compact)
         check("→ compact: arrangement compact", model.layoutMode == .compact)
         check("→ compact: selection unchanged", model.selectedID == ready.id)
         check(String(format: "→ compact: playhead advanced (%.2f s)", a.playheadT), playheadOK())
@@ -404,8 +479,7 @@ final class DebugDrive {
             print("LAYOUT-TOGGLE-TEST: SKIPPED frame checks (no hosting window attached)")
         }
 
-        model.setLayoutMode(.full)
-        try? await Task.sleep(nanoseconds: 900_000_000)
+        await switchAnimated(.full)
         check("→ full again: monitor back to Pan L/R", a.monitorMode == .pan)
         check("→ full again: selection unchanged", model.selectedID == ready.id)
         check(String(format: "→ full again: playhead advanced (%.2f s)", a.playheadT), playheadOK())
@@ -414,8 +488,7 @@ final class DebugDrive {
             check("→ full again: last full frame restored (\(fs(w.frame)) vs \(fs(f1)))", near(w.frame, f1))
         }
 
-        model.setLayoutMode(.compact)
-        try? await Task.sleep(nanoseconds: 900_000_000)
+        await switchAnimated(.compact)
         if let w = win {
             check("→ compact again: last compact frame restored (\(fs(w.frame)))", near(w.frame, c0))
         }

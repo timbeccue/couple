@@ -223,15 +223,18 @@ windows.
 
 - Arrangement toggle: "⤢ Full" at the right of the session line in compact,
   "⤡ Compact" in the same place in full; also a menu item and ⌘⇧C. The window
-  frame animates to the last-used frame of the target arrangement (compact
-  default 360 × 700, width clamped 340–420, height free with min 560; full
-  min 640 × 400, default 1280 × 820) while the four blocks move to their new
-  places and the full-only surfaces (overview, loupes bar, Files, media pool)
-  fade in after; instant under Reduce Motion. Selection, playhead, playback
-  and inclusion survive the switch (players are owned by controllers, not
-  views). Default compact on the first launch after the update, then
-  last-used. [Views/WindowAccessor.swift, WindowLayout.swift (AppModel
-  setLayoutMode / applyWindowLayout / frames), AppModel.swift layoutMode,
+  frame animates (0.45 s ease-out) to the last-used frame of the target
+  arrangement (compact default 360 × 700, width clamped 340–420, height free
+  with min 560; full min 640 × 400, default 1280 × 820) while the four blocks
+  (session line, preview, couple list, export panel) move from their old
+  places to their new ones on the same curve (a FLIP), and the surfaces
+  unique to the full arrangement (overview, loupes, bottom bar, Files, media
+  pool, footer) fade in (0.25 s) after; instant under Reduce Motion.
+  Selection, playhead, playback and inclusion survive the switch (players are
+  owned by controllers, not views). Default compact on the first launch after
+  the update, then last-used. [Views/WindowAccessor.swift, WindowLayout.swift
+  (AppModel setLayoutMode / animateLayoutSwitch / applyWindowLayout / frames;
+  layoutBlock / layoutExtra modifiers), AppModel.swift layoutMode,
   CoupleApp.swift LayoutCommands (⌘⇧C), RootView.swift, SessionLine.swift
   ArrangementToggle]
 - Session line: session identity + media counts, "+ Add" (the ONLY media-pool

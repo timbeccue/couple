@@ -17,11 +17,13 @@ struct ExportRail: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ExportPanel()
+                .layoutBlock(.export)
 
             // FILES — included ∪ exported (D1/D8)
             if !model.filesList.isEmpty {
                 sectionLabel("FILES · \(model.filesList.count)")
                     .padding(.top, 6)
+                    .layoutExtra()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(model.filesList) { couple in
@@ -29,6 +31,7 @@ struct ExportRail: View {
                         }
                     }
                 }
+                .layoutExtra()
             }
             Spacer(minLength: 0)
         }

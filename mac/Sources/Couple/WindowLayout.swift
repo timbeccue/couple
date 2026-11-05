@@ -9,10 +9,13 @@
 // the app's bundle-id namespace; the mode defaults to COMPACT when the key is
 // absent (§6.1). Players and the audition live in controllers (AuditionController,
 // PoolPreviewController) owned by the model, so switching never restarts playback.
-// Phase 5 adds the animation; this switch is instant.
+//
+// Phase 5 — the animated switch (see `animateLayoutSwitch` for which mitigation
+// shipped and why).
 
 import AppKit
 import CoupleKit
+import SwiftUI
 
 enum LayoutMode: String, Sendable {
     case compact, full
@@ -76,9 +79,19 @@ extension AppModel {
             if audition.monitorMode == .overlay { audition.selectMonitor(.pan) }
             panHeldForCompact = false
         }
-        layoutMode = mode
         if persistLayout { UserDefaults.standard.set(mode.rawValue, forKey: Self.layoutModeKey) }
-        applyWindowLayout()
+        if layoutMotionAllowed, let w = window {
+            animateLayoutSwitch(to: mode, window: w)
+        } else {
+            // Reduce Motion (or no window yet): instant switch, no frame animation.
+            layoutMode = mode
+            applyWindowLayout()
+        }
+    }
+
+    /// Phase 5.2: Reduce Motion ⇒ instant switch. The harness can force either way.
+    var layoutMotionAllowed: Bool {
+        layoutMotionOverride ?? !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
     /// Harness entry (DebugDrive.configure): force an arrangement before the window
@@ -174,6 +187,134 @@ extension AppModel {
         }
     }
 
+    // MARK: - Animated switch (PLAN-COMPACT-MODE Phase 5)
+
+    static let layoutAnimationDuration: Double = 0.45
+    static let layoutExtrasFadeDuration: Double = 0.25
+
+    /// The animated arrangement switch: the window frame and the four blocks move
+    /// together over 0.45 s on one ease-out curve; the surfaces unique to one
+    /// arrangement fade in (0.25 s) once the blocks have settled.
+    ///
+    /// SHIPPED: mitigation (b) — explicit FLIP. Record of the attempts (Phase 5.2's
+    /// mitigation order; harness: COUPLE_LAYOUT_TOGGLE_TEST):
+    ///  (a) both arrangements in one ZStack, a shared @Namespace and
+    ///      `matchedGeometryEffect` on the four blocks, `withAnimation(.easeOut(0.45))`
+    ///      on the mode: FAILED — inside the HSplitView panes the matched blocks got
+    ///      garbage frames mid-move (the preview at 1602 × 1001 in a 360-wide window,
+    ///      session / list / export stretched to the full 1280 width, the list drawn
+    ///      nowhere) and the session / export blocks kept a leftover frame after
+    ///      settling (they no longer matched a fresh render).
+    ///  (b) FLIP, shipped: the incoming arrangement is swapped in at once, pinned at
+    ///      its final size, with each block drawn back on its old frame by a render-
+    ///      time `visualEffect` (translate + uniform scale, `FlipBlock`); clearing
+    ///      those under an ease-out animation plays the blocks home while
+    ///      `NSAnimationContext` moves the window frame on the same curve. Layout
+    ///      never changes mid-move, the AVPlayer layer is never re-created by the
+    ///      move, and settled frames match a fresh render. NSSplitView panes clip,
+    ///      so they are unclipped for the move only.
+    ///  (c) crossfade + frame animation: not needed.
+    func animateLayoutSwitch(to mode: LayoutMode, window w: NSWindow) {
+        applyingLayoutFrame = true
+        let target = w.constrainFrameRect(targetFrame(for: mode, current: w.frame), to: w.screen)
+        // Lift the outgoing arrangement's resize limits for the move (as
+        // applyWindowLayout does); SwiftUI re-applies the incoming ones afterwards.
+        w.contentMinSize = NSSize(width: Self.compactMinSize.width, height: Self.fullMinSize.height)
+        w.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        // The root lays the incoming arrangement out at its FINAL content size for
+        // the whole move (anchored top-left, the window edge revealing / covering
+        // it), so no block re-flows at intermediate window widths.
+        layoutTransitionSize = w.contentRect(forFrameRect: target).size
+        // FIRST: the four blocks' current frames (window space).
+        let first = layoutBlockFrames.filter { k, _ in LayoutBlock(rawValue: k) != nil }
+        // LAST + INVERT, with no animation: swap in the incoming arrangement with
+        // each block drawn back on its old frame, the extras transparent, and make
+        // AppKit lay it out and draw it now (the swap and the inverted transform
+        // land in the same frame — no flash of the blocks at their new places).
+        var t = Transaction(animation: nil)
+        t.disablesAnimations = true
+        withTransaction(t) {
+            layoutFlipFrom = first
+            layoutExtrasHidden = true
+            layoutAnimating = true
+            layoutMode = mode
+        }
+        w.contentView?.layoutSubtreeIfNeeded()
+        // The full arrangement's columns are NSSplitView panes, which clip: a block
+        // flying in from (or out to) another column would vanish at the pane edge.
+        // Unclip the split view and its panes for the move only.
+        unclipSplitPanes(in: w.contentView)
+        w.displayIfNeeded()
+        // PLAY: the blocks home and the window frame to its target on one curve.
+        let duration = Self.layoutAnimationDuration
+        DispatchQueue.main.async { [weak self, weak w] in
+            guard let self, let w, self.layoutMode == mode else { return }
+            // On the first switch to full the split view only exists after that draw.
+            self.unclipSplitPanes(in: w.contentView)
+            withAnimation(.easeOut(duration: duration)) {
+                self.layoutFlipFrom = [:]
+            }
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = duration
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                ctx.allowsImplicitAnimation = true
+                w.animator().setFrame(target, display: true)
+            } completionHandler: { [weak self, weak w] in
+                MainActor.assumeIsolated {
+                    self?.finishLayoutSwitch(mode: mode, target: target, window: w)
+                }
+            }
+        }
+    }
+
+    private func finishLayoutSwitch(mode: LayoutMode, target: NSRect, window w: NSWindow?) {
+        // A newer switch started meanwhile: it owns the flags now.
+        guard layoutMode == mode else { return }
+        if let w, w.frame != target { w.setFrame(target, display: true, animate: false) }
+        // Back to the arrangement's own size limits (no animation: the window is at
+        // the pinned size already, so nothing moves).
+        restoreSplitPaneClipping()
+        var t = Transaction(animation: nil)
+        t.disablesAnimations = true
+        withTransaction(t) { layoutAnimating = false }
+        DispatchQueue.main.async { [weak self, weak w] in
+            guard let self else { return }
+            if let w, self.layoutMode == mode, w.frame != target { w.setFrame(target, display: true, animate: false) }
+            self.applyingLayoutFrame = false
+            self.recordWindowFrame()
+            withAnimation(.easeIn(duration: Self.layoutExtrasFadeDuration)) {
+                self.layoutExtrasHidden = false
+            }
+        }
+    }
+
+    /// Turn off clipping on every NSSplitView under `root` and on its panes (and
+    /// their layers), remembering the previous values for `restoreSplitPaneClipping`.
+    private func unclipSplitPanes(in root: NSView?) {
+        restoreSplitPaneClipping()
+        guard let root else { return }
+        func visit(_ v: NSView) {
+            if let split = v as? NSSplitView {
+                // The split view, its panes and their immediate hosts.
+                for x in [split] + split.subviews + split.subviews.flatMap(\.subviews) {
+                    unclippedViews.append((x, x.clipsToBounds, x.layer?.masksToBounds ?? false))
+                    x.clipsToBounds = false
+                    x.layer?.masksToBounds = false
+                }
+            }
+            v.subviews.forEach(visit)
+        }
+        visit(root)
+    }
+
+    private func restoreSplitPaneClipping() {
+        for (v, clips, masks) in unclippedViews {
+            v.clipsToBounds = clips
+            v.layer?.masksToBounds = masks
+        }
+        unclippedViews = []
+    }
+
     // MARK: - "No audio" → Choose file… (compact)
 
     /// Pair `url` with `couple` as a manual pick. A file already in the pool repairs
@@ -203,4 +344,65 @@ extension AppModel {
             }
         }
     }
+}
+
+// MARK: - The four moving blocks (Phase 5)
+
+/// The blocks that exist in BOTH arrangements and move between them.
+enum LayoutBlock: String, CaseIterable, Sendable {
+    case session, preview, list, export
+}
+
+/// Tags one of the four blocks: its window-space frame is reported to the model (the
+/// FLIP's "first" rect and the harness checks) and the FLIP transform applied.
+private struct LayoutBlockModifier: ViewModifier {
+    @Environment(AppModel.self) private var model
+    let block: LayoutBlock
+
+    func body(content: Content) -> some View {
+        content
+            .background(GeometryReader { g in
+                let f = g.frame(in: .global)
+                Color.clear
+                    .onAppear { model.layoutBlockFrames[block.rawValue] = f }
+                    .onChange(of: f) { _, new in model.layoutBlockFrames[block.rawValue] = new }
+            })
+            .modifier(FlipBlock(from: model.layoutFlipFrom[block.rawValue]))
+    }
+}
+
+/// FLIP (PLAN-COMPACT-MODE Phase 5, mitigation b): while `layoutFlipFrom` holds the
+/// block's outgoing frame, the block — already laid out in the INCOMING arrangement —
+/// is drawn translated and uniformly scaled back onto that frame (a render-time
+/// transform; layout never changes, so nothing re-flows and the AVPlayer layer is
+/// not touched). Clearing the entry under an ease-out animation plays it home.
+/// Uniform scale (geometric mean of the two axis ratios) so text never stretches.
+private struct FlipBlock: ViewModifier {
+    let from: CGRect?
+
+    func body(content: Content) -> some View {
+        content.visualEffect { c, proxy in
+            let to = proxy.frame(in: .global)
+            var s: CGFloat = 1, dx: CGFloat = 0, dy: CGFloat = 0
+            if let from, to.width > 1, to.height > 1, from.width > 1, from.height > 1 {
+                s = min(max(((from.width / to.width) * (from.height / to.height)).squareRoot(), 0.4), 2.5)
+                dx = from.minX - to.minX
+                dy = from.minY - to.minY
+            }
+            return c.scaleEffect(s, anchor: .topLeading).offset(x: dx, y: dy)
+        }
+    }
+}
+
+/// Fades a surface unique to one arrangement in after the blocks settle.
+private struct LayoutExtraModifier: ViewModifier {
+    @Environment(AppModel.self) private var model
+    func body(content: Content) -> some View {
+        content.opacity(model.layoutExtrasHidden ? 0 : 1)
+    }
+}
+
+extension View {
+    func layoutBlock(_ block: LayoutBlock) -> some View { modifier(LayoutBlockModifier(block: block)) }
+    func layoutExtra() -> some View { modifier(LayoutExtraModifier()) }
 }
