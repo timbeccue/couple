@@ -2,8 +2,7 @@
 
 Status: implementation plan, in progress on `claude/minimal-compact-ui-963b4a`; owner decisions in §6 resolved; amended after an independent review (D9–D12, derived inclusion). Written 2026-11-05 from the owner's
 prototype rounds in `design/mockups-compact/` (direction **D**, rounds 3–5;
-README there is the design record). Stays in the repo root while in progress;
-`git mv` to `docs/archive/` when Phase 6 ships.
+README there is the design record). Archived to `docs/archive/` when Phase 6 shipped (same day).
 
 Repository root: `/Users/tim/code/claude_apps/couple`
 

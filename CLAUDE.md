@@ -32,16 +32,15 @@ rename them.
   core; presentation lives in the shell"). Phases A–F shipped; Phase G (new
   shells) started 2026-07-04 via the `electron/` shell. Stays in root while
   Phase G is in progress.
-- `PLAN-COMPACT-MODE.md` — implementation plan (2026-11-05, not started) for
-  the compact arrangement + include-for-export model designed in
-  `design/mockups-compact/` (direction D). Phases 0–6; stays in root until
-  Phase 6 ships.
 - `docs/LICENSING.md` — third-party licensing record: the ffmpeg LGPL rule
   (what a distributable build may contain, how `fetch-ffmpeg.sh` enforces it),
   the obligations each release must meet, Electron bundling rules, and the
   dependency-notice pipeline (`scripts/third-party-notices.sh` →
   `third-party/` → bundle `Licenses/` → Acknowledgements view).
-- `docs/archive/` — shipped plans, historical only; kept because code cites them.
+- `docs/archive/` — shipped plans, historical only; kept because code cites them
+  (latest: `PLAN-COMPACT-MODE.md`, 2026-11-05 — compact arrangement +
+  include-for-export model; its decisions are the SPEC-CHANGE entries of that
+  date and UX-DECISIONS §V2.11/§V2.12).
 - `fixtures/matcher-corpus/CALIBRATION.md` — derivation of frozen matcher
   thresholds. §1–5 are self-marked superseded; §6–7 (profile 2) is the live
   reference. Gate *enforcement* is in code (`matching_evidence.rs`).
@@ -66,8 +65,10 @@ rename them.
   `COUPLE_SHOT_PATH`/`COUPLE_SHOT_DELAY_MS`, `COUPLE_AUTOQUIT_MS`, `COUPLE_HUD`,
   `COUPLE_USER_DATA` (persistence root override), plus a `COUPLE_*_TEST` family
   (PLAY, EXPORT, NUDGE, ANCHOR, PERSIST, RESTORE, UNDO, QUALITY, REMOVE,
-  POOL_PREVIEW, POOL_INFO, ACK = open Acknowledgements at startup) mirroring
-  the mac harness idiom.
+  POOL_PREVIEW, POOL_INFO, ACK = open Acknowledgements at startup, COMPACT,
+  LAYOUT_TOGGLE = the compact-arrangement cases; `COUPLE_SHOT_DIR` for their
+  shots) mirroring the mac harness idiom. Any `COUPLE_*_TEST` forces the full
+  arrangement and disables layout persistence; COMPACT/LAYOUT_TOGGLE force compact.
 - `mac/` — Swift package: `CoupleKit` (FFI binding + policy mirrors), `Couple`
   (SwiftUI app), `CCouple` (C shim), `Tests/`. Swift mirrors Rust policies
   file-for-file (`RowMergePolicy.swift` ↔ `policy/row_merge.rs`, etc.); the Rust

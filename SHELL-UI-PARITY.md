@@ -17,21 +17,16 @@ intentionally one-sided change says so with a `Shell-parity: n/a <reason>`
 line in its commit message.
 
 Legend: [source] = the reference implementation a port must read.
-"mac-only until Phase 6" = the PLAN-COMPACT-MODE form (include-for-export,
-compact arrangement; UX-DECISIONS §V2.11/§V2.12). The Electron shell keeps the
-pre-plan form (approve model, 4-way picker, one arrangement) until Phase 6
-ports it; commits on the mac side carry `Shell-parity: n/a mac-first per
-PLAN-COMPACT-MODE Phase 6` until then. A cited view that does not exist yet
-is the file the plan creates it in.
+"(Electron: …)" = a known, accepted difference in the Electron shell.
 
 ## Queue rail (left)
 - Session header: brand wordmark (see next line), media counts ("N video · M
-  audio"), "N to export" status line (count of included couples; mac-only
-  until Phase 6 — Electron still shows "Approve to queue · a/b approved"),
+  audio"), "N to export" status line (count of included couples),
   visible "Clear Session…" control (disabled mid-export and when the session
   is empty; its confirmation counts included couples). In the compact
   arrangement this header is the session line (see Compact arrangement).
-  [QueueRail.swift header → SessionLine.swift after Phase 4]
+  [QueueRail.swift header → SessionLine.swift after Phase 4; Electron:
+  SessionLine.tsx]
 - Brand wordmark in the header: the interlocked teal-C / amber-O mark at 12pt
   height followed by "UPLE", baseline-aligned beside "Clear Session…"; one
   accessible element labelled "Couple" with the decorative drawing hidden from
@@ -40,11 +35,9 @@ is the file the plan creates it in.
   [QueueRail.swift header, CoupleMark.swift CoupleWordmark; Electron: CoupleWordmark.tsx]
 - Two live sections To fix / Ready with counts; membership = verdict
   (questionable or none / good) — inclusion never moves a row. An empty To
-  fix is HIDDEN; Ready always shows (dimmed, "—", when empty). (mac-only
-  until Phase 6 — Electron still shows QUEUED FOR EXPORT / TO APPROVE / TO
-  FIX, membership approved / (¬approved ∧ good) / rest, all three always
-  visible.) [AppModel.swift ready/toFix; QueueRail.swift → CoupleList.swift
-  after Phase 4]
+  fix is HIDDEN; Ready always shows (dimmed, "—", when empty).
+  [AppModel.swift ready/toFix; QueueRail.swift → CoupleList.swift
+  after Phase 4; Electron: CoupleList.tsx, AppModel.ts]
 - Couple row: thumbnail, video name + duration (mono, tertiary), the
   SELECTED PAIRING visible (audio name) on the second line, the action-word
   capsule in the audio's place when action is needed ("pick one" red tint /
@@ -59,15 +52,15 @@ is the file the plan creates it in.
   pair clears the SAME core classifier the resolver uses
   (`manualMatchConfident` ← `matchPair` classification == match, run on pick /
   re-pair and on restore; TODO-009) — never on the click or the sync alone.
-  (mac-only until Phase 6 — Electron rows still show the pulsing verdict dot,
-  the amber coverage strip and the approve checkbox.) [QueueRail.swift →
+  [QueueRail.swift →
   CoupleList.swift after Phase 4, Couple.swift verdict/actionWord, AppModel
   reevaluateManualMatch; include rule = core policy export_include /
-  CoupleKit ExportIncludePolicy]
+  CoupleKit ExportIncludePolicy; Electron: CoupleList.tsx, app/CoupleRow.ts,
+  kit Policies.ts]
 - Pool-audio drag onto a couple row = manual re-pair via repair-drop policy,
   with hover affordance; the "Replace … pairing?" confirmation is asked only
-  for a PINNED couple (mac-only until Phase 6 — Electron asks for approved).
-  [PoolController.swift / RepairDropPolicy]
+  for a PINNED couple (Electron: the confirmation is a window.confirm
+  dialog). [PoolController.swift / RepairDropPolicy; Electron: AppModel.ts]
 
 ## Media pool (rail bottom)
 - Bottom-pinned box: header (count, trash, add), bounded list, STICKY footer
@@ -100,18 +93,18 @@ is the file the plan creates it in.
   decision + memory come from core `policy::monitor` (CoupleKit
   MonitorPolicy / kit Policies.monitorPlan); shells store and present.
   [AuditionController.swift, EditorComponents.swift MonitorPicker, InputRouter.swift]
-- Monitor picker `compact` presentation variant (D10; mac-only until Phase 6,
-  wired into the compact arrangement in Phase 4): Camera · Synced · External,
+- Monitor picker `compact` presentation variant (D10; wired into the compact
+  arrangement in Phase 4): Camera · Synced · External,
   Synced = Overlay, a remembered Pan L/R shows as Synced; selections still go
   through `selectMonitor` (core policy::monitor), `a`/`b` unchanged.
-  [EditorComponents.swift MonitorPicker(compact:)]
+  [EditorComponents.swift MonitorPicker(compact:); Electron: VideoHero.tsx]
 - Two-lane WAVEFORM SEEK STRIP under the video, between the playhead time and
-  the clip length (mac-only until Phase 6): camera lane (teal) over the clip,
+  the clip length: camera lane (teal) over the clip,
   external lane (amber) placed in video time by the pair's mapping (or the
   selected candidate's lag) and drawn only inside its coverage, faint baseline
   elsewhere; playhead; click/drag seeks (scrub, never snap); bands from
   `TrackHandle.band` at ~2 px/column. [PairStrip.swift, EditorComponents.swift
-  VideoHero]
+  VideoHero; Electron: PairStrip.tsx, VideoHero.tsx]
 - Resolve banner when unresolved/alternates: candidate list with evidence (z);
   per candidate "▶" = AUDITION AT BEST FIT (scratch core session: row camera +
   that audio, offset = the candidate lag, monitor Overlay; nothing pinned or
@@ -122,14 +115,17 @@ is the file the plan creates it in.
   forced-verdict policy (⌘Z undoes); the current source reads "✓ current".
   [CenterColumn.swift ResolveBanner + PreviewStatusLine, AppModel.swift
   auditionCandidate/stopCandidateAudition, AuditionController.swift
-  attach(session:); mac-only until Phase 6]
+  attach(session:); Electron: PairPreview.tsx ResolveBanner +
+  PreviewStatusLine, AppModel.ts] (Electron: "· fit <ms>" in the readout
+  appears only when core sends fitRmsMs for the candidate.)
 - After a manual pick (📌 with an audio): "Change…" in the title line and
   "Audio chosen by you · Undo · Compare others" under the player — Undo =
   the repair's ⌘Z inverse (RepairSnapshot; couple returns to To fix), shown
   for picks made this run; Compare others / Change… reopen the resolve banner
   INLINE under the player with the current candidate marked and "Done" to
   close (no popover). [CenterColumn.swift titleBar + PreviewStatusLine,
-  AppModel.swift undoManualPick; mac-only until Phase 6]
+  AppModel.swift undoManualPick; Electron: PairPreview.tsx, AppModel.ts
+  canUndoManualPick]
 - Waveform: ONE zoomable dual-lane strip (no separate minimap) owning anchor
   pins + playhead; Fit restores union; overlap chip; + anchor / lock-zoom /
   loupe-layout toolbar. [WaveformStage.swift OverviewStrip]
@@ -153,7 +149,7 @@ is the file the plan creates it in.
 - Sync tools (⚙): offset/drift readouts + nudges, drift-mode toggle
   (resample/none), monitor + gains; re-sync always reachable. NO Approve /
   Approved button in the bottom bar — inclusion is the row checkbox only
-  (mac-only until Phase 6 — Electron still shows Approve). [CenterColumn.swift]
+  [CenterColumn.swift; Electron: CenterColumn.tsx]
 
 ## Export rail (right)
 - The export PANEL (shared with the compact arrangement), no title: INTO =
@@ -163,25 +159,25 @@ is the file the plan creates it in.
   audio as a muted track" on its own line (disabled for WAV); "Export N
   files" where N = included couples
   (disabled at 0); disk preflight, serial continue-past-failure, end toast
-  with Reveal in Finder. (mac-only until Phase 6 — Electron still reads
-  "Export (n approved)".) [ExportRail.swift → ExportPanel.swift after
-  Phase 4, BatchExport.swift]
+  with Reveal in Finder. [ExportRail.swift → ExportPanel.swift after
+  Phase 4, BatchExport.swift; Electron: ExportPanel.tsx, app/BatchExport.ts]
 - FILES list (full arrangement only, below the panel, headed "FILES · n"):
   one `<stem>_synced.<ext>` per included-or-exported couple (membership rule
   from core export_include), stem editable in place with ↺ reset, per-file
   status, "✓ HH:mm" on exported rows; on each success the couple's
   `exportedAt` is stamped (row ✓ time; the couple
-  leaves the default include set until ticked again). (mac-only until
-  Phase 6 — Electron still lists the approved ROWS.) [ExportRail.swift,
-  BatchExport.swift, QueueStore.swift]
+  leaves the default include set until ticked again). [ExportRail.swift,
+  BatchExport.swift, QueueStore.swift; Electron: ExportRail.tsx,
+  app/BatchExport.ts, app/QueueStore.ts]
 
 ## App-level
 - Whole-window drop target + native file picker fallback; window is draggable
   (hidden titlebar needs an explicit drag region on non-mac frameworks).
 - Keymap: j/k select, space/l play, a flip camera⇄external, b both, esc,
   ⌘Z/⇧⌘Z, ⌘⌫ clear session (policy counts in the confirm), ⌘⇧C toggle
-  arrangement. `v` is UNBOUND (mac-only until Phase 6 — Electron still has
-  v approve). [InputRouter.swift]
+  arrangement. `v` is UNBOUND. [InputRouter.swift; Electron: App.tsx keymap,
+  main/index.ts View menu ⌘⇧C / Ctrl+Shift+C] (Electron: Return in the full
+  arrangement is unbound, as before.)
 - Unified import→match→sync activity strip composed by the activity policy
   (shell holds clocks/debounce; never sticks at 100%), rendered FULL WINDOW
   WIDTH along the bottom just above the footer (idle ⇒ nothing shown).
@@ -190,15 +186,18 @@ is the file the plan creates it in.
   autosave on the mac app's triggers, launch restore toast → saved alignments
   apply WITHOUT re-sync. couple-queue/1 carries two OPTIONAL per-couple
   fields (no schema bump): the explicit include toggle and `exportedAt`; a
-  file saved under the approve model loads with every good couple included
-  (mac-only until Phase 6). The layout mode persists in user defaults;
-  default compact on the first launch after the update, then last-used
-  (mac-only until Phase 6). [QueueStore.swift, SessionStore.swift,
-  AppModel.swift layoutMode]
+  file saved under the approve model loads with every good couple included.
+  The layout mode persists in user defaults;
+  default compact on the first launch after the update, then last-used.
+  [QueueStore.swift, SessionStore.swift,
+  AppModel.swift layoutMode; Electron: app/QueueStore.ts, main/index.ts
+  window-layout.json] (Electron: the layout mode lives in
+  userData/Couple/window-layout.json rather than user defaults.)
 - Toasts: skipped-files, batch summary; confirmation dialogs for destructive
   acts (replace a PINNED pairing on drop, removal — warns for included
-  couples —, clear session with included counts). (mac-only until Phase 6 —
-  Electron's dialogs still say approved.)
+  couples —, clear session with included counts). [Electron: AppModel.ts,
+  app/PoolController.ts] (Electron: the confirmations are window.confirm
+  dialogs.)
 - About + Acknowledgements (docs/LICENSING.md §3): the app menu's About item
   opens OUR panel (version, the copyright/ffmpeg line, "Acknowledgements"
   button, "Show Licenses Folder" when the folder exists); Acknowledgements is
@@ -212,11 +211,11 @@ is the file the plan creates it in.
   Plain copy; no marketing language. [AboutView.swift, AcknowledgementsView.swift,
   Licenses.swift; Electron: AboutView.tsx, AcknowledgementsView.tsx, app/Licenses.ts]
 
-## Compact arrangement (mac-only until PLAN-COMPACT-MODE Phase 6)
+## Compact arrangement
 
 Design record: design/mockups-compact/README.md rounds 3–5 (direction D);
-rules: UX-DECISIONS §V2.11/§V2.12; phases 3–5 of PLAN-COMPACT-MODE.md. Every
-line here is mac-only until Phase 6. The same session, the same window; the
+rules: UX-DECISIONS §V2.11/§V2.12; phases 3–6 of PLAN-COMPACT-MODE.md
+(Phase 6 = the Electron port). The same session, the same window; the
 four blocks are the same views the full arrangement's rails wrap (Phase 4.1
 extraction), so a port must build one layout with two arrangements, not two
 windows.
@@ -236,12 +235,17 @@ windows.
   (AppModel setLayoutMode / animateLayoutSwitch / applyWindowLayout / frames;
   layoutBlock / layoutExtra modifiers), AppModel.swift layoutMode,
   CoupleApp.swift LayoutCommands (⌘⇧C), RootView.swift, SessionLine.swift
-  ArrangementToggle]
+  ArrangementToggle; Electron: views/layoutFlip.ts, CompactLayout.tsx,
+  app/WindowLayout.ts, app/layoutMode.ts, main/index.ts applyLayout,
+  SessionLine.tsx] (Electron: on macOS the window frame animates at the
+  system resize speed via setBounds(…, true), not 0.45 s; the block FLIP is
+  ~0.5 s.)
 - Session line: session identity + media counts, "+ Add" (the ONLY media-pool
   affordance in compact — the pool list, its sticky player and the unused-file
   info are full-arrangement surfaces), "⤢ Full"; Clear Session… in its context
   menu. [Views/SessionLine.swift (compact: true; the full rail's header is the
-  same view)]
+  same view); Electron: SessionLine.tsx] (Electron: the compact context menu
+  is a native menu requested over IPC, `couple:context-menu`.)
 - Fixed preview block (top; never scrolls with the list), for the selected
   couple: the video (muted, slaved to the audition clock as in the hero);
   the two-lane WAVEFORM SEEK STRIP under it — camera lane (teal) above,
@@ -255,7 +259,8 @@ windows.
   one tertiary line "offset · fit".
   [Views/PairPreview.swift (compact: true) + OffsetFitLine, EditorComponents.swift
   VideoHero(compact:) + MonitorPicker(compact:), PairStrip.swift (both
-  arrangements), AuditionController.swift]
+  arrangements), AuditionController.swift; Electron: PairPreview.tsx
+  OffsetFitLine, VideoHero.tsx, PairStrip.tsx]
 - "Pick one" couple: the video plus the compact candidate picker — each
   candidate with its relative strength bar, "▶" = AUDITION AT BEST FIT (plays
   the video with that audio at the candidate's best-fit lag in a scratch
@@ -263,41 +268,48 @@ windows.
   fit"; "■" or selecting another row stops it; the strip's amber lane redraws
   with that candidate's coverage), "use" = manual pin + re-sync (undoable).
   [PairPreview.swift ResolveBanner (inline, both arrangements),
-  AuditionController.swift, Resolver.swift]
+  AuditionController.swift, Resolver.swift; Electron: PairPreview.tsx
+  ResolveBanner] (Electron: "· fit" in the readout appears only when core
+  sends fitRmsMs.)
 - After a manual pick: "Change…" link in the preview title; the line "Audio
   chosen by you · Undo · Compare others" — Undo = the ⌘Z inverse (couple
   returns to To fix); Compare others = the same candidate list reopened
   INLINE under the video with the current candidate marked (no popover,
   nothing floats over content). [PairPreview.swift titleLine /
   PreviewStatusLine / ResolveBanner, AppModel.swift compareCoupleID +
-  RepairSnapshot]
+  RepairSnapshot; Electron: PairPreview.tsx, AppModel.ts]
 - "No audio" couple: one line "No matching audio in this session · Choose
   file…" (file picker → manual pair). [PairPreview.swift NoAudioLine,
-  WindowLayout.swift AppModel.pairWithChosenFile]
+  WindowLayout.swift AppModel.pairWithChosenFile; Electron: PairPreview.tsx
+  NoAudioLine]
 - Couple list (only the rows scroll): sections To fix (HIDDEN when empty) /
   Ready; row = thumbnail, video name + duration, audio name OR the action
   word ("pick one" red / "no audio" grey / "syncing…"), 📌 on a manual pick,
   checkbox on includable rows, "✓ <time>" once exported; NO dots, NO coverage
   strip. Selecting a row previews it above and never moves the list (scroll
   position preserved on redraw). [CoupleList.swift (also the full
-  arrangement's left rail), AppModel.swift ready/toFix]
+  arrangement's left rail), AppModel.swift ready/toFix; Electron:
+  CoupleList.tsx]
 - Export panel (pinned at the bottom): INTO path + "Change…"; AS
   Auto/MOV/MP4/WAV; "keep camera audio as a muted track"; "Export N files"
   (N = included; disabled at 0); after an export, "Reveal in Finder". No
   Files list and no per-file naming in compact (default `<stem>_synced`).
   [Views/ExportPanel.swift (also the top of the full arrangement's ExportRail),
-  BatchExport.swift]
+  BatchExport.swift; Electron: ExportPanel.tsx]
 - Empty session: the drop target (drop zone + "Choose files…") fills the
   preview block; the list shows its empty Ready section; the export panel
-  stays pinned. [Views/CompactLayout.swift, LoadSurface.swift (compact: true)]
+  stays pinned. [Views/CompactLayout.swift, LoadSurface.swift (compact: true);
+  Electron: CompactLayout.tsx, PairPreview.tsx → LoadSurface.tsx]
 - Activity strip (import → match → sync → export progress) along the bottom,
   same policy and placement rule as the full arrangement; no footer cheat line
   in compact. [ActivityStrip.swift controller; ActivityStripView in
-  RootView.swift, placed by CompactLayout.swift]
+  RootView.swift, placed by CompactLayout.swift; Electron: App.tsx
+  ActivityStrip]
 - Keys in compact: j/k select, space play/pause, Return = switch to full with
   the selected couple's editor open, esc, a/b monitor; nudges, [ ], l are
   no-ops (their surfaces are absent), as are ⌘0 and Delete (no overview / no
-  pool list). [InputRouter.swift handleKey, WindowLayout.swift openFullEditor]
+  pool list). [InputRouter.swift handleKey, WindowLayout.swift openFullEditor;
+  Electron: App.tsx keymap, AppModel.ts openFullEditor]
 - Dev harness: every existing COUPLE_*_TEST forces the full arrangement
   before driving; COUPLE_COMPACT_TEST (empty / synced / pick-one / exporting
   shots), COUPLE_LAYOUT_TOGGLE_TEST (toggle twice; frames, selection,

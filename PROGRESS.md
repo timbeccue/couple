@@ -1584,3 +1584,42 @@ added in the same amendment.
   variants, `swift test` (134), the harness cases above. `golden-pair-rows`
   unaffected (no resolver decision changed). The realdata verdict gate from
   Phase 0 is STILL OUTSTANDING (no owner media on this machine).
+
+## 2026-11-05 — Compact mode Phases 5–6; plan archived
+
+- **Phase 5 (963c181)** — animated arrangement switch, explicit FLIP in
+  `WindowLayout.animateLayoutSwitch`: the incoming layout is swapped in at its
+  final size, the four blocks are drawn back on their old frames (translate +
+  even scale) and eased home over 0.45 s while the window frame animates on
+  the same curve; one-arrangement-only surfaces fade in after. The plan's
+  first choice, `matchedGeometryEffect` across the HSplitView panes, gave
+  wrong mid-move frames and leftover offsets and was dropped (reason kept in
+  the code comment). Reduce Motion ⇒ instant. `COUPLE_LAYOUT_TOGGLE_TEST` now
+  runs four animated switches (38 checks). Not yet watched live.
+- **Phase 6 (ea25365)** — Electron parity: include model (explicit/exportedAt
+  on `CoupleRow.ts`, `Policies.exportInclude`, queue file optional fields),
+  D rows/rails, `PairStrip.tsx` canvas strip, candidate audition via a scratch
+  session, compact arrangement as one DOM tree (`display: contents` + order,
+  so `<video>` never remounts), frames remembered in `userData`, animated
+  `setBounds`, ⌘⇧C / Ctrl+Shift+C, FLIP after the mockup's `toggleFullD`.
+  Kit TS names renamed to pinned / included / affectedIncluded with the wire
+  keys unchanged (D12 — the rename of the wire keys themselves is deferred:
+  nothing is gained by breaking the envelope). Wire `Coverage` type fixed to
+  core's `{t0,t1,seconds,fraction}` (the old strip read undefined fields).
+  typecheck clean, vitest 76/76, `parity.mjs` byte-identical, smoke passes,
+  COMPACT 13/13 and LAYOUT_TOGGLE 24/24 live. Known differences recorded in
+  SHELL-UI-PARITY.md (audition "fit" only when core sends it; macOS window
+  animation at system speed; Clear Session… in compact via a native context
+  menu; confirmations are `window.confirm`).
+- `PLAN-COMPACT-MODE.md` → `docs/archive/` (code cites it by name); CLAUDE.md
+  doc map + Electron harness keys; TODO-016 Done; SHELL-UI-PARITY "mac-only
+  until Phase 6" tags removed.
+- Still open before merge to main: the realdata verdict check (Phase 0 step 1,
+  needs `COUPLE_REALDATA_DIR`), a live look at the animated switch on a real
+  window, and the unguarded progress loops noted under 8f2c1cb.
+- Final verification on the branch tip: `cargo test --release --workspace`
+  all green (no failures across every crate; the `#[ignore]`d realdata/ROC
+  suites skipped as usual), `scripts/golden-pair-rows.sh` all scenarios
+  match, `scripts/shell-drift-check.sh main` ok, `third-party-notices --check`
+  up to date, `swift test` 134 passed, Electron typecheck/vitest 76/parity/
+  smoke green (Phase 6).

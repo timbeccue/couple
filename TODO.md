@@ -345,7 +345,7 @@ re-import, not a state restore — offering "undo" there would either lie or blo
 
 ## TODO-016: Compact arrangement and include-for-export model
 
-**Status:** In progress — Phase 0 (decisions + docs) done 2026-11-05; realdata verdict gate still outstanding; Phase 1 in progress  
+**Status:** Done — Phases 0–6 shipped 2026-11-05 on `claude/minimal-compact-ui-963b4a` (plan archived to `docs/archive/PLAN-COMPACT-MODE.md`). Still open before merge to main: the realdata verdict check (Phase 0 step 1) and a live look at the animated switch.  
 **Type:** Feature  
 **Area:** Shell (mac first, Electron in Phase 6)
 
