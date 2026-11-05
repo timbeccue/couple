@@ -165,8 +165,9 @@ rename them.
   `couple sync --seed-lag-ms=<ms>`. Unseeded behavior is byte-identical.
 - `COUPLE_DEVHARNESS` (env) + `-DCOUPLE_DEVHARNESS` (compile flag) — dev harness.
 - Mac window arrangement (UX §V2.11, PLAN-COMPACT-MODE Phase 4): **compact** or
-  **full**, toggled by ⤢ Full / ⤡ Compact on the session line or View ▸ Compact
-  Window / Full Window (⌘⇧C). Persisted in UserDefaults
+  **full**, toggled by the icon button in the window's top-right corner
+  (`Views/ArrangementToggle.swift`, a RootView overlay in both arrangements;
+  UX §V2.13) or View ▸ Compact Window / Full Window (⌘⇧C). Persisted in UserDefaults
   `com.timbeccue.couple.layoutMode` (absent ⇒ **compact**) plus each
   arrangement's last frame (`com.timbeccue.couple.windowFrame.{compact,full}`);
   compact width is clamped 340–420, height min 560. Every dev-harness case forces

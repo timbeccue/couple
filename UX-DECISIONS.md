@@ -782,7 +782,10 @@ the overview; the three-column window is more than that run needs.
 
 - **One window, two arrangements of the same session.** **Compact** (about
   360 × 700) and **full** (today's three columns). **⤢ Full** / **⤡ Compact**
-  at the right of the session line (also a menu item, ⌘⇧C) switches; the
+  at the right of the session line (also a menu item, ⌘⇧C) switches
+  (**REVISED (owner 2026-11-05) — see §V2.13:** the toggle is now an icon
+  button in the window's top-right corner, not a text label in the session
+  line); the
   window frame animates and the four blocks move to their new places (list
   and session line into the left rail, preview into the center, export into
   the right rail); the surfaces only the full arrangement has (overview,
@@ -795,9 +798,10 @@ the overview; the three-column window is more than that run needs.
 - **Compact window: narrow width, free height.** Width stays within 340–420;
   height is free (minimum 560); the couple list absorbs the extra height.
 - **Compact is four blocks, top to bottom:**
-  1. **Session line** — the session's identity and counts, **+ Add** (the
+  1. **Session line** — the session's identity and counts and **+ Add** (the
      only media-pool affordance in compact; the pool list, its player and the
-     unused-file info are full-arrangement surfaces) and **⤢ Full**.
+     unused-file info are full-arrangement surfaces). (**REVISED 2026-11-05,
+     §V2.13:** the toggle left the session line for the window corner.)
   2. **Preview block, fixed at the top.** Shows the selected couple: the
      video, a **two-lane waveform seek strip** (camera teal above, external
      amber below, the amber lane drawn only where that audio covers the
@@ -893,3 +897,39 @@ couples, deal with what is flagged, export.
   line (round 2 → round 3: the checkbox alone is the opt-out); no "This one"
   single-couple export button beside Export N (round 3 open question, dropped
   in round 4); no per-couple format or naming in compact.
+
+## V2.13 Arrangement toggle is a window-corner icon button (DECIDED, owner 2026-11-05)
+
+Revises §V2.11's "⤢ Full / ⤡ Compact at the right of the session line". Owner
+report after using the first build: the toggle was "not very obvious, small and
+hard to click" — a 10.5 pt text label in the secondary text color, hit area the
+size of its glyphs, sitting in a row of text. Asked whether the old iTunes idiom
+(the green zoom button switching to the mini player) should be revived.
+
+- **Not the green button.** iTunes used it through iTunes 9, moved it to
+  option-click in 10 and dropped it in 11; since Lion the green button means
+  zoom / full screen everywhere, and Music and Podcasts reach the MiniPlayer by
+  a menu item and a small in-window button. Repurposing it would fight the
+  system and user expectation. **Rejected.**
+- **The toggle is window chrome, in the top-right corner, in BOTH
+  arrangements.** Opposite the traffic lights, level with them, in the
+  title-bar strip. That corner is where macOS keeps window-shape controls, so
+  it inherits the old mental model without stealing the button; and it stays
+  in the same spot when the arrangement flips, so toggling back needs no
+  re-aiming. It is not one of the four blocks — it does not travel in the
+  FLIP; during the animated switch it already sits at the incoming
+  arrangement's corner and the moving window edge reveals it.
+- **A real icon button**, 26 × 26 hit area, hover chip background and a
+  brighter pressed state (the toolbar-button idiom); no label. The icon names
+  the arrangement it **opens**: three columns (⇒ full) while compact, a tall
+  narrow rectangle (⇒ compact) while full. Tooltip names the mode and the
+  shortcut. View ▸ Compact Window / Full Window (⌘⇧C) unchanged.
+- **It lives in the hidden title bar's strip** (the window's top safe
+  area): the full arrangement already lays out below that strip, and compact
+  keeps its own empty 28 pt row there, so no block moves to make room.
+- **Also rejected:** snapping to compact when the window is dragged narrow
+  (the standing no-snap rule; a plain resize must not change the arrangement)
+  and double-clicking the title area (taken by the system zoom / minimize
+  preference).
+- Mockup record: none — the control is a stock idiom; decided in the owner
+  session of 2026-11-05 (PROGRESS.md entry of that date).

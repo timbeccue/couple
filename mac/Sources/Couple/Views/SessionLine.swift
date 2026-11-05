@@ -1,12 +1,13 @@
 // Session line (UX §V2.11; PLAN-COMPACT-MODE Phase 4.1): the session's identity and
-// media counts, the arrangement toggle and — per arrangement — the session controls.
-// One view for BOTH arrangements:
-//  - full (the left rail's header): the wordmark, Clear Session…, "⤡ Compact",
-//    the media counts and "N to export";
-//  - compact: a title-bar row carrying "⤢ Full" at the right (the window is
-//    `.hiddenTitleBar`; the traffic lights sit at the left of that row), then
-//    "<session> · N video · N audio" with "+ Add" — the ONLY media-pool affordance
-//    in compact (§6.4). Clear Session… is in the session line's context menu there.
+// media counts and — per arrangement — the session controls. One view for BOTH
+// arrangements:
+//  - full (the left rail's header): the wordmark, Clear Session…, the media counts
+//    and "N to export";
+//  - compact: an empty title-bar row (the window is `.hiddenTitleBar`; the traffic
+//    lights sit at its left and the arrangement toggle — RootView's corner overlay,
+//    ArrangementToggle.swift — at its right), then "<session> · N video · N audio"
+//    with "+ Add" — the ONLY media-pool affordance in compact (§6.4). Clear
+//    Session… is in the session line's context menu there.
 
 import CoupleKit
 import SwiftUI
@@ -33,8 +34,6 @@ struct SessionLine: View {
                 // returns to the initial import screen. Confirms with media/couple/
                 // included counts; disabled mid-export (the batch owns the files).
                 clearSessionButton
-                ArrangementToggle()
-                    .padding(.leading, 6)
             }
             Text("\(model.pool.videos.count) video · \(model.pool.audios.count) audio")
                 .font(.system(size: 10))
@@ -65,12 +64,9 @@ struct SessionLine: View {
 
     private var compactBody: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Title-bar row: traffic lights at the left (system), the toggle at the right.
-            HStack {
-                Spacer()
-                ArrangementToggle()
-            }
-            .frame(height: 28)
+            // Title-bar row: traffic lights at the left (system), the arrangement
+            // toggle at the right (RootView's corner overlay). Nothing of its own.
+            Color.clear.frame(height: 28)
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if let name = model.sessionName {
                     Text(name)
@@ -106,25 +102,5 @@ struct SessionLine: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
-    }
-}
-
-/// "⤢ Full" in compact / "⤡ Compact" in full (UX §V2.11). Same action as the View
-/// menu's Compact Window / Full Window item (⌘⇧C).
-struct ArrangementToggle: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let compact = model.layoutMode == .compact
-        Button {
-            model.toggleLayoutMode()
-        } label: {
-            Text(compact ? "⤢ Full" : "⤡ Compact")
-                .font(.system(size: 10.5))
-                .foregroundStyle(Theme.textSecondary)
-        }
-        .buttonStyle(.plain)
-        .help(compact ? "Open the full window: overview, loupes, sync tools, media pool (⌘⇧C)"
-                      : "Switch to the compact window (⌘⇧C)")
     }
 }

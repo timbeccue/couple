@@ -44,7 +44,7 @@ struct CoupleApp: App {
             CommandGroup(replacing: .appInfo) { AboutCommands() }
             CommandGroup(after: .help) { AcknowledgementsCommands() }
             // View ▸ Compact Window / Full Window (⌘⇧C) — same action as the
-            // session line's ⤢ Full / ⤡ Compact (UX §V2.11).
+            // window-corner arrangement toggle (ArrangementToggle.swift; UX §V2.13).
             CommandGroup(before: .toolbar) { LayoutCommands(model: model) }
         }
 

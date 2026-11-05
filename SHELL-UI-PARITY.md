@@ -220,8 +220,17 @@ four blocks are the same views the full arrangement's rails wrap (Phase 4.1
 extraction), so a port must build one layout with two arrangements, not two
 windows.
 
-- Arrangement toggle: "⤢ Full" at the right of the session line in compact,
-  "⤡ Compact" in the same place in full; also a menu item and ⌘⇧C. The window
+- Arrangement toggle (UX §V2.13): one 26 × 26 icon button pinned to the
+  window's top-right corner in BOTH arrangements, level with the traffic
+  lights (mac: a RootView overlay; Electron: an absolutely-positioned child of
+  the root above the drag strip) — hover chip background, pressed state, the
+  icon of the arrangement it opens (three columns while compact, a tall
+  rectangle while full), tooltip with the shortcut, accessibility label
+  "Full Window" / "Compact Window". Not a block: it does not travel in the
+  FLIP; it sits in the title-bar strip (mac: the top safe area, ignored by
+  the overlay; Electron: the 30 px darwin strip, and on Windows/Linux, where
+  there is no traffic-light strip, the full arrangement's export rail gets
+  30 px of top padding instead). Also a menu item and ⌘⇧C. The window
   frame animates (0.45 s ease-out) to the last-used frame of the target
   arrangement (compact default 360 × 700, width clamped 340–420, height free
   with min 560; full min 640 × 400, default 1280 × 820) while the four blocks
@@ -234,15 +243,18 @@ windows.
   the update, then last-used. [Views/WindowAccessor.swift, WindowLayout.swift
   (AppModel setLayoutMode / animateLayoutSwitch / applyWindowLayout / frames;
   layoutBlock / layoutExtra modifiers), AppModel.swift layoutMode,
-  CoupleApp.swift LayoutCommands (⌘⇧C), RootView.swift, SessionLine.swift
-  ArrangementToggle; Electron: views/layoutFlip.ts, CompactLayout.tsx,
-  app/WindowLayout.ts, app/layoutMode.ts, main/index.ts applyLayout,
-  SessionLine.tsx] (Electron: on macOS the window frame animates at the
+  CoupleApp.swift LayoutCommands (⌘⇧C), RootView.swift (the overlay),
+  Views/ArrangementToggle.swift; Electron:
+  views/layoutFlip.ts, CompactLayout.tsx, app/WindowLayout.ts,
+  app/layoutMode.ts, main/index.ts applyLayout, views/ArrangementToggle.tsx,
+  App.tsx, layout.css] (Electron: on macOS the window frame animates at the
   system resize speed via setBounds(…, true), not 0.45 s; the block FLIP is
   ~0.5 s.)
 - Session line: session identity + media counts, "+ Add" (the ONLY media-pool
   affordance in compact — the pool list, its sticky player and the unused-file
-  info are full-arrangement surfaces), "⤢ Full"; Clear Session… in its context
+  info are full-arrangement surfaces); an empty 28 px title-bar row under the
+  traffic lights (the arrangement toggle at its right is the window-corner
+  control above, not part of this view); Clear Session… in its context
   menu. [Views/SessionLine.swift (compact: true; the full rail's header is the
   same view); Electron: SessionLine.tsx] (Electron: the compact context menu
   is a native menu requested over IPC, `couple:context-menu`.)

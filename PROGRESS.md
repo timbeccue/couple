@@ -1627,3 +1627,37 @@ added in the same amendment.
   match, `scripts/shell-drift-check.sh main` ok, `third-party-notices --check`
   up to date, `swift test` 134 passed, Electron typecheck/vitest 76/parity/
   smoke green (Phase 6).
+
+## 2026-11-05 — Arrangement toggle moved to the window corner (UX §V2.13)
+
+Owner, after using the first compact-mode build: the ⤢ Full / ⤡ Compact text
+label was "not very obvious, small and hard to click", and asked whether the
+old iTunes green-button mini-player idiom should come back. Decision recorded as
+UX-DECISIONS §V2.13 (green button rejected — the idiom died with iTunes 11 and
+the button means zoom/full screen now; snap-on-resize and title double-click
+rejected too).
+
+- **Both shells:** the toggle is now a 26 × 26 icon button pinned to the
+  window's top-right corner in BOTH arrangements, level with the traffic
+  lights — hover chip, pressed state, the icon of the arrangement it opens
+  (three columns while compact, a tall rectangle while full), tooltip with the
+  shortcut. Mac: `Views/ArrangementToggle.swift` as a `RootView` overlay on the
+  pinned content frame (so during the animated switch it already sits at the
+  incoming arrangement's corner); SF Symbols `rectangle.split.3x1` /
+  `rectangle.portrait`. Electron: `views/ArrangementToggle.tsx` (inline SVG
+  twins) as an absolutely-positioned child of the root above the drag strip
+  (`-webkit-app-region: no-drag`). The session line lost the label in both
+  shells; its compact title-bar row stays as traffic-light clearance.
+- **Where it sits:** the hidden title bar's strip. Mac: the overlay ignores
+  the top safe area (the full arrangement lays out below it; compact ignores
+  it and keeps its own 28-pt row) — first cut respected it and landed on the
+  "+ Add" row, caught by the `COUPLE_COMPACT_TEST` shot. Electron: the 30 px
+  darwin drag strip; on Windows/Linux, where there is no traffic-light strip,
+  the full arrangement's export rail gets 30 px of top padding so the INTO
+  row stays clear.
+- View ▸ Compact Window / Full Window (⌘⇧C) unchanged; the harness cases
+  (`COUPLE_LAYOUT_TOGGLE_TEST`, `COUPLE_COMPACT_TEST`) drive the model, not the
+  button, and are unchanged.
+- Docs: UX-DECISIONS §V2.11 REVISED markers + §V2.13; SHELL-UI-PARITY.md
+  arrangement-toggle and session-line rows; CLAUDE.md flags line.
+
