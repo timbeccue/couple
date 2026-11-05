@@ -806,6 +806,13 @@ final class PairSession {
         exportActivity = .running(phase: "ExportRender", fraction: 0)
         let progressTask = Task {
             for await p in job.progress {
+                // The stream is unbounded and still drains its buffer after the
+                // `defer` below cancels this task, so a progress update queued just
+                // before the job finished can arrive AFTER the caller has marked the
+                // row done (BatchExport's `.done(url)`), flipping it back to
+                // `.running`. Once cancelled — i.e. once the job is over — drop the
+                // rest. (Both run on the main actor, so the check is race-free.)
+                if Task.isCancelled { break }
                 self.exportActivity = .running(phase: p.phase, fraction: p.fraction)
                 onProgress(p.fraction)
             }
