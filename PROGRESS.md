@@ -1388,3 +1388,138 @@ under our control. So:
 - Still open: upload `ffmpeg-9.0.2.tar.xz.asc` to the `ffmpeg-source-9.0.2`
   prerelease once ffmpeg.org is reachable so CI runs the GPG check; try the
   Windows and Linux installers on a machine without ffmpeg before publishing.
+
+## 2026-11-05 — Compact mode (PLAN-COMPACT-MODE Phase 0)
+
+Owner prototype rounds 3–5 in `design/mockups-compact/` (direction D — fixed
+preview + list, animated ⤢ Full) became `PLAN-COMPACT-MODE.md` (TODO-016).
+Phase 0 is decisions and docs only; no code. The twelve decisions in the
+plan's §2 table are recorded below as SPEC-CHANGE entries; the user-facing
+rules are UX-DECISIONS **§V2.11** (compact arrangement) and **§V2.12**
+(include-for-export). Numbering note: the plan's first draft called those
+two entries V2.7/V2.8; UX-DECISIONS already has a V2.7 (Media pool) and a
+V2.8 (Export rail), both cited from Swift code and SPEC-V2, so the new entries
+took the next free numbers and the plan was corrected the same day. Cite
+V2.11/V2.12.
+
+**OUTSTANDING GATE — realdata verdict check (Phase 0 step 1) not run.** After
+D1 the verdict is the only gate before a file leaves the app, so the plan
+requires `COUPLE_REALDATA_DIR=… scripts/realdata-sweep.sh` and the per-class
+verdict confusion counts recorded here before D1 ships. This environment has
+no `COUPLE_REALDATA_DIR` and `example_data/` holds no media (manifests only),
+so the sweep could not run. It MUST run on the owner's machine, and the counts
+MUST land in this entry, before Phase 1 merges to main. If a true pair lands
+in "questionable" or a wrong take lands in "good", stop and recalibrate first
+(`fixtures/matcher-corpus/CALIBRATION.md` §6–7).
+
+SPEC-CHANGE (2026-11-05) [D1]: SPEC-V2 §2 item 4 ("Verified ≡ queued", one
+opt-in flag, "Export n verified") and UX §V2.5 ("Approve ≡ queued") are
+superseded by **include-for-export**. A couple is **included** in the export
+batch when its verdict is good and it has not been exported yet, unless the
+user toggled its row checkbox (an explicit opt-out, or an explicit opt-in
+again after an export); a couple whose verdict is questionable or none ("pick
+one" / "no audio") can never be included. The export button reads "Export N
+files", N = included couples. The rule lives in core
+`policy/export_include.rs` (`included(verdict, explicit, exported)`,
+`can_include(verdict)`, `in_files_list(included, exported)`, `export_count`)
+through the existing `cpl_policy_*` envelope; Swift mirror
+`CoupleKit/ExportIncludePolicy.swift`. Inclusion is derived state — the shell
+stores only the user's explicit toggle and `exportedAt` per couple; every
+verdict change, undo, restore or sync completion re-derives it, and a manual
+re-pair clears both stored values. **Loading note:** a `queue.json` saved
+under the approve model carries neither field and its former `approved` flag
+is not read, so it loads with **every good couple included** (the policy
+default) and every exported/approved distinction gone. ADDITIVE —
+`cpl_abi_version` stays 1.
+
+SPEC-CHANGE (2026-11-05) [D2]: UX §V2.2's three sections QUEUED FOR EXPORT /
+TO APPROVE / TO FIX become two: **To fix** (verdict questionable or none) and
+**Ready** (verdict good). Membership is the verdict alone; inclusion does not
+move a row between sections. Shell presentation; the verdict policy is
+unchanged. No ABI change.
+
+SPEC-CHANGE (2026-11-05) [D3]: UX §V2.2/§V2.3 — rows no longer show the
+verdict dot or the amber coverage strip. The verdict is still computed by the
+same policy and still drives sections and the action words ("pick one" red,
+"no audio" grey, "syncing…" while pairing), which are now the only state
+marks on a row. Coverage moves to the preview's two-lane waveform seek strip
+(external lane drawn only where that audio covers the video). The verdict
+colors stay on the action-word capsules and the candidate strength bar. No
+core change.
+
+SPEC-CHANGE (2026-11-05) [D4]: UX §V2.4/§V2.5 — the Approve button leaves the
+editor's bottom bar and `v` is unbound (it no longer approves or advances;
+SPEC-V2 §2 item 3's "`v` verifies and advances" is retired). Inclusion is
+toggled by the row checkbox only (owner §6.5); the toggle keeps its undo case
+(TODO-015). Shell-only; `InputRouter` + SHELL-UI-PARITY keymap.
+
+SPEC-CHANGE (2026-11-05) [D5]: UX §V2.1 "everything visible at once; no modal
+screens" stays true of the **full** arrangement. The window gains a second
+**compact** arrangement (≈360 × 700: session line, fixed preview, couple list,
+export panel) of the same window and session; it is not a screen you
+navigate to — the editing surfaces it omits are one click away behind
+⤢ Full, the toggle animates the frame and the four blocks, and nothing is
+lost or reset by switching. UX §V2.11. Shell-only.
+
+SPEC-CHANGE (2026-11-05) [D6]: `core/src/policy/row_merge.rs` — the
+`protected` input (rows a re-pair over new files may not override) is
+composed by the shell as **pinned only**, no longer approved ∨ pinned. With
+default-on inclusion "included" no longer means a human looked at the row;
+a manual pick (📌) does. Rust side: doc + test; mirror
+`CoupleKit/RowMergePolicy.swift`; composition in `IngestController.swift`.
+ADDITIVE — `cpl_abi_version` stays 1.
+
+SPEC-CHANGE (2026-11-05) [D7]: `core/src/policy/media_removal.rs` — the
+removal plan warns for **included** couples instead of approved ones (same
+input, renamed meaning: the shell passes inclusion). The wire key keeps its
+name until Phase 6 (D12). ADDITIVE — `cpl_abi_version` stays 1.
+
+SPEC-CHANGE (2026-11-05) [D8]: export status is persisted. `queue.json`
+(schema `couple-queue/1`, no bump) gains two optional fields per couple:
+`exportedAt` (set on each successful export) and the user's explicit include
+toggle. `exportedAt` drives the ✓ time on rows, the default-include rule
+(exported ⇒ excluded unless explicitly re-included) and Files-list membership
+(included ∪ exported). Shell-only state in `QueueStore`, like `pinned`.
+
+SPEC-CHANGE (2026-11-05) [D9]: `core/src/policy/repair_drop.rs` — "Replace
+approved pairing?" is asked only when the couple is **pinned** (a manual
+pick), never for an included couple; the shell passes `pinned` where it
+passed `approved`. Default-on inclusion would otherwise prompt on every drop.
+Mirror `CoupleKit/RepairDropPolicy.swift`. ADDITIVE — `cpl_abi_version`
+stays 1.
+
+SPEC-CHANGE (2026-11-05) [D10]: UX 2026-11-03 — the full arrangement keeps the
+4-way picker Camera · Pan L/R · Overlay · External with the A/B solos. The
+**compact** arrangement shows a 3-way picker **Camera · Synced · External**
+where Synced = Overlay; a remembered Pan L/R both-mode maps to Synced while
+compact; `a`/`b` flip exactly as today. `policy::monitor` is unchanged — the
+3-way picker is presentation. Shell-only.
+
+SPEC-CHANGE (2026-11-05) [D11]: UX §V2.2 "empty sections stay visible,
+dimmed" is narrowed: an empty **To fix** section is hidden in both
+arrangements; **Ready** is always shown (dimmed with "—" when empty).
+Shell-only.
+
+SPEC-CHANGE (2026-11-05) [D12]: the policy-envelope wire keys `approved`,
+`affectedApproved` and `ClearSessionCounts.approved` (`ffi/src/lib.rs`,
+`electron kit/Policies.ts`) **keep their names until Phase 6** because the
+Electron shell still reads them; from Phase 1 they carry "included" (D7) —
+documented at both ends. Both sides rename in Phase 6. ADDITIVE —
+`cpl_abi_version` stays 1.
+
+- UX-DECISIONS.md: §V2.11 and §V2.12 appended; REVISED markers on §V2.1,
+  §V2.2, §V2.3, §V2.4, §V2.5, §V2.6, the 2026-07-11 empty-session entry and
+  the 2026-11-03 A/B entry, each pointing at V2.11/V2.12.
+- SHELL-UI-PARITY.md: queue-rail header/sections/row lines, the center-column
+  sync-tools line, the keymap, the export rail and the persistence/dialog
+  lines rewritten to the include model; new "Compact arrangement" surface
+  section with every required affordance from the mockup README rounds 4–5,
+  each line citing the view it will live in and tagged "mac-only until
+  Phase 6" (Electron keeps the approve form until then).
+- TODO.md: TODO-016 → In progress.
+- Plan inconsistencies found while writing (plan not edited here): Phase 4
+  step 5 lists `a`/`b` among the compact no-op keys, but D10 says `a`/`b`
+  keep flipping in compact — the docs follow D10 (keys work in both
+  arrangements). The queue header's "N to export" status line (Phase 1 step
+  5) is not in the design record's session line; recorded in PARITY as the
+  plan states it.

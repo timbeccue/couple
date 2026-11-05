@@ -345,7 +345,7 @@ re-import, not a state restore — offering "undo" there would either lie or blo
 
 ## TODO-016: Compact arrangement and include-for-export model
 
-**Status:** Ready  
+**Status:** In progress — Phase 0 (decisions + docs) done 2026-11-05; realdata verdict gate still outstanding; Phase 1 in progress  
 **Type:** Feature  
 **Area:** Shell (mac first, Electron in Phase 6)
 

@@ -350,6 +350,8 @@ couples audio to video. Used in copy throughout.
 
 ## V2.1 Shell layout (DECIDED)
 
+**REVISED (owner 2026-11-05) — see §V2.11.** "Three columns, everything visible at once" now describes the **full** arrangement only. The same window also has a **compact** arrangement (session line, fixed preview, couple list, export panel); ⤢ Full / ⤡ Compact switches between them with an animated frame. The left rail becomes the compact couple list and the export rail the compact export panel plus a Files list in the full arrangement. The rest of this entry (hero greedy, aspect ratio inviolable, resizable rails) stands.
+
 Three columns, no modal screens — **everything is visible at once; there is no
 "editor screen" you navigate to and back from**:
 
@@ -371,6 +373,8 @@ Three columns, no modal screens — **everything is visible at once; there is no
 
 ## V2.2 The queue (DECIDED)
 
+**REVISED (owner 2026-11-05) — see §V2.12.** The three sections, the quality dot, the coverage strip under the thumbnail and the approve checkbox are superseded: sections are **To fix / Ready** (an empty To fix is hidden; Ready always shows), rows carry **no dots and no coverage strip** (coverage is drawn in the preview's two-lane waveform strip), and the checkbox is the **include-for-export** opt-out shown on includable rows only. "Coverage is never a quality penalty" still holds.
+
 - **Three workflow sections, not a sort control** (owner — supersedes SPEC-V2
   §11.3's "sort by needs-attention?"): **QUEUED FOR EXPORT** (approved) /
   **TO APPROVE** (good, unapproved) / **TO FIX** (questionable or no-match).
@@ -386,6 +390,8 @@ Three columns, no modal screens — **everything is visible at once; there is no
   Coverage is a fact about the recording — it is **never** a quality penalty.
 
 ## V2.3 Quality = the verdict model (DECIDED, owner — settles §11.3 vocabulary)
+
+**REVISED (owner 2026-11-05) — see §V2.12.** The verdict model (good / questionable / none) and its thresholds are unchanged and now gate export directly. What changed is the **indicator**: the status dot is gone from couples; the action word ("pick one" / "no audio", plus "syncing…" while pairing) is the only state mark on a row, and a good couple shows nothing but its checkbox. "Section membership mirrors the verdict" now reads good → Ready, questionable/none → To fix; there is no QUEUED section. The candidate picker's relative strength bar stays.
 
 Pairing quality is **three categories, not a continuous score**: **good /
 questionable / none**. Rationale (owner + Phase-7 data): fit is bimodal for
@@ -412,6 +418,8 @@ human must choose," i.e. the questionable bucket. So:
   V2-F2 calibration debt, now with real numbers — see §V2.9).
 
 ## V2.4 Sync tools, loupes, approve — the persistent bottom bar (DECIDED)
+
+**REVISED (owner 2026-11-05) — see §V2.12.** The **Approve** control leaves the bottom bar and `v` is unbound; the bar keeps ⚙ sync tools, ◫ loupes and ↻ re-sync. The bar exists in the **full** arrangement only (§V2.11); compact has no loupes, overview, nudges or anchors.
 
 The demoted v1 editor lives in a **bar pinned to the bottom of the center
 column**, always present. Its toggles are same-place on/off switches (nothing
@@ -446,6 +454,8 @@ Demotion specifics (SPEC-V2 §1/V2-F6, ratified):
 
 ## V2.5 Approve ≡ queued; one flag (DECIDED, owner — SPEC-V2 §2.4 / V2-F4)
 
+**REVISED (owner 2026-11-05) — superseded by §V2.12.** There is no approve step. A good couple is **included** in the export by default; the row checkbox is the opt-out; flagged couples cannot be included; the button reads "Export N files". §11.4's point (no listen required before export) carries over unchanged.
+
 - **"Approve" is the verb** (chosen over v1's "Verify"). Approving a couple
   **is** queueing it for export; there is no separate export checkbox. The
   export button reads "Export (n files)".
@@ -458,6 +468,8 @@ Demotion specifics (SPEC-V2 §1/V2-F6, ratified):
   tax the confident common case for no safety gain.
 
 ## V2.6 Pairing, candidates, manual re-pair (DECIDED)
+
+**REVISED (owner 2026-11-05) — see §V2.11 / §V2.12.** Candidates gain **▶ audition at best fit** (play the video with that candidate's audio at its best-fit offset before anything is pinned; ■ stops). After a manual pick the preview keeps "Audio chosen by you · Undo · Compare others" and a "Change…" link; **Compare others** reopens the same candidate list inline under the video with the current one marked — nothing floats over content. "Replace approved pairing?" on a drop is asked only for a **pinned** couple. The monitor-mode line was already revised 2026-11-03; the compact picker is §V2.11.
 
 - **Candidates are never destroyed.** Every candidate the resolver found stays
   listed for a couple; switching the selection is always one click and fully
@@ -636,6 +648,8 @@ confidence… I wish there were more data points." Two causes, two fixes:
 
 ## 2026-07-11 — No splash screen: the empty session IS the three-column shell (REVISES §3 "Empty / launch")
 
+**REVISED (owner 2026-11-05) — see §V2.11.** Still the rule for the **full** arrangement. In the **compact** arrangement the empty session shows the same drop target filling the preview block with the export panel pinned to the bottom — likewise no splash, the chrome stays. The orientation line's "Approve them here" wording goes with the approve step (§V2.12).
+
 Owner: launching into a lone drop zone makes the app a black box — a new user
 can't see what the app is like or what they'll be able to do until they commit
 files to it, and with no visible structure they don't even know *which* files
@@ -726,6 +740,8 @@ here.
 
 ## 2026-11-03 — A/B monitor: Camera / External solos in the HUD picker (REVISES §2.7 "three monitor modes", §V2.6 "Pan L/R | Overlay")
 
+**REVISED (owner 2026-11-05) — see §V2.11.** The 4-way picker and the solos stand in the **full** arrangement. The **compact** arrangement shows a 3-way **Camera · Synced · External** (Synced = Overlay); a remembered Pan L/R both-mode is heard as Synced while compact; `a`/`b` behave exactly as described here in both arrangements.
+
 Owner request: comparing the camera audio against the coupled external audio
 took a mute on one lane and an unmute on the other, too slow for a quick
 back-and-forth. Three placements were mocked (extend the monitor picker; a
@@ -755,3 +771,125 @@ picker.
 - **Not done (deliberately):** no hold-to-compare (momentary) variant; no
   per-lane solo buttons; no A/B readout outside the picker — the picker's
   selected segment is the readout.
+
+## V2.11 Compact arrangement (DECIDED, owner 2026-11-05)
+
+Design record: `design/mockups-compact/README.md` rounds 3–5 (direction D);
+plan: `PLAN-COMPACT-MODE.md`. Revises §V2.1, the 2026-07-11 empty-session
+entry and the 2026-11-03 picker entry (markers above). Owner rationale:
+auto-sync is reliable enough that the common run never opens the loupes or
+the overview; the three-column window is more than that run needs.
+
+- **One window, two arrangements of the same session.** **Compact** (about
+  360 × 700) and **full** (today's three columns). **⤢ Full** / **⤡ Compact**
+  at the right of the session line (also a menu item, ⌘⇧C) switches; the
+  window frame animates and the four blocks move to their new places (list
+  and session line into the left rail, preview into the center, export into
+  the right rail); the surfaces only the full arrangement has (overview,
+  loupes bar, Files list, media pool) fade in after. Nothing is lost by
+  switching: selection, playhead, playback and inclusion survive. With
+  "Reduce motion" on, the switch is instant.
+- **Default arrangement after the upgrade is compact** (first launch after
+  the update opens compact); afterwards the last-used arrangement is
+  remembered.
+- **Compact window: narrow width, free height.** Width stays within 340–420;
+  height is free (minimum 560); the couple list absorbs the extra height.
+- **Compact is four blocks, top to bottom:**
+  1. **Session line** — the session's identity and counts, **+ Add** (the
+     only media-pool affordance in compact; the pool list, its player and the
+     unused-file info are full-arrangement surfaces) and **⤢ Full**.
+  2. **Preview block, fixed at the top.** Shows the selected couple: the
+     video, a **two-lane waveform seek strip** (camera teal above, external
+     amber below, the amber lane drawn only where that audio covers the
+     video with a faint baseline elsewhere; click or drag anywhere seeks —
+     scrub, never snap), the monitor picker **Camera · Synced · External**
+     (Synced = Overlay; `a`/`b` as today; a remembered Pan L/R is heard as
+     Synced while compact), and one tertiary line with offset and fit. For a
+     **"pick one"** couple the block shows the video plus a compact
+     candidate picker (strength bar, **▶** audition at best fit, **use**);
+     for **"no audio"**, one line: "No matching audio in this session ·
+     **Choose file…**". After a manual pick: a **Change…** link in the title
+     and "Audio chosen by you · **Undo** · **Compare others**"; Compare
+     reopens the candidate list **inline under the video** with the current
+     one marked (nothing floats over content); Undo returns the couple to
+     To fix. Auditioning a candidate redraws the amber lane with that
+     candidate's coverage.
+  3. **Couple list — only the rows scroll.** §V2.12 rows and sections.
+     Selecting a row previews it in the block above and never moves the list
+     (scroll position is preserved on redraw).
+  4. **Export panel** — §V2.12. Pinned to the bottom.
+  The **activity strip** (syncing / exporting progress) renders along the
+  bottom as in the full arrangement.
+- **Empty session in compact**: the drop target fills the preview block; the
+  export panel stays pinned at the bottom (no splash, same rule as
+  2026-07-11).
+- **Keys in compact**: `j`/`k` select, `space` play/pause, `Return` switches
+  to the full arrangement with the selected couple's editor open, `esc`,
+  `a`/`b` monitor. Nudges, `[`/`]`, `l` (loupes) do nothing in compact — the
+  surfaces they drive are not there.
+- **Dropped from compact, present in full (unchanged):** loupes, the overview
+  waveform, offset and drift nudges, drift mode, anchors, the fit sparkline,
+  numeric readouts beyond the one offset/fit line, the media-pool list and
+  its sticky player, per-file name editing (default `<stem>_synced` only).
+- **Full arrangement after this change**: the left rail **is** the compact
+  couple list; the export rail **is** the compact export panel plus the
+  **Files** list (one output name per included or exported couple, with ↺
+  reset and per-file status). Overview, loupes and sync tools are unchanged.
+- **Not done (deliberately):** no menu-bar or floating-panel variant; no
+  separate "compact mode" with its own defaults — it is the same session and
+  the same settings; the Electron shell keeps its current layout until
+  PLAN-COMPACT-MODE Phase 6.
+
+## V2.12 Include-for-export replaces approve (DECIDED, owner 2026-11-05)
+
+Supersedes §V2.5 and SPEC-V2 §2 item 4 (SPEC-CHANGE D1–D4, D6–D9, D11, D12 in
+PROGRESS.md 2026-11-05); revises §V2.2, §V2.3, §V2.4, §V2.6 (markers above).
+Owner rationale (round 2 of the design record): the approve step never
+required listening, so it was bookkeeping, not a check; trust the auto-synced
+couples, deal with what is flagged, export.
+
+- **A good couple is included in the export by default.** No Approve button,
+  no `v`, no "queued" state. The **row checkbox** is the opt-out (and the
+  opt-in again after an export); it is the **only** way to change inclusion.
+  Unticking is undoable like approve was.
+- **Flagged couples cannot be included.** A "pick one" or "no audio" couple
+  has no checkbox until it is fixed; its row carries the word instead.
+- **"Export N files"** — one button, N counted from the checkboxes; disabled
+  at 0. Export runs the included couples in order (serial, continue past
+  failure, as before). After a successful export the row shows **✓ and the
+  time** and unchecks (an exported couple is not exported again unless the
+  user ticks it back on). Export status survives relaunch.
+- **Sections are To fix / Ready**, by verdict alone. An empty **To fix** is
+  hidden; **Ready** always shows (dimmed, with "—", when empty). Inclusion
+  does not move a row between sections.
+- **Rows carry no dots and no coverage strip.** Row = thumbnail, video name +
+  duration, the chosen audio's name — or, in its place, "pick one" (red),
+  "no audio" (grey) or "syncing…" while pairing — 📌 for a manual pick, and
+  the checkbox on includable rows (✓ time once exported). Coverage is
+  visible in the preview's waveform strip.
+- **Export panel** (both arrangements): **into** the destination folder with
+  **Change…** (auto-tracks the last import folder until pinned, as before);
+  **as** Auto · MOV · MP4 · WAV; **keep camera audio as a muted track** on
+  its own line (unavailable for WAV); **Export N files**; after an export,
+  **Reveal in Finder**. In the full arrangement the **Files** list follows
+  (one `<stem>_synced.<ext>` per included or exported couple, name editable
+  in place with ↺ reset, per-file status) — §V2.8's naming rules unchanged.
+- **What "included" does and does not mean.** Included is not "a human
+  looked at this"; a **manual pick (📌)** is. So: a re-pair over newly added
+  files may replace an included couple's pairing but never a pinned one;
+  dropping audio onto a couple asks "Replace … pairing?" only when the couple
+  is pinned; removing media still warns when it would break an **included**
+  couple; Clear Session's confirmation counts included couples.
+- **A manual re-pair resets inclusion** for that couple: it forgets an earlier
+  export and an earlier untick, and the default rule applies again once the
+  new pairing's verdict is good.
+- **Sessions saved before this change** load with every good couple included
+  (there is no approve flag to carry over); export history starts empty.
+- **The verdict is now the only gate before a file leaves the app.** The
+  realdata verdict check (PLAN-COMPACT-MODE Phase 0 step 1) must pass before
+  the first build with this model ships; the thresholds are those of
+  `fixtures/matcher-corpus/CALIBRATION.md` §6–7.
+- **Not done (deliberately):** no "Skip" hover action or footer exclusion
+  line (round 2 → round 3: the checkbox alone is the opt-out); no "This one"
+  single-couple export button beside Export N (round 3 open question, dropped
+  in round 4); no per-couple format or naming in compact.
