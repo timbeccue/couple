@@ -21,7 +21,12 @@ so every file renders correctly on any background and stays crisp at any zoom.
 - `couple-appicon.svg` — app icon on the Apple icon grid (1024 canvas, 824 squircle,
   baked drop shadow). Source of the .icns.
 - `Couple.icns` — generated from `couple-appicon.svg`; a copy ships from
-  `mac/Resources/AppIcon.icns` (wired in `mac/Scripts/make-app.sh`).
+  `mac/Resources/AppIcon.icns` (wired in `mac/Scripts/make-app.sh`). The Electron
+  installers take theirs from `electron/build/` (electron-builder's default icon dir):
+  `icon.icns` (copy of this file), `icon.ico` (Windows, 16/32/48/256 layers) and
+  `icon.png` (1024; electron-builder derives the Linux set from it, and it is also
+  copied into the app's resources as the Linux window icon). Regenerate all three
+  with the commands below.
 - `fonts/Nunito[wght].ttf` + `fonts/OFL.txt` — the wordmark's typeface, pinned here so the
   outlines regenerate identically. Design-time only: nothing ships the font file, and the
   outlined glyphs in a logo are not "Font Software" under the OFL, so no runtime notice is
@@ -58,6 +63,21 @@ done
 iconutil -c icns AppIcon.iconset -o Couple.icns
 cp Couple.icns ../../mac/Resources/AppIcon.icns
 rm -rf AppIcon.iconset
+```
+
+## Regenerating the Electron icons (`electron/build/`)
+
+Same `rsvg-convert`, plus ImageMagick (`magick`) for the .ico. Run after any change to
+`couple-appicon.svg` / `Couple.icns`:
+
+```sh
+cd design/logo
+cp Couple.icns ../../electron/build/icon.icns
+rsvg-convert -w 1024 -h 1024 couple-appicon.svg -o ../../electron/build/icon.png
+mkdir ico
+for s in 16 32 48 256; do rsvg-convert -w $s -h $s couple-appicon.svg -o ico/$s.png; done
+magick ico/16.png ico/32.png ico/48.png ico/256.png ../../electron/build/icon.ico
+rm -rf ico
 ```
 
 ## Regenerating the wordmark (SVGs + Swift glyphs)
