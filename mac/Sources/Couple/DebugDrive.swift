@@ -81,7 +81,7 @@ final class DebugDrive {
             || env["COUPLE_QUALITY_TEST"] != nil || env["COUPLE_REPAIRDROP_TEST"] != nil
             || env["COUPLE_REMOVE_TEST"] != nil || env["COUPLE_ANCHOR_TEST"] != nil
             || env["COUPLE_ACTIVITY_TEST"] != nil || env["COUPLE_OVERVIEW_TEST"] != nil
-            || env["COUPLE_MONITOR_TEST"] != nil else { return }
+            || env["COUPLE_MONITOR_TEST"] != nil || env["COUPLE_INCLUDE_TEST"] != nil else { return }
         Task { await run(env: env) }
     }
 
@@ -156,6 +156,9 @@ final class DebugDrive {
         }
         if env["COUPLE_QUEUE_TEST"] == "1" {
             await queueTest(env: env)
+        }
+        if env["COUPLE_INCLUDE_TEST"] == "1" {
+            await includeTest(env: env)
         }
         if env["COUPLE_VERIFY_DUMP"] == "1" {
             await verifyDump()
@@ -404,7 +407,8 @@ final class DebugDrive {
     }
 
     // MARK: - Queue gates (SPEC-V2 §7 shell phase): resolution parity, queue
-    // triage events (j/k/v/Enter), and the byte-identical batch export keystone.
+    // triage events (j/k/Enter), and the byte-identical batch export keystone.
+    // Sections and the batch follow the include model (UX §V2.12 / D1–D2).
 
     private func queueTest(env: [String: String]) async {
         guard let model else { return }
@@ -425,8 +429,8 @@ final class DebugDrive {
             }
         }
         func section(_ c: CoupleRow) -> String {
-            if c.approved { return "QUEUED" }
-            return c.verdict == .good ? "TO-APPROVE" : "TO-FIX"
+            // D2: membership is the verdict alone; inclusion rides along as a flag.
+            (c.verdict == .good ? "READY" : "TO-FIX") + (c.included ? " ✓" : "")
         }
         print("QUEUE-TEST: \(model.couples.count) couples · \(model.pool.videos.count) video · \(model.pool.audios.count) audio")
         for c in model.couples {
@@ -445,7 +449,7 @@ final class DebugDrive {
 
         if let dir = env["COUPLE_QUEUE_SHOT_DIR"] {
             try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            if let good = model.toApprove.first { model.select(good.id) }
+            if let good = model.ready.first { model.select(good.id) }
             model.syncToolsExpanded = true
             await settle()
             capture(to: "\(dir)/v2-01-queue.png")
@@ -457,12 +461,9 @@ final class DebugDrive {
             await settle()
             capture(to: "\(dir)/v2-03-resolve-banner.png")
             model.syncToolsExpanded = false
-            // Export rail with approved couples: in-place filenames, no template,
-            // global format only (owner 2026-06-13).
-            for c in model.couples where c.verdict == .good && c.pair.session != nil && !c.approved {
-                c.pair.toggleVerified()
-            }
-            if let good = model.queued.first { model.select(good.id) }
+            // Export rail with the included couples (every good one by default, D1):
+            // in-place filenames, no template, global format only (owner 2026-06-13).
+            if let good = model.included.first { model.select(good.id) }
             await settle()
             capture(to: "\(dir)/v2-04-export.png")
             print("QUEUE-SHOT: wrote screenshots to \(dir)")
@@ -470,21 +471,17 @@ final class DebugDrive {
 
         await queueNavTest()
 
-        // Persist the queue (§5.4) so a restore can be exercised: approve the
-        // good couples through the model path (which saves), then write the file.
-        for c in model.couples where c.verdict == .good && c.pair.session != nil && !c.approved {
-            model.toggleApprove(c)
-        }
+        // Persist the queue (§5.4) so a restore can be exercised. Under D1 the good
+        // couples are included by default — nothing to approve first.
         model.saveQueue()
-        print("QUEUE-SAVE: queue.json \(model.couples.count) couples, \(model.approvedCount) approved")
+        print("QUEUE-SAVE: queue.json \(model.couples.count) couples, \(model.includedCount) included")
 
         guard let outDir = env["COUPLE_BATCH_OUT"] else { return }
         try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
-        for c in model.couples where c.pair.session != nil && !c.approved { c.pair.toggleVerified() }
         model.exportDestination = URL(fileURLWithPath: outDir)
         model.globalFormat = .auto
         model.globalKeepCameraAudio = false
-        print("QUEUE-TEST: batch exporting \(model.approvedCount) couple(s) → \(outDir)")
+        print("QUEUE-TEST: batch exporting \(model.includedCount) couple(s) → \(outDir)")
         model.batch.run()
         for _ in 0..<6000 {
             if case .finished = model.batch.phase { break }
@@ -503,7 +500,8 @@ final class DebugDrive {
         }
     }
 
-    /// j/k/v/Enter over the queue (UX §2.9 extension to v2; SPEC-V2 §7).
+    /// j/k/Enter over the queue (UX §2.9 extension to v2; SPEC-V2 §7). `v` is
+    /// UNBOUND since UX §V2.12 / D4 — asserted here as a no-op on inclusion.
     private func queueNavTest() async {
         guard let model, model.couples.count >= 2,
               let win = NSApp.windows.first(where: { $0.isVisible }) else { return }
@@ -535,28 +533,141 @@ final class DebugDrive {
         await key(36) // Return
         check("Return toggles sync tools", model.syncToolsExpanded != expanded)
         await key(36)
-        // v approves the selected couple (if it can be) and advances.
-        if let sel = model.selectedCouple, sel.pair.session != nil {
+        // D4: `v` is unbound — it changes neither inclusion nor the selection.
+        if let sel = model.selectedCouple {
             let id = sel.id
-            let was = sel.approved
+            let was = sel.included
+            let wasExplicit = sel.explicit
             await key(9) // v
-            check("v approves (= queue) the selected couple",
-                  model.couples.first { $0.id == id }?.approved != was)
-            // un-approve it again so the batch below starts clean.
-            if let c = model.couples.first(where: { $0.id == id }), c.approved { c.pair.toggleVerified() }
+            check("v is unbound (inclusion and selection unchanged)",
+                  model.selectedID == id
+                  && model.couples.first { $0.id == id }?.included == was
+                  && model.couples.first { $0.id == id }?.explicit == wasExplicit)
         }
         print("QUEUE-EVENT summary: \(pass) passed, \(fail) failed")
     }
 
-    /// Restore round-trip (§5.4): load queue.json, re-import + re-resolve + overlay
-    /// the saved selections/approvals, and print the restored queue.
-    private func restoreTest() async {
+    /// COUPLE_INCLUDE_TEST=1 (PLAN-COMPACT-MODE Phase 1 step 8; UX §V2.12 / D1, D8):
+    /// the app-target END-TO-END exercise of the include-for-export model over a REAL
+    /// `COUPLE_PAIR_DIR` session — the stateful behavior the pure
+    /// `ExportIncludePolicyTests` cannot reach. Asserts: every good couple is included
+    /// by default and no flagged one is (and only good couples offer the checkbox);
+    /// `toggleInclude` records an explicit opt-out that SURVIVES a re-run of that
+    /// pair's auto-sync (inclusion is derived, nothing recomputes it away); a batch
+    /// export stamps `exportedAt` on every exported couple and the included count
+    /// drops to the explicitly re-included ones; and a save → restore round-trips
+    /// `explicit` / `exportedAt` / `included` per couple. Like the other media
+    /// harnesses it needs the GUI app-bundle runloop and does NOT complete in a
+    /// headless agent shell. Run with COUPLE_PAIR_DIR=<session> COUPLE_INCLUDE_TEST=1
+    /// (optionally COUPLE_BATCH_OUT=<dir>, COUPLE_SHOT_DIR=<dir>, COUPLE_AUTOQUIT=1).
+    private func includeTest(env: [String: String]) async {
         guard let model else { return }
-        guard let saved = QueueStore.load() else {
-            print("RESTORE-TEST: no saved queue.json")
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("INCLUDE-TEST \(ok ? "ok  " : "FAIL") \(name)")
+        }
+        func settleQueue() async {
+            for _ in 0..<3000 {
+                let pending = model.couples.contains { c in
+                    c.pair.session != nil && (c.pair.syncActivity == .none || c.pair.isSyncRunning)
+                }
+                if !model.resolving && !pending { break }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+        await settleQueue()
+        guard !model.couples.isEmpty else {
+            print("INCLUDE-TEST: SKIPPED (no couples — needs COUPLE_PAIR_DIR)")
             return
         }
-        print("RESTORE-TEST: restoring \(saved.couples.count) couples (\(saved.couples.filter(\.approved).count) approved) from queue.json")
+        let good = model.couples.filter { $0.verdict == .good }
+        let flagged = model.couples.filter { $0.verdict != .good }
+        print("INCLUDE-TEST: \(model.couples.count) couples · \(good.count) good · \(flagged.count) flagged")
+
+        // (1) DEFAULTS (D1): included ⇔ verdict good; the checkbox exists for good rows only.
+        check("(1) every good couple is included by default", good.allSatisfy(\.included))
+        check("(1) no flagged couple is included", !flagged.contains(where: \.included))
+        check("(1) canInclude ⇔ verdict good",
+              model.couples.allSatisfy { $0.canInclude == ($0.verdict == .good) })
+        check("(1) sections: Ready = good, To fix = rest",
+              model.ready.count == good.count && model.toFix.count == flagged.count)
+        check("(1) includedCount == good count", model.includedCount == good.count)
+        check("(1) a flagged couple cannot be toggled on", {
+            guard let f = flagged.first else { return true }
+            model.toggleInclude(f)
+            return !f.included && f.explicit == nil
+        }())
+
+        // (2) EXPLICIT OPT-OUT survives a re-run of that pair's auto-sync: inclusion is
+        //     derived from the stored toggle, and a sync completion recomputes nothing.
+        guard let target = good.first else {
+            print("INCLUDE-TEST summary: \(pass) passed, \(fail) failed (no good couple to toggle)")
+            return
+        }
+        model.toggleInclude(target)
+        check("(2) toggleInclude records explicit = false and excludes the row",
+              target.explicit == false && !target.included)
+        check("(2) included count dropped by one", model.includedCount == good.count - 1)
+        target.pair.runAutoSync(announce: false)
+        await target.pair.awaitSync()
+        check("(2) re-sync leaves the opt-out in place",
+              target.explicit == false && !target.included && target.verdict == .good)
+        // ⌘Z inverse: restores the PREVIOUS stored value (nil here), not a blind re-toggle.
+        model.undoManager?.undo()
+        check("(2) undo restores the default (explicit nil, included)",
+              target.explicit == nil && target.included)
+        // Tick it off, then back on: an explicit TRUE (re-include) is what survives the export below.
+        model.toggleInclude(target)
+        model.toggleInclude(target)
+        check("(2) toggling twice leaves explicit = true, included", target.explicit == true && target.included)
+
+        // (3) EXPORT (D8): every exported couple gets `exportedAt`; `explicit` is untouched;
+        //     the default-included ones drop out, the explicitly re-included one stays.
+        let before = model.includedCount
+        let batch = model.included
+        let outDir = env["COUPLE_BATCH_OUT"]
+            ?? NSTemporaryDirectory().appending("couple-include-test-\(ProcessInfo.processInfo.processIdentifier)")
+        try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+        model.exportDestination = URL(fileURLWithPath: outDir)
+        model.globalFormat = .auto
+        model.globalKeepCameraAudio = false
+        print("INCLUDE-TEST: batch exporting \(before) couple(s) → \(outDir)")
+        model.batch.run()
+        for _ in 0..<6000 {
+            if case .finished = model.batch.phase { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let exportedOK = batch.filter { if case .done = $0.exportStatus { return true } else { return false } }
+        check("(3) batch finished with every included couple exported", exportedOK.count == batch.count)
+        check("(3) exportedAt stamped on every exported couple", exportedOK.allSatisfy { $0.exportedAt != nil })
+        check("(3) explicit untouched by the export",
+              target.explicit == true && batch.filter { $0.id != target.id }.allSatisfy { $0.explicit == nil })
+        check("(3) default-included couples left the batch after export",
+              batch.filter { $0.id != target.id }.allSatisfy { !$0.included && $0.inFilesList })
+        check("(3) the explicitly re-included couple stays included", target.included)
+        check("(3) included count dropped to the explicit re-includes",
+              model.includedCount == model.couples.filter { $0.explicit == true && $0.verdict == .good }.count
+              && (batch.count < 2 || model.includedCount < before))
+        check("(3) Files list = included ∪ exported",
+              Set(model.filesList.map(\.id)) == Set(model.couples.filter { $0.included || $0.exportedAt != nil }.map(\.id)))
+
+        // (4) SAVE → RESTORE round-trips the include inputs and the derived state.
+        model.saveQueue()
+        struct Snap { let explicit: Bool?; let exportedAt: Date?; let included: Bool }
+        var snaps: [String: Snap] = [:]
+        for c in model.couples { snaps[c.id] = Snap(explicit: c.explicit, exportedAt: c.exportedAt, included: c.included) }
+        guard let saved = QueueStore.load() else {
+            check("(4) queue.json saved and loadable", false)
+            print("INCLUDE-TEST summary: \(pass) passed, \(fail) failed")
+            return
+        }
+        check("(4) saved file carries explicit/exportedAt per couple",
+              saved.couples.allSatisfy { sc in
+                  let s = snaps[sc.videoKey]
+                  return s != nil && sc.explicit == s!.explicit
+                      && (sc.exportedAt == nil) == (s!.exportedAt == nil)
+              })
         model.applyRestore(saved)
         for _ in 0..<3000 {
             let settled = !model.resolving && model.couples.count == saved.couples.count
@@ -565,9 +676,50 @@ final class DebugDrive {
             if settled { break }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
-        print("RESTORE-TEST: \(model.couples.count) couples, \(model.approvedCount) approved")
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        check("(4) restore keeps the couple set", model.couples.count == snaps.count)
+        check("(4) explicit round-trips", model.couples.allSatisfy { snaps[$0.id]?.explicit == $0.explicit })
+        check("(4) exportedAt round-trips (to the second — ISO8601)",
+              model.couples.allSatisfy { c in
+                  guard let s = snaps[c.id] else { return false }
+                  switch (s.exportedAt, c.exportedAt) {
+                  case (nil, nil): return true
+                  case let (a?, b?): return abs(a.timeIntervalSince(b)) < 1.0
+                  default: return false
+                  }
+              })
+        check("(4) included round-trips", model.couples.allSatisfy { snaps[$0.id]?.included == $0.included })
+
+        if let dir = env["COUPLE_SHOT_DIR"] {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            if let f = model.filesList.first { model.select(f.id) }
+            await settle()
+            capture(to: "\(dir)/include-01-after-export.png")
+            print("INCLUDE-TEST: wrote screenshot to \(dir)/include-01-after-export.png")
+        }
+        print("INCLUDE-TEST summary: \(pass) passed, \(fail) failed")
+    }
+
+    /// Restore round-trip (§5.4): load queue.json, re-import + re-resolve + overlay
+    /// the saved selections / include inputs, and print the restored queue.
+    private func restoreTest() async {
+        guard let model else { return }
+        guard let saved = QueueStore.load() else {
+            print("RESTORE-TEST: no saved queue.json")
+            return
+        }
+        print("RESTORE-TEST: restoring \(saved.couples.count) couples (\(saved.couples.filter { $0.exportedAt != nil }.count) exported) from queue.json")
+        model.applyRestore(saved)
+        for _ in 0..<3000 {
+            let settled = !model.resolving && model.couples.count == saved.couples.count
+                && !model.couples.contains { $0.pair.session != nil
+                    && ($0.pair.syncActivity == .none || $0.pair.isSyncRunning) }
+            if settled { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        print("RESTORE-TEST: \(model.couples.count) couples, \(model.includedCount) included")
         for c in model.couples {
-            print("  \(c.video.name) [\(c.state.rawValue)] -> \(c.selectedCandidate?.audioName ?? "—") approved=\(c.approved)")
+            print("  \(c.video.name) [\(c.state.rawValue)] -> \(c.selectedCandidate?.audioName ?? "—") included=\(c.included) explicit=\(c.explicit.map(String.init) ?? "nil") exportedAt=\(c.exportedAt.map { ISO8601DateFormatter().string(from: $0) } ?? "nil")")
         }
     }
 
@@ -816,9 +968,8 @@ final class DebugDrive {
         await key(33, .maskAlternate) // ⌥[
         check("option-[ drift −0.1 ppm", abs(pair.driftPpm - (d - 0.1)) < 1e-9)
         let v = pair.verified
-        await key(9) // v
-        check("v toggles verified", pair.verified != v)
-        await key(9)
+        await key(9) // v — UNBOUND since UX §V2.12 / D4
+        check("v is unbound (verified untouched)", pair.verified == v)
         o = pair.offsetMs
         d = pair.driftPpm
         await key(38) // j
@@ -1384,8 +1535,9 @@ final class DebugDrive {
     /// (needs no files). Mirrors the `CoupleKitTests.RowMergePolicyTests` suite.
     /// Covers: video-first then decisive audio adopts the confident result whole and
     /// rebuilds the session once; video-first then a weak audio stays unresolved
-    /// (candidate visible, NOT promoted); a pinned AND an approved row keep their
-    /// selection (new audio only appended as an alternate); and a repeated resolve is
+    /// (candidate visible, NOT promoted); a pinned row keeps its selection (new audio
+    /// only appended as an alternate) while an included-but-unpinned row is NOT
+    /// protected (D6 — inclusion is not an input); and a repeated resolve is
     /// idempotent (no duplicate candidate, no second session rebuild / sync).
     private func remergeTest() async {
         var pass = 0, fail = 0
@@ -1417,13 +1569,14 @@ final class DebugDrive {
               p3.selectedAudioKey == "chosen" && p3.candidateKeys == ["chosen", "stronger"]
               && !p3.adoptFreshDisplay && !p3.rebuildSession)
 
-        // (4) approved row, then stronger audio ⇒ same protection.
-        let p4 = RowMergePolicy.plan(protected: true, currentSelectedKey: "queued",
-                                     currentCandidateKeys: ["queued"], freshSelectedKey: "stronger",
-                                     freshCandidateKeys: ["stronger", "queued"])
-        check("(4) approved + stronger audio ⇒ keeps 'queued', no silent swap",
-              p4.selectedAudioKey == "queued" && p4.candidateKeys == ["queued", "stronger"]
-              && !p4.rebuildSession)
+        // (4) D6: an included-but-UNPINNED row is not protected — the shell composes
+        //     `protected` as `pinned` alone, so a stronger audio re-pairs it wholesale.
+        let p4 = RowMergePolicy.plan(protected: false, currentSelectedKey: "auto",
+                                     currentCandidateKeys: ["auto"], freshSelectedKey: "stronger",
+                                     freshCandidateKeys: ["stronger", "auto"])
+        check("(4) included, unpinned + stronger audio ⇒ adopts 'stronger', rebuilds once (D6)",
+              p4.selectedAudioKey == "stronger" && p4.candidateKeys == ["stronger", "auto"]
+              && p4.adoptFreshDisplay && p4.rebuildSession)
 
         // (5) repeated resolve ⇒ idempotent: no duplicate candidate, no second rebuild.
         let p5 = RowMergePolicy.plan(protected: false, currentSelectedKey: "A",
@@ -1523,7 +1676,7 @@ final class DebugDrive {
     /// COUPLE_REPAIRDROP_TEST=1 (TODO-013): the app-target END-TO-END mirror of the
     /// `RepairDropPolicyTests` suite — it exercises the REAL `AppModel.requestRepairDrop`
     /// (the shared entry point BOTH drop targets call), `payloadIsAudio`, and the
-    /// approved-replacement confirmation state machine (`pendingRepairConfirmation` /
+    /// pinned-replacement confirmation state machine (`pendingRepairConfirmation` /
     /// `confirmPendingRepair` / `cancelPendingRepair`), which the CoupleKit-only suite
     /// cannot reach (`AppModel`/`CoupleRow` live in the app target). Media-free: a
     /// handle-less synthetic couple + a fake pool key suffice for the routing/state
@@ -1568,7 +1721,7 @@ final class DebugDrive {
         check("(2) non-audio payload ⇒ requestRepairDrop returns false",
               model.requestRepairDrop(couple, audioKey: "not-in-pool") == false)
 
-        // (3) THE CONFIRMATION STATE MACHINE (the approved-replacement path both targets
+        // (3) THE CONFIRMATION STATE MACHINE (the pinned-replacement path both targets
         //     share): arming a pending confirmation, then CANCEL clears it with no change.
         model.pendingRepairConfirmation = AppModel.PendingRepairConfirmation(
             coupleID: couple.id, audioKey: "a", videoName: "v1.mov", audioName: "a.wav")

@@ -10,7 +10,7 @@
 // orchestration + the serialized sync queue + the activity-strip signal cluster),
 // `poolController` (media-pool selection + per-file removal / Clear Session), and
 // `input` (NSEvent monitors + key/scroll routing). AppModel keeps the couples list +
-// selection, audition, preview, approve/repair verbs, export settings, and persistence,
+// selection, audition, preview, include/repair verbs, export settings, and persistence,
 // and exposes thin forwarding accessors so views / ActivityStrip / DebugDrive reach the
 // sub-controller members through `model.` unchanged.
 
@@ -52,10 +52,12 @@ final class AppModel {
     /// changes; the honest single-line decision is the pure `ActivitySummaryPolicy`.
     @ObservationIgnored lazy var activity = ActivityStrip(model: self)
 
-    /// A pending approved-replacement confirmation (TODO-013). Set when a manual
-    /// audio drop targets an APPROVED couple with a different source; replacing it
-    /// removes it from the export queue and clears the current pair session, so the
-    /// drop asks first. Both drop targets (queue row + center workspace) route
+    /// A pending pinned-replacement confirmation (TODO-013, D9). Set when a manual
+    /// audio drop targets a PINNED couple (a manual pick) with a different source;
+    /// replacing it discards that deliberate choice and clears the current pair
+    /// session, so the drop asks first. An included-but-unpinned couple replaces
+    /// without asking (default-on inclusion would otherwise prompt on every drop).
+    /// Both drop targets (queue row + center workspace) route
     /// through the SAME `requestRepairDrop`, so they cannot diverge — and a single
     /// `.confirmationDialog` in RootView presents this regardless of which gesture
     /// armed it. `nil` ⇒ no dialog showing. The pure outcome decision is
@@ -223,13 +225,21 @@ final class AppModel {
     /// The editor's target (selected couple's pair, or the empty placeholder).
     var pair: PairSession { selectedCouple?.pair ?? placeholderPair }
 
-    /// Visual queue order = the three sections concatenated; drives j/k.
-    var orderedCouples: [CoupleRow] { queued + toApprove + toFix }
-    var queued: [CoupleRow] { couples.filter(\.approved) }
-    var toApprove: [CoupleRow] { couples.filter { !$0.approved && $0.verdict == .good } }
-    var toFix: [CoupleRow] { couples.filter { !$0.approved && $0.verdict != .good } }
+    /// Visual queue order = the two sections concatenated (To fix above Ready, UX
+    /// §V2.12 / D2); drives j/k. Membership is the VERDICT alone — inclusion never
+    /// moves a row between sections.
+    var orderedCouples: [CoupleRow] { toFix + ready }
+    /// Verdict good: includable, in the Ready section.
+    var ready: [CoupleRow] { couples.filter { $0.verdict == .good } }
+    /// Verdict questionable / none ("pick one", "no audio", forced): the To fix section.
+    var toFix: [CoupleRow] { couples.filter { $0.verdict != .good } }
 
-    var approvedCount: Int { queued.count }
+    /// The export batch (D1): every couple the core include rule says goes out next.
+    var included: [CoupleRow] { couples.filter(\.included) }
+    /// N in "Export N files" / "N to export".
+    var includedCount: Int { included.count }
+    /// The export rail's Files list: included ∪ already exported (rule in core).
+    var filesList: [CoupleRow] { couples.filter(\.inFilesList) }
     var hasContent: Bool { !pool.isEmpty }
 
     /// The user explicitly chose an export folder — pin it (stop auto-tracking).
@@ -264,30 +274,44 @@ final class AppModel {
                         videoDuration: cam.durationS)
     }
 
-    // MARK: - Approve (§V2.5) + manual re-pair (§V2.6)
+    // MARK: - Include for export (§V2.12, D1) + manual re-pair (§V2.6)
 
-    /// Approve ≡ queue for export. No audition gate (§11.4). Only a couple with a
-    /// session can be approved. Symmetric, so undo re-toggles (and redo comes free
-    /// from the re-registration on undo).
-    func toggleApprove(_ couple: CoupleRow) {
-        guard couple.pair.session != nil else { return }
-        couple.pair.toggleVerified()
+    /// The row checkbox (D1/D4): flip this couple's inclusion in the next export by
+    /// recording an EXPLICIT choice — `explicit = !included` — so the choice survives
+    /// a re-sync or re-resolve while the verdict stays good (the rule in core derives
+    /// `included` from it). Only an includable (verdict good) couple can be toggled;
+    /// the checkbox is not shown otherwise. Undoable (TODO-015): the inverse restores
+    /// the PREVIOUS stored value (possibly nil = default), not a blind re-toggle, so
+    /// ⌘Z after ticking an exported couple back on returns it to "exported, excluded".
+    func toggleInclude(_ couple: CoupleRow) {
+        guard couple.canInclude else { return }
+        setExplicitInclude(!couple.included, for: couple)
+    }
+
+    /// The single undoable write path for `CoupleRow.explicit` (nil = back to the
+    /// policy default). Symmetric via the old value, so redo is the re-registration
+    /// on undo — the same idiom as `setStemOverride`.
+    func setExplicitInclude(_ newValue: Bool?, for couple: CoupleRow) {
+        let old = couple.explicit
+        guard old != newValue else { return }
+        couple.explicit = newValue
         let id = couple.id
         undoManager?.registerUndo(withTarget: self) { model in
             MainActor.assumeIsolated {
                 guard let c = model.couples.first(where: { $0.id == id }) else { return }
-                model.toggleApprove(c)
+                model.setExplicitInclude(old, for: c)
             }
         }
-        undoManager?.setActionName(couple.approved ? "Approve" : "Unapprove")
+        undoManager?.setActionName(couple.included ? "Include in Export" : "Exclude from Export")
         saveQueue()
     }
 
     /// Everything a manual re-pair mutates on a row, captured BEFORE the mutation so
-    /// ⌘Z can put the row back (including approval — `pair.load` resets `verified`,
-    /// and an accepted replacement un-queues first). Restoring re-registers the
-    /// pre-restore state, so redo is the same mechanism. Candidates are copied whole:
-    /// a repair may append a fresh pool-drag candidate that undo must remove.
+    /// ⌘Z can put the row back (including the include-for-export inputs — `repair`
+    /// clears `explicit` and `exportedAt` because the old export is stale). Restoring
+    /// re-registers the pre-restore state, so redo is the same mechanism. Candidates
+    /// are copied whole: a repair may append a fresh pool-drag candidate that undo
+    /// must remove.
     struct RepairSnapshot {
         let selectedAudioKey: String?
         let pinned: Bool
@@ -295,7 +319,8 @@ final class AppModel {
         let chip: String
         let provenance: SelectionProvenance
         let manualMatchConfident: Bool?
-        let approved: Bool
+        let explicit: Bool?
+        let exportedAt: Date?
         let exportStatus: CoupleRow.ExportStatus
         let candidates: [RowCandidate]
 
@@ -307,7 +332,8 @@ final class AppModel {
             chip = couple.chip
             provenance = couple.selectionProvenance
             manualMatchConfident = couple.manualMatchConfident
-            approved = couple.approved
+            explicit = couple.explicit
+            exportedAt = couple.exportedAt
             exportStatus = couple.exportStatus
             candidates = couple.candidates
         }
@@ -346,6 +372,8 @@ final class AppModel {
         couple.chip = snapshot.chip
         couple.selectionProvenance = snapshot.provenance
         couple.manualMatchConfident = snapshot.manualMatchConfident
+        couple.explicit = snapshot.explicit
+        couple.exportedAt = snapshot.exportedAt
         couple.exportStatus = snapshot.exportStatus
         couple.candidates = snapshot.candidates
         if couple.id == selectedID { audition.teardown() } // close stream before freeing old session
@@ -353,7 +381,6 @@ final class AppModel {
             couple.pair.load(cameraTrack: cam, externalTrack: audioHandle,
                              evidence: couple.candidates.first { $0.audioKey == couple.selectedAudioKey })
             couple.pair.runAutoSync(announce: false) // ambient re-derivation, like repair's
-            if snapshot.approved { couple.pair.toggleVerified() } // load() reset it
         } else {
             couple.pair.teardown() // back to no-selection (ambiguous/no-match row)
         }
@@ -364,7 +391,9 @@ final class AppModel {
     /// Manual re-pair (§V2.6): point a couple at a chosen audio (candidate pick or
     /// pool drag). Pins the couple; runs a full sync; below-floor keeps the
     /// pairing but marks it `forced` (honest). Candidates are never destroyed —
-    /// a brand-new audio is appended to the list.
+    /// a brand-new audio is appended to the list. Clears the include-for-export
+    /// inputs (`explicit`, `exportedAt`; PLAN-COMPACT-MODE §3): the old export is
+    /// stale and the default rule applies to the new pairing once its verdict lands.
     /// `undoSnapshot` lets `performRepairReplace` supply the state from BEFORE its
     /// own un-queue mutation; a direct call captures the row as it stands.
     func repair(_ couple: CoupleRow, audioKey: String, undoSnapshot: RepairSnapshot? = nil) {
@@ -372,6 +401,8 @@ final class AppModel {
               let cam = couple.video.handle else { return }
         registerRepairUndo(couple, restoring: undoSnapshot ?? RepairSnapshot(of: couple))
         couple.pinned = true
+        couple.explicit = nil     // D1/D8: a new pairing starts from the default rule
+        couple.exportedAt = nil   // the previous export (if any) is of the OLD pairing
         couple.selectedAudioKey = audioKey
         // TODO-009: a deliberate pick is a MANUAL selection. Its match quality is NOT
         // assumed from the click — it stays questionable until this pair's evidence is
@@ -458,9 +489,10 @@ final class AppModel {
     /// cannot diverge. Decides the outcome with the pure `RepairDropPolicy`, then:
     ///   - `.reject`/`.noOp` ⇒ no state change (a non-audio/no-video/no-couple drop,
     ///     or re-dropping the already-selected source);
-    ///   - `.accept` ⇒ replace now via the same `repair` (unresolved / unapproved);
-    ///   - `.needsConfirmation` ⇒ arm the approved-replacement dialog (RootView shows
-    ///     it); the replace happens only when the user confirms.
+    ///   - `.accept` ⇒ replace now via the same `repair` (unresolved / unpinned);
+    ///   - `.needsConfirmation` ⇒ arm the pinned-replacement dialog (RootView shows
+    ///     it); the replace happens only when the user confirms. The gate is the PIN
+    ///     (D9) — the policy's `approved` wire key carries `pinned` until Phase 6 (D12).
     /// Returns whether the drop was consumed (so `.dropDestination` reports the right
     /// value): true for accept/no-op/confirmation-armed, false for a rejected drop.
     @discardableResult
@@ -471,7 +503,7 @@ final class AppModel {
             videoAvailable: couple.video.handle != nil,
             currentSelectedKey: couple.selectedAudioKey,
             droppedKey: audioKey,
-            approved: couple.approved)
+            approved: couple.pinned) // D9: carries `pinned` (wire key kept, D12)
         switch outcome {
         case .reject:
             return false
@@ -489,21 +521,20 @@ final class AppModel {
         }
     }
 
-    /// Apply an accepted replacement (TODO-013): clear stale approval/export status
-    /// FIRST (replacing an approved couple removes it from the export queue), then run
-    /// the SAME `repair` as every other manual pick — which selects+pins the audio,
+    /// Apply an accepted replacement (TODO-013): drop the stale per-couple export
+    /// result FIRST, then run the SAME `repair` as every other manual pick — which
+    /// selects+pins the audio, clears the include inputs (`explicit`/`exportedAt`),
     /// rebuilds the pair session, and runs full sync/classification. The verdict stays
     /// evidence-based (TODO-009): `repair` does NOT green the dot on the drop; only the
     /// re-run classifier can. Centralized so the queue-row and center drops are
     /// byte-identical.
     private func performRepairReplace(_ couple: CoupleRow, audioKey: String) {
-        let snapshot = RepairSnapshot(of: couple) // BEFORE the un-queue, so ⌘Z restores approval
-        if couple.approved { couple.pair.toggleVerified() } // un-queue: clears export approval
-        couple.exportStatus = .idle                          // drop any stale per-couple export result
+        let snapshot = RepairSnapshot(of: couple) // BEFORE any mutation, so ⌘Z restores inclusion/export
+        couple.exportStatus = .idle               // drop any stale per-couple export result
         repair(couple, audioKey: audioKey, undoSnapshot: snapshot)
     }
 
-    /// Confirm the pending approved-replacement (TODO-013): replace the source. The
+    /// Confirm the pending pinned-replacement (TODO-013): replace the source. The
     /// couple is re-looked-up by id (it never moves, but this keeps the model the
     /// source of truth) and re-validated through the SAME pure policy, so a state
     /// change between arming and confirming can still cancel cleanly.
@@ -516,7 +547,7 @@ final class AppModel {
         performRepairReplace(couple, audioKey: pending.audioKey)
     }
 
-    /// Cancel the pending approved-replacement (TODO-013): make no change.
+    /// Cancel the pending pinned-replacement (TODO-013): make no change.
     func cancelPendingRepair() {
         pendingRepairConfirmation = nil
     }
@@ -579,8 +610,9 @@ final class AppModel {
     }
 
     /// Re-import the saved files, re-resolve, then overlay the saved per-couple
-    /// selection (pins included), approved flags, per-couple alignment (from the
-    /// unchanged per-pair autosave), and export settings (§5.4).
+    /// selection (pins included), include-for-export inputs (`explicit`/`exportedAt`,
+    /// D8 — absent in a pre-D1 file ⇒ nil ⇒ every good couple included), per-couple
+    /// alignment (from the unchanged per-pair autosave), and export settings (§5.4).
     func applyRestore(_ saved: SavedQueue) {
         Task {
             ingest.suppressAutoSync = true
@@ -590,6 +622,8 @@ final class AppModel {
                 c.pinned = sc.pinned
                 c.forced = sc.forced
                 c.stemOverride = sc.stemOverride
+                c.explicit = sc.explicit       // nil in a pre-D1 file ⇒ policy default
+                c.exportedAt = sc.exportedAt
                 // Saved selection (may be a manual pin different from the fresh auto-pick).
                 if sc.selectedAudioKey != c.selectedAudioKey {
                     c.selectedAudioKey = sc.selectedAudioKey
@@ -615,7 +649,6 @@ final class AppModel {
                 if !c.pair.restoreSavedAlignment(), c.pair.session != nil {
                     ingest.enqueueSync(c)
                 }
-                if sc.approved, c.pair.session != nil, !c.approved { c.pair.toggleVerified() }
                 // Recompute a manual pick's evidence verdict only when it wasn't saved
                 // (a back-compat restore), reusing the SAME classifier as `repair`.
                 if provenance == .manual, c.manualMatchConfident == nil { reevaluateManualMatch(c) }

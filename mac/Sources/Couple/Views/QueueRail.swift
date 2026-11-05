@@ -1,7 +1,7 @@
-// Queue rail (left column, §V2.1/§V2.2/§V2.7): the session header, the couple
-// list in three live workflow sections (QUEUED FOR EXPORT / TO APPROVE / TO FIX,
-// not a sort control — couples migrate between them as they're approved/repaired),
-// and the media pool generalizing the v1 unused tray (every imported file with a
+// Queue rail (left column, §V2.1/§V2.2/§V2.7/§V2.12): the session header, the
+// couple list in two live workflow sections (TO FIX / READY — membership is the
+// verdict alone; an empty TO FIX is hidden, D11; the row checkbox is include-for-
+// export and never moves a row), and the media pool generalizing the v1 unused tray (every imported file with a
 // usage indicator + audio preview + drag-to-re-pair). Nothing the user dropped
 // ever silently disappears.
 
@@ -32,9 +32,12 @@ struct QueueRail: View {
             // the sticky bar stays put while either list scrolls.
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    QueueSection(title: "QUEUED FOR EXPORT", couples: model.queued)
-                    QueueSection(title: "TO APPROVE", couples: model.toApprove)
-                    QueueSection(title: "TO FIX", couples: model.toFix)
+                    // D2/D11: To fix above Ready; an empty To fix is hidden, Ready
+                    // always shows (dimmed "—" when empty).
+                    if !model.toFix.isEmpty {
+                        QueueSection(title: "TO FIX", couples: model.toFix)
+                    }
+                    QueueSection(title: "READY", couples: model.ready)
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
@@ -70,7 +73,7 @@ struct QueueRail: View {
                 Spacer()
                 // Clear Session (TODO-001): a clearly-visible session control that
                 // returns to the initial import screen. Confirms with media/couple/
-                // approved counts; disabled mid-export (the batch owns the files).
+                // included counts; disabled mid-export (the batch owns the files).
                 Button {
                     model.requestClearSession()
                 } label: {
@@ -85,7 +88,7 @@ struct QueueRail: View {
             Text("\(model.pool.videos.count) video · \(model.pool.audios.count) audio")
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.textSecondary)
-            Text("Approve to queue · \(model.approvedCount)/\(model.couples.count) approved")
+            Text("\(model.includedCount) to export")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(Theme.textTertiary)
         }
@@ -154,9 +157,12 @@ struct CoupleRowView: View {
             }
             Spacer(minLength: 4)
             VStack(alignment: .trailing, spacing: 6) {
-                if couple.pair.session != nil {
-                    approveBox
-                } else if couple.pinned {
+                // D1: the include checkbox is offered on includable rows only (verdict
+                // good); a "pick one" / "no audio" / forced couple shows none.
+                if couple.canInclude {
+                    includeBox
+                }
+                if couple.pinned {
                     Image(systemName: "pin.fill")
                         .font(.system(size: 9)).foregroundStyle(Theme.textTertiary)
                 }
@@ -188,8 +194,8 @@ struct CoupleRowView: View {
         // Drag an audio file from the pool onto a couple to re-pair (§V2.6). Routes
         // through the SHARED `requestRepairDrop` (TODO-013) — the same path the
         // center-workspace drop uses — so the two gestures cannot diverge: it
-        // no-ops on the current source, replaces immediately when unapproved, and
-        // asks before clearing an APPROVED couple's export.
+        // no-ops on the current source, replaces immediately when unpinned, and
+        // asks before replacing a PINNED couple's manual pick (D9).
         .dropDestination(for: String.self) { items, _ in
             guard let key = items.first else { return false }
             return model.requestRepairDrop(couple, audioKey: key)
@@ -237,16 +243,19 @@ struct CoupleRowView: View {
         }
     }
 
-    private var approveBox: some View {
+    /// The include-for-export checkbox (UX §V2.12 / D1): bound to the DERIVED
+    /// `included`, toggled through the model (undoable). No key binding (D4).
+    private var includeBox: some View {
         Button {
-            model.toggleApprove(couple)
+            model.toggleInclude(couple)
         } label: {
-            Image(systemName: couple.approved ? "checkmark.square.fill" : "square")
+            Image(systemName: couple.included ? "checkmark.square.fill" : "square")
                 .font(.system(size: 13))
-                .foregroundStyle(couple.approved ? Theme.good : Theme.textSecondary)
+                .foregroundStyle(couple.included ? Theme.good : Theme.textSecondary)
         }
         .buttonStyle(.plain)
-        .help("Approve — queue this couple for export (v)")
+        .help(couple.included ? "Included in the export — click to leave it out"
+                              : "Not in the export — click to include it")
     }
 }
 

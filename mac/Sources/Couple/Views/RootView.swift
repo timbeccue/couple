@@ -44,14 +44,15 @@ struct RootView: View {
             Task { await ingest(providers) }
             return true
         }
-        // Approved-replacement confirmation (TODO-013): a manual audio drop onto an
-        // APPROVED couple (from EITHER drop target) arms this; replacing the source
-        // removes the couple from the export queue and clears its current pair
-        // session, so it asks first. Presented once here at the shared ancestor so
+        // Pinned-replacement confirmation (TODO-013, D9): a manual audio drop onto a
+        // PINNED couple (a manual pick, from EITHER drop target) arms this; replacing
+        // the source discards that deliberate choice, clears its export status and
+        // its current pair session, so it asks first. An included-but-unpinned couple
+        // replaces without asking. Presented once here at the shared ancestor so
         // both gestures show the identical dialog. Confirm ⇒ replace; Cancel ⇒ no
         // change. The dialog states the consequence explicitly.
         .confirmationDialog(
-            "Replace approved pairing?",
+            "Replace the audio you chose?",
             isPresented: Binding(
                 get: { model.pendingRepairConfirmation != nil },
                 set: { if !$0 { model.cancelPendingRepair() } }),
@@ -63,7 +64,7 @@ struct RootView: View {
             }
             Button("Cancel", role: .cancel) { model.cancelPendingRepair() }
         } message: { pending in
-            Text("\(pending.videoName) is approved and queued for export. Pairing it with \(pending.audioName) removes it from the export queue, clears its approval/export status, and rebuilds the current pair session.")
+            Text("You chose the audio for \(pending.videoName) yourself. Pairing it with \(pending.audioName) replaces that choice, clears its export status, and rebuilds the current pair session.")
         }
         // Per-file removal confirmation (TODO-001): removing media that participates in
         // ≥1 couple regenerates those couples (a removed video's row disappears; a
@@ -86,7 +87,7 @@ struct RootView: View {
             Text(removalMessage(pending))
         }
         // Clear Session confirmation (TODO-001): discards the whole queue and returns to
-        // the import screen, so it always confirms with the media/couple/approved counts.
+        // the import screen, so it always confirms with the media/couple/included counts.
         // Source files and previously exported files are untouched.
         .confirmationDialog(
             "Clear this session?",
@@ -104,12 +105,12 @@ struct RootView: View {
     }
 
     /// Consequence-focused copy for the per-file removal dialog (TODO-001): how many
-    /// couples are affected and how many of those were approved/queued for export.
+    /// couples are affected and how many of those were included in the export (D7).
     private func removalMessage(_ p: AppModel.PendingMediaRemoval) -> String {
         let couples = "\(p.affectedCouples) couple\(p.affectedCouples == 1 ? "" : "s")"
         var msg = "This affects \(couples). Affected video rows re-resolve over the remaining files; a removed video's row is removed. "
-        if p.affectedApproved > 0 {
-            msg += "\(p.affectedApproved) approved row\(p.affectedApproved == 1 ? " is" : "s are") queued for export and will be removed from the queue. "
+        if p.affectedIncluded > 0 {
+            msg += "\(p.affectedIncluded) of them \(p.affectedIncluded == 1 ? "is" : "are") included in the export and will leave it. "
         }
         msg += "This removes the files from this session only — your source files are not deleted."
         return msg
@@ -119,8 +120,8 @@ struct RootView: View {
     private func clearMessage(_ p: AppModel.PendingClearSession) -> String {
         let media = "\(p.media) media file\(p.media == 1 ? "" : "s")"
         let couples = "\(p.couples) couple\(p.couples == 1 ? "" : "s")"
-        let approved = "\(p.approved) approved"
-        return "This discards \(media), \(couples) (\(approved)) and returns to the import screen. Your source files and any files you have already exported are not deleted."
+        let included = "\(p.included) included in the export"
+        return "This discards \(media), \(couples) (\(included)) and returns to the import screen. Your source files and any files you have already exported are not deleted."
     }
 
     private func ingest(_ providers: [NSItemProvider]) async {
@@ -197,7 +198,7 @@ private struct ActivityStripView: View {
 struct FooterBar: View {
     var body: some View {
         HStack(spacing: 6) {
-            Text("j/k move · v approve (=queue) · ⏎/⚙ sync tools · l/◫ loupes · a camera/external · b both · esc collapse     ←/→ offset 1 ms · ⇧ 10 · ⌥ 0.1 · [ ] drift · drag loupe = offset · ⇧-drag = pivot")
+            Text("j/k move · ⏎/⚙ sync tools · l/◫ loupes · a camera/external · b both · esc collapse     ←/→ offset 1 ms · ⇧ 10 · ⌥ 0.1 · [ ] drift · drag loupe = offset · ⇧-drag = pivot")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(Theme.textTertiary)
                 .lineLimit(1)

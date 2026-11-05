@@ -111,7 +111,8 @@ final class PoolController {
         let id = UUID()
         let keys: Set<String>
         let affectedCouples: Int
-        let affectedApproved: Int
+        /// How many of the affected couples are included in the export (D7).
+        let affectedIncluded: Int
     }
     var pendingMediaRemoval: PendingMediaRemoval?
 
@@ -121,15 +122,17 @@ final class PoolController {
         let id = UUID()
         let media: Int
         let couples: Int
-        let approved: Int
+        /// Couples included in the export (D7).
+        let included: Int
     }
     var pendingClearSession: PendingClearSession?
 
     /// The couples projected for the pure removal/clear policies (CoupleKit can't see
-    /// the app `CoupleRow`).
+    /// the app `CoupleRow`). The `approved` wire field carries INCLUDED since D7 (its
+    /// key name is kept for the Electron shell until Phase 6, D12).
     private var coupleRefs: [CoupleRef] {
         model.couples.map { CoupleRef(videoKey: $0.id, selectedAudioKey: $0.selectedAudioKey,
-                                      approved: $0.approved) }
+                                      approved: $0.included) }
     }
 
     /// Remove the currently selected pool media from the open session (TODO-001), the
@@ -137,7 +140,7 @@ final class PoolController {
     /// pure `MediaRemovalPolicy.plan` decides over the live pool + couples: an empty
     /// plan no-ops; an UNUSED-only removal happens IMMEDIATELY (no dialog); a removal
     /// touching ≥1 referenced file arms ONE confirmation stating the affected couple /
-    /// approved counts, and removes only on confirm. Removal affects ONLY this session
+    /// included counts, and removes only on confirm. Removal affects ONLY this session
     /// and NEVER deletes source media from disk.
     func removeSelectedMedia() {
         let plan = MediaRemovalPolicy.plan(selectedKeys: poolSelection,
@@ -147,7 +150,7 @@ final class PoolController {
         if plan.needsConfirmation {
             pendingMediaRemoval = PendingMediaRemoval(
                 keys: plan.removableKeys, affectedCouples: plan.affectedCouples,
-                affectedApproved: plan.affectedApproved)
+                affectedIncluded: plan.affectedApproved) // D7: carries included (wire key kept, D12)
         } else {
             performMediaRemoval(plan.removableKeys)
         }
@@ -241,14 +244,14 @@ final class PoolController {
     }
 
     /// Request Clear Session (TODO-001): always confirms, stating the media / couple /
-    /// approved counts. The button is only meaningful with content; an empty session
+    /// included counts. The button is only meaningful with content; an empty session
     /// no-ops. Blocked while a batch export is running (it owns the couples' files).
     func requestClearSession() {
         guard model.hasContent, !model.batch.isRunning else { return }
         let counts = MediaRemovalPolicy.clearCounts(mediaCount: model.pool.entries.count,
                                                     couples: coupleRefs)
         pendingClearSession = PendingClearSession(media: counts.media, couples: counts.couples,
-                                                  approved: counts.approved)
+                                                  included: counts.approved) // D7: carries included
     }
 
     /// Cancel the pending Clear Session (TODO-001): make no change.

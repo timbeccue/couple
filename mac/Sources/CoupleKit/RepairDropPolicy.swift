@@ -7,17 +7,21 @@
 // idioms (RowMergePolicy.plan, PoolSelection.select, MatchQualityPolicy.decide,
 // AuditionController.transportPlan, candidateOverflows). The app owns the side
 // effects (presenting the confirmation, then `repair`, which selects+pins the
-// audio, clears stale export/approval, rebuilds the session, and runs sync); this
+// audio, clears the stale include/export inputs, rebuilds the session, and runs
+// sync); this
 // type only decides the OUTCOME CATEGORY so neither call site can diverge from the
 // other or invent its own replacement rules.
 //
 // The replacement rules (TODO-013 / SPEC-V2 §V2.6) are deliberately simple:
 //   - Dropping the ALREADY-selected audio is a no-op.
 //   - A couple with NO current audio (unresolved) accepts the drop immediately.
-//   - An UNAPPROVED couple with a DIFFERENT source replaces immediately, no dialog
+//   - An UNPINNED couple with a DIFFERENT source replaces immediately, no dialog
 //     (the old audio stays in the pool and can be re-selected).
-//   - An APPROVED couple needs confirmation, because replacing it removes it from
-//     the export queue and clears the current pair session.
+//   - A PINNED couple (a manual pick) needs confirmation, because replacing it
+//     discards a deliberate choice and clears the current pair session. Since
+//     PLAN-COMPACT-MODE D9 the gate is the PIN, not approval/inclusion: with
+//     default-on inclusion (D1) an inclusion gate would prompt on every drop. The
+//     `approved` parameter/wire key carries `pinned` until Phase 6 (D12).
 //   - There is nothing to pair WITHOUT a selected couple, an AUDIO payload, and an
 //     available video — any of those missing rejects the drop with no state change.
 //
@@ -26,13 +30,13 @@
 //      `payloadIsAudio == false`, or `videoAvailable == false` ⇒ `.reject`, checked
 //      before any replacement reasoning (a malformed/non-audio drop never mutates).
 //   2. SAME AUDIO IS A NO-OP — dropping the key that is already selected ⇒ `.noOp`
-//      regardless of approval (re-dropping the current source changes nothing, so it
-//      never clears approval or rebuilds the session).
+//      regardless of the pin (re-dropping the current source changes nothing, so it
+//      never clears the include state or rebuilds the session).
 //   3. UNRESOLVED ACCEPTS IMMEDIATELY — no current selection (and a different,
-//      non-nil dropped key) ⇒ `.accept` (there is no approved export to protect).
-//   4. UNAPPROVED + DIFFERENT ACCEPTS IMMEDIATELY — a different source on a couple
-//      that is NOT approved ⇒ `.accept`, no confirmation.
-//   5. APPROVED + DIFFERENT NEEDS CONFIRMATION — a different source on an APPROVED
+//      non-nil dropped key) ⇒ `.accept` (there is no manual pick to protect).
+//   4. UNPINNED + DIFFERENT ACCEPTS IMMEDIATELY — a different source on a couple
+//      that is NOT pinned ⇒ `.accept`, no confirmation.
+//   5. PINNED + DIFFERENT NEEDS CONFIRMATION — a different source on a PINNED
 //      couple ⇒ `.needsConfirmation`; the caller confirms (→ accept) or cancels
 //      (→ no change). This is the ONLY outcome that asks first.
 //
@@ -47,15 +51,16 @@ import Foundation
 
 /// What a manual audio drop onto a couple should do (TODO-013). The app maps each
 /// case to a side effect: `.reject`/`.noOp` do nothing; `.accept` runs the shared
-/// `repair`; `.needsConfirmation` presents the approved-replacement dialog and runs
+/// `repair`; `.needsConfirmation` presents the pinned-replacement dialog (D9) and runs
 /// `repair` only on confirm. Both drop targets consume this so they cannot diverge.
 public enum RepairDropOutcome: Sendable, Equatable {
     /// Drop the already-selected audio — nothing changes.
     case noOp
-    /// Replace immediately (unresolved, or an unapproved couple with a new source).
+    /// Replace immediately (unresolved, or an unpinned couple with a new source).
     case accept
-    /// Replacing an APPROVED couple — confirm first (replacement clears its
-    /// approval/export status and the current pair session), then replace on confirm.
+    /// Replacing a PINNED couple (a manual pick, D9) — confirm first (replacement
+    /// discards that choice, its export status and the current pair session), then
+    /// replace on confirm.
     case needsConfirmation
     /// No selected couple, a non-audio payload, or an unavailable video — ignore the
     /// drop without changing any state.
@@ -81,8 +86,10 @@ public enum RepairDropPolicy {
     ///   - currentSelectedKey: the couple's currently selected audio key, or `nil`
     ///     when unresolved (no selection yet).
     ///   - droppedKey: the dragged audio's content key.
-    ///   - approved: the couple is approved (≡ queued for export). Only an approved
-    ///     couple's DIFFERENT-source replacement asks for confirmation.
+    ///   - approved: the couple is PINNED (a manual pick). Since PLAN-COMPACT-MODE D9
+    ///     this input carries `pinned`, not approval/inclusion — the shell passes
+    ///     `couple.pinned`; the label and wire key keep the old name until Phase 6
+    ///     (D12). Only a pinned couple's DIFFERENT-source replacement asks first.
     public static func decide(hasSelectedCouple: Bool,
                               payloadIsAudio: Bool,
                               videoAvailable: Bool,

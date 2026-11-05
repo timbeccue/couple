@@ -119,9 +119,7 @@ final class InputRouter {
             let step = mods.contains(.option) ? 0.1 : 1.0
             pair.nudgeDrift(chars == "[" ? -step : step)
             return true
-        case "v": // approve + advance to next unapproved (§V2.5)
-            approveAndAdvance()
-            return true
+        // `v` is UNBOUND (UX §V2.12 / D4): inclusion is the row checkbox only.
         case "l": // loupes (§V2.4)
             model.loupesShown.toggle()
             return true
@@ -146,16 +144,6 @@ final class InputRouter {
         }
         let next = max(0, min(order.count - 1, cur + delta))
         model.select(order[next].id)
-    }
-
-    private func approveAndAdvance() {
-        guard let couple = model.selectedCouple else { return }
-        model.toggleApprove(couple)
-        // Advance to the next couple still needing approval (TO APPROVE / TO FIX).
-        let pendingAfter = (model.toApprove + model.toFix)
-        if let next = pendingAfter.first(where: { $0.id != couple.id }) {
-            model.select(next.id)
-        }
     }
 
     // MARK: - Scroll-wheel zoom routing (editor loupes; UX §2.9)

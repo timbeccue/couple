@@ -3,10 +3,14 @@
 // (alignment shadow, view state, export options, sync), the resolution the user
 // can override, and the per-couple export overrides + status.
 //
-// "Approve ≡ queued" (§V2.5): there is no separate queue flag — `pair.verified`
-// IS queue membership. The verdict dot (§V2.3) is good/questionable/none, derived
-// from the resolution state (coverage is never a quality penalty) with "forced"
-// for a kept below-floor manual pairing.
+// Include-for-export (UX §V2.12, PLAN-COMPACT-MODE D1/D8): there is no approve
+// flag. A couple is INCLUDED in the next export when its verdict is good and it
+// has not been exported yet, unless the user toggled its row checkbox; the row
+// stores only the two optionals that feed that rule (`explicit`, `exportedAt`) and
+// `included` is DERIVED through the core `export_include` policy on every read.
+// The verdict (§V2.3) is good/questionable/none, derived from the resolution
+// state (coverage is never a quality penalty) with "forced" for a kept
+// below-floor manual pairing.
 
 import CoupleKit
 import Foundation
@@ -51,6 +55,18 @@ final class CoupleRow: Identifiable {
     /// green until evidence says so). Meaningless for non-manual selections.
     var manualMatchConfident: Bool?
 
+    // ----- include-for-export (D1/D8): the ONLY stored inclusion state -----
+    /// The user's row checkbox: `true`/`false` once toggled, nil while untouched
+    /// (⇒ the policy default applies). Persisted (optional field in `queue.json`);
+    /// cleared by a manual re-pair (`repair`), which makes the default rule apply
+    /// again.
+    var explicit: Bool?
+    /// When this couple last left the app as a file (stamped by `BatchExport` on
+    /// each successful export; D8). Persisted. Drives the ✓ time in the Files
+    /// list and drops the couple out of the default include set until it is
+    /// ticked again. Cleared by a manual re-pair (the old export is stale).
+    var exportedAt: Date?
+
     /// The drill-down editor for the current selection. Created empty; gets a
     /// session via `pair.load(...)` whenever a selection exists.
     let pair: PairSession
@@ -87,8 +103,26 @@ final class CoupleRow: Identifiable {
 
     // ----- derived -----
 
-    /// Approve ≡ queued for export (§V2.5). Only meaningful once a session exists.
-    var approved: Bool { pair.verified }
+    /// The core include decision for this row (`policy::export_include`, D1):
+    /// `included = verdict good ∧ (explicit ?? exportedAt == nil)`,
+    /// `inFilesList = included ∪ exported`. Derived on every read — a verdict
+    /// change, undo, restore or sync completion needs no recompute hook.
+    private var includeDecision: ExportIncludeDecision {
+        let row = ExportIncludeRow(verdict: MatchQuality(verdict), explicit: explicit,
+                                   exported: exportedAt != nil)
+        return ExportIncludePolicy.evaluate(rows: [row]).first
+            ?? ExportIncludeDecision(included: false, inFilesList: exportedAt != nil)
+    }
+
+    /// Goes out on the next export (the row checkbox; counts toward "Export N files").
+    var included: Bool { includeDecision.included }
+
+    /// Appears in the export rail's Files list: included, or already exported (its ✓ time).
+    var inFilesList: Bool { includeDecision.inFilesList }
+
+    /// Whether the checkbox is offered at all (D1: a good verdict only). A "pick
+    /// one" / "no audio" / forced couple cannot be included until it is fixed.
+    var canInclude: Bool { ExportIncludePolicy.canInclude(MatchQuality(verdict)) }
 
     var selectedCandidate: RowCandidate? {
         guard let k = selectedAudioKey else { return nil }

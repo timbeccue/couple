@@ -106,8 +106,8 @@ final class IngestController {
         }
     }
 
-    /// Run the §3.3 row resolution over the pool, then build/update couples — pinned/approved
-    /// selections survive (§3.6).
+    /// Run the §3.3 row resolution over the pool, then build/update couples — pinned
+    /// selections survive (§3.6; pinned ONLY since PLAN-COMPACT-MODE D6).
     ///
     /// Core-shell boundary (PLAN §3.1, Phase C): the §3.3 DECISION runs in couple-core via a SINGLE
     /// DETERMINATE JOB (`Engine.resolveStart`, the `cpl_resolve_start` twin) — the SAME resolver the
@@ -238,14 +238,16 @@ final class IngestController {
     /// The WHAT (selection, candidate list, whether to adopt the fresh display,
     /// whether the session must be rebuilt, whether a stale `forced` clears) is the
     /// PURE `RowMergePolicy.plan`; this method only applies the resulting mutations
-    /// together so the row is never left half-updated. An unapproved, unpinned
-    /// unresolved row therefore adopts a newly confident result WHOLESALE — exactly
-    /// as if both files had been imported together — while an approved/pinned row
-    /// only gains new alternates (its chosen source is never silently changed).
+    /// together so the row is never left half-updated. An unpinned unresolved row
+    /// therefore adopts a newly confident result WHOLESALE — exactly as if both
+    /// files had been imported together — while a PINNED row only gains new
+    /// alternates (its chosen source is never silently changed). Protection is the
+    /// pin alone (D6): with default-on inclusion, "included" no longer means a human
+    /// looked at the row, so inclusion is not an input here.
     private func mergeResolution(into couple: CoupleRow, row: ResolvedRow) {
         let fresh = (row.selected.map { [$0] } ?? []) + row.alternates
         let plan = RowMergePolicy.plan(
-            protected: couple.pinned || couple.approved,
+            protected: couple.pinned, // D6: pinned only (was pinned || approved)
             currentSelectedKey: couple.selectedAudioKey,
             currentCandidateKeys: couple.candidates.map(\.audioKey),
             freshSelectedKey: row.selected?.audioKey,

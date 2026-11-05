@@ -1,8 +1,10 @@
 // Export rail (right column, §V2.8 / §6): one destination folder, an editable
 // naming template + per-couple stem override, the v1 Auto/MOV/MP4/WAV format
 // selector (global default + per-couple override) with keep-camera-audio, disk
-// preflight, and "Export (n files)" running serial jobs with per-couple status
-// and continue-past-failure. Each per-couple job is the unchanged Phase-4
+// preflight, and "Export N files" (N = INCLUDED couples, UX §V2.12 / D1; "Export"
+// disabled at 0) running serial jobs with per-couple status and continue-past-
+// failure. The ROWS list is the Files list: included ∪ already exported (rule in
+// core `export_include`); an exported row shows its ✓ time from `exportedAt` (D8). Each per-couple job is the unchanged Phase-4
 // pipeline, so a batch is byte-identical to the CLI export, couple by couple.
 
 import AppKit
@@ -54,12 +56,12 @@ struct ExportRail: View {
 
             exportButton
 
-            // Per-couple export rows
-            if !model.queued.isEmpty {
+            // Per-couple export rows: included ∪ exported (D1/D8)
+            if !model.filesList.isEmpty {
                 sectionLabel("ROWS")
                 ScrollView {
                     VStack(alignment: .leading, spacing: 5) {
-                        ForEach(model.queued) { couple in
+                        ForEach(model.filesList) { couple in
                             ExportRowView(couple: couple)
                         }
                     }
@@ -84,13 +86,14 @@ struct ExportRail: View {
         case .preflight:
             Text("Checking disk…").font(.system(size: 10)).foregroundStyle(Theme.textSecondary)
         default:
+            let n = model.includedCount
             Button { model.batch.run() } label: {
-                Text("Export (\(model.approvedCount) file\(model.approvedCount == 1 ? "" : "s"))")
+                Text(n == 0 ? "Export" : "Export \(n) file\(n == 1 ? "" : "s")")
                     .font(.system(size: 13, weight: .semibold))
                     .frame(maxWidth: .infinity).padding(.vertical, 8)
             }
             .buttonStyle(.borderedProminent).tint(Theme.good.opacity(0.85))
-            .disabled(model.approvedCount == 0 || model.exportDestination == nil)
+            .disabled(n == 0 || model.exportDestination == nil)
         }
     }
 
@@ -136,6 +139,7 @@ private struct ExportRowView: View {
                     },
                     onReset: { model.setStemOverride(nil, for: couple) })
                 Spacer(minLength: 0)
+                exportedStamp
             }
             if case .failed(let msg) = couple.exportStatus {
                 Text(msg).font(.system(size: 8.5)).foregroundStyle(Theme.bad).lineLimit(2)
@@ -148,6 +152,24 @@ private struct ExportRowView: View {
         .onTapGesture { model.select(couple.id) }
         .help(couple.video.name)
     }
+
+    /// "✓ HH:mm" once the couple has been exported (D8) — read from the persisted
+    /// `exportedAt`, so it survives relaunch unlike the live batch's `exportStatus`.
+    @ViewBuilder
+    private var exportedStamp: some View {
+        if let t = couple.exportedAt {
+            Text("✓ \(Self.clock.string(from: t))")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Theme.good)
+                .help("Exported at \(Self.clock.string(from: t))")
+        }
+    }
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
 
     // Width reserved for the status column so the filename baseline never shifts
     // as a row moves between idle/queued (empty), running, done, and failed.

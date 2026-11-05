@@ -1,7 +1,7 @@
 // Center column (§V2.1): the video hero (greedy), a resolve banner for couples
 // that need a human choice (§V2.6), the waveform stage (narrowed overview sharing
 // its row with the sync-tools panel; loupes summoned on demand, §V2.4), and the
-// persistent bottom tool bar (⚙ sync tools / ◫ loupes / Approve — same-place
+// persistent bottom tool bar (⚙ sync tools / ◫ loupes — same-place
 // toggles, nothing repositions). Everything is visible at once; there is no
 // "editor screen" you navigate to — ⏎ / ⚙ just expands the sync tools in place.
 
@@ -57,7 +57,7 @@ struct CenterColumn: View {
             // selected there is no couple to attach the modifier to, so the region is
             // inert. Routes through the SHARED `requestRepairDrop` (the same path the
             // queue-row drop uses) so the two gestures produce identical results —
-            // no-op on the current source, immediate replace when unapproved, confirm
+            // no-op on the current source, immediate replace when unpinned, confirm
             // before clearing an APPROVED couple's export. A non-audio payload / an
             // unavailable video is rejected there without changing state.
             .modifier(CenterDropTarget(
@@ -293,7 +293,7 @@ private struct BottomBar: View {
                 }
                 .disabled(!hasSession)
                 Spacer()
-                approveButton(hasSession: hasSession)
+                // No Approve control (UX §V2.12 / D4): inclusion is the row checkbox.
             }
         }
         .padding(.horizontal, 12)
@@ -329,25 +329,6 @@ private struct BottomBar: View {
         }
     }
 
-    private func approveButton(hasSession: Bool) -> some View {
-        let approved = model.selectedCouple?.approved ?? false
-        return Button {
-            if let c = model.selectedCouple { model.toggleApprove(c) }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: approved ? "checkmark.circle.fill" : "circle")
-                Text(approved ? "Approved" : "Approve")
-                    .font(.system(size: 12, weight: .semibold))
-                Text("v").font(.system(size: 9, design: .monospaced)).opacity(0.6)
-            }
-            .foregroundStyle(approved ? .black.opacity(0.8) : Theme.textPrimary)
-            .padding(.horizontal, 14).padding(.vertical, 7)
-            .background(approved ? Theme.good : Theme.chipBg, in: RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-        .disabled(!hasSession)
-        .help("Approve ≡ queue for export (no audition required)")
-    }
 }
 
 // MARK: - Resolve banner (§V2.6): the manual-choice surface

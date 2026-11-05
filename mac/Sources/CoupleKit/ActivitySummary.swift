@@ -107,7 +107,7 @@ public struct ActivitySignals: Sendable, Equatable {
     /// reports a trustworthy per-row `fraction`, combined with the row position.
     public struct Exporting: Sendable, Equatable {
         public var index: Int            // 1-based row being exported
-        public var total: Int            // approved couples in the batch
+        public var total: Int            // included couples in the batch (D1)
         public var rowFraction: Double   // 0…1 of the current row (from the core job)
         public var preflight: Bool       // disk preflight before the first row
         public var filename: String?

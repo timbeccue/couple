@@ -791,10 +791,12 @@ final class PairSession {
     /// pipeline to the single export above — so a batch is byte-identical to the
     /// Phase-4 CLI export, couple by couple — but serialized via `await`.
     /// format/keepCameraAudio come from the couple's effective settings; drift
-    /// mode lives in the core session and is honored unchanged.
+    /// mode lives in the core session and is honored unchanged. The batch is gated by
+    /// INCLUSION (UX §V2.12 / D1 — `BatchExport` exports `model.included`), not by the
+    /// v1 editor's `verified` flag, which nothing new reads (PLAN-COMPACT-MODE §3).
     func exportAwait(to url: URL, format: ExportFormat, keepCameraAudio: Bool,
                      onProgress: @escaping (Double) -> Void) async throws {
-        guard let session, verified else { throw ExportError(message: "not approved") }
+        guard let session else { throw ExportError(message: "no session") }
         guard let json = Self.exportOptionsJSON(to: url, format: format,
                                                keepCameraAudio: keepCameraAudio) else {
             throw ExportError(message: "bad export options")
@@ -823,7 +825,7 @@ final class PairSession {
 
     /// Apply this pair's saved per-pair alignment (SessionStore) if present — the
     /// §5.4 restore path, used by the queue-level restore so manual edits and the
-    /// approved state come back, not just a fresh re-sync. Returns false when no
+    /// alignment state come back, not just a fresh re-sync. Returns false when no
     /// saved file exists (the caller then auto-syncs instead).
     @discardableResult
     func restoreSavedAlignment() -> Bool {

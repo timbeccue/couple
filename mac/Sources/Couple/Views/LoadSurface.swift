@@ -33,7 +33,7 @@ struct LoadSurface: View {
 
             // Orientation for first-time users (the rails around this surface are
             // visible but empty): where results land and what happens after.
-            Text("Matched pairs appear in the queue on the left. Approve them here, then export from the right rail.")
+            Text("Matched pairs appear in the list on the left. Good matches are included in the export; untick any you don't want, then export from the right rail.")
                 .font(.system(size: 10))
                 .foregroundStyle(Theme.textTertiary)
                 .multilineTextAlignment(.center)

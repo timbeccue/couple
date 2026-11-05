@@ -1,5 +1,7 @@
 // Batch export coordinator (SPEC-V2 §6 / §V2.8). Serial export jobs over the
-// approved couples, disk preflight, per-row status, continue-past-failure. Each
+// INCLUDED couples (UX §V2.12 / D1), disk preflight, per-row status, continue-past-
+// failure; each success stamps the couple's `exportedAt` (D8), which drops it out
+// of the default include set so the next batch does not re-emit it. Each
 // per-couple job is the unchanged Phase-4 pipeline, so the output is
 // byte-identical to the CLI export for the same state (the Phase-6 hash keystone,
 // now asserted across a batch).
@@ -46,20 +48,20 @@ final class BatchExport {
     /// mid-export.
     var runningRowFraction: Double {
         guard exportRowIndex > 0 else { return 0 }
-        for couple in model.queued {
+        for couple in model.couples {
             if case .running(let f) = couple.exportStatus { return f }
         }
         return 0
     }
 
-    /// Export every approved couple, serially, into the destination folder.
+    /// Export every INCLUDED couple, serially, into the destination folder.
     /// Disk preflight sums the queue first; per-couple status updates live; a
     /// failed couple records its error and the batch proceeds (continue-past-
     /// failure); a closing toast reports "n exported, m failed".
     func run() {
         guard !isRunning else { return }
         guard let dest = model.exportDestination else { return }
-        let couples = model.queued
+        let couples = model.included
         guard !couples.isEmpty else { return }
         phase = .preflight
         lastError = nil
@@ -94,6 +96,12 @@ final class BatchExport {
                         keepCameraAudio: model.globalKeepCameraAudio,
                         onProgress: { couple.exportStatus = .running($0); self.model.activity.refresh() })
                     couple.exportStatus = .done(url)
+                    // D8: the stamp is the ONLY thing an export changes on the row —
+                    // `explicit` is untouched, so a couple the user ticked back on
+                    // stays included for the next batch; a default-included one drops
+                    // out. Persisted at once so a crash mid-batch keeps the stamps.
+                    couple.exportedAt = Date()
+                    model.saveQueue()
                     exported += 1
                 } catch {
                     let msg = (error as? LocalizedError)?.errorDescription ?? "\(error)"
@@ -104,7 +112,7 @@ final class BatchExport {
                 phase = .running(done: i + 1, total: couples.count)
             }
 
-            model.saveQueue() // persist per-couple status/approval before announcing done
+            model.saveQueue() // persist per-couple status/exportedAt before announcing done
             exportRowIndex = 0
             exportRowName = nil
             phase = .finished(exported: exported, failed: failed)

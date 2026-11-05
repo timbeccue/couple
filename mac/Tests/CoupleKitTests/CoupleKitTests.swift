@@ -848,15 +848,16 @@ struct CoupleKitTests {
 
 /// Deterministic, media-free coverage of `RowMergePolicy.plan` — the pure core of
 /// `AppModel.mergeResolution`. These lock the TODO-007 acceptance set: an
-/// unapproved/unpinned unresolved row adopts a newly decisive result wholesale
+/// unpinned unresolved row adopts a newly decisive result wholesale
 /// (selection + candidates + session/sync); a weak candidate is surfaced without
-/// promotion; approved/pinned rows never have their selection changed silently;
+/// promotion; pinned rows never have their selection changed silently (the pin is
+/// the ONLY protection since PLAN-COMPACT-MODE D6 — inclusion is not an input);
 /// and repeated re-resolves never duplicate candidates or sync work. AppModel only
 /// applies the plan, so testing the plan tests the behavior at the smallest layer
 /// (the executable target's DebugDrive `COUPLE_REMERGE_TEST` mirrors these live).
 @Suite struct RowMergePolicyTests {
     // (1) Video first, then the decisive correct audio: an unresolved (no-match /
-    //     ambiguous, nil selection) UNPINNED/UNAPPROVED row adopts the confident
+    //     ambiguous, nil selection) UNPINNED row adopts the confident
     //     result whole — the new source is selected, the display is taken fresh,
     //     and the session is (re)built exactly once so auto-sync is queued. Equal
     //     to a couple built fresh from the same resolution.
@@ -901,16 +902,19 @@ struct CoupleKitTests {
         #expect(!plan.clearForced)                        // a forced chip stays honest
     }
 
-    // (4) An APPROVED row, then a stronger audio arrives: identical protection —
-    //     selection preserved, new evidence only adds an alternate.
-    @Test func approvedRowKeepsSelectionWhenStrongerAudioArrives() {
+    // (4) D6: an INCLUDED-for-export but UNPINNED row is NOT protected — inclusion is
+    //     not an input (the shell composes `protected` as `pinned` alone), so a stronger
+    //     audio arriving re-pairs it wholesale like any other unpinned row: the fresh
+    //     selection is adopted and the session is rebuilt once.
+    @Test func includedUnpinnedRowIsNotProtected() {
         let plan = RowMergePolicy.plan(
-            protected: true,                              // approved
-            currentSelectedKey: "queued", currentCandidateKeys: ["queued"],
-            freshSelectedKey: "stronger", freshCandidateKeys: ["stronger", "queued"])
-        #expect(plan.selectedAudioKey == "queued")
-        #expect(plan.candidateKeys == ["queued", "stronger"])
-        #expect(!plan.rebuildSession)
+            protected: false,                             // included, not pinned ⇒ unprotected
+            currentSelectedKey: "auto", currentCandidateKeys: ["auto"],
+            freshSelectedKey: "stronger", freshCandidateKeys: ["stronger", "auto"])
+        #expect(plan.selectedAudioKey == "stronger")      // takes the fresh resolution whole
+        #expect(plan.candidateKeys == ["stronger", "auto"])
+        #expect(plan.adoptFreshDisplay)
+        #expect(plan.rebuildSession)                      // selection changed ⇒ rebuild once
     }
 
     // (5) Repeated resolve over the same evidence must not duplicate candidates,

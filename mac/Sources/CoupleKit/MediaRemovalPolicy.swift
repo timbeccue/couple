@@ -1,7 +1,9 @@
 // Media removal / clear-session decisions (TODO-001) — the PURE, testable core
 // behind `AppModel.removeSelectedMedia` and `AppModel.clearSession`. Removing media
 // from the open session and clearing the whole session are both expressible over
-// content keys + which keys each couple references + which couples are approved, so
+// content keys + which keys each couple references + which couples are INCLUDED for
+// export (PLAN-COMPACT-MODE D7; the `approved` field/wire key carries that meaning
+// until Phase 6, D12), so
 // the decision is lifted here (out of the app target / out of the SwiftUI views)
 // where `swift test` can lock it down — mirroring the codebase's other pure-decision
 // idioms (RowMergePolicy.plan, PoolSelection.select, MatchQualityPolicy.decide,
@@ -14,23 +16,23 @@
 //   - UNUSED media (referenced by no couple) is removed IMMEDIATELY, no dialog.
 //   - If ANY selected key participates in ≥1 couple, ONE consequence-focused
 //     confirmation is shown for the WHOLE batch, stating the number of affected
-//     couples and approved rows (never one dialog per file).
+//     couples and included-for-export rows (never one dialog per file).
 //   - A couple is AFFECTED by a removal when its video is removed (the row goes
 //     away) OR its currently selected audio is removed (the row re-resolves).
 //     A couple that merely lists a removed key as a non-selected ALTERNATE is NOT
 //     counted as affected — its selected pairing is untouched (the resolver simply
 //     stops offering the vanished alternate).
 //   - Clearing the session always confirms (it discards the whole queue), with the
-//     media/couple/approved counts so the consequence is explicit.
+//     media/couple/included counts so the consequence is explicit.
 //
 // CONTRACT (the testable invariants):
 //   1. EMPTY removal (no keys, or only keys absent from the pool) needs no
-//      confirmation and reports zero affected/approved (a no-op the caller skips).
+//      confirmation and reports zero affected/included (a no-op the caller skips).
 //   2. UNUSED-ONLY removal needs no confirmation (`needsConfirmation == false`) and
 //      reports zero affected couples — it is removed immediately.
 //   3. A removal touching ≥1 referenced key needs confirmation; `affectedCouples`
 //      counts the DISTINCT couples whose video or SELECTED audio is removed, and
-//      `affectedApproved` counts how many of those were approved.
+//      `affectedApproved` counts how many of those were included for export (D7).
 //   4. The counts are a function of the input sets ALONE (no call-site flavor), so
 //      a Delete-key removal and a trash-button removal of the same selection decide
 //      identically.
@@ -42,17 +44,19 @@
 // unreachable with this in-process call) `plan` maps to the CONSERVATIVE EMPTY plan
 // (`needsConfirmation == false`, zero counts, no removable keys) so a failure removes
 // NOTHING; `clearCounts` maps to all-zero counts. A failure can never silently delete
-// media or hide an approved-couple consequence behind a wrong count.
+// media or hide an included-couple consequence behind a wrong count.
 
 import CCouple
 import Foundation
 
 /// The identity of one couple as removal needs to reason about it: its video key,
-/// the audio key it currently uses (nil when unresolved), and whether it is approved
-/// (≡ queued for export). Pure value so the plan is unit-testable with no app types.
+/// the audio key it currently uses (nil when unresolved), and whether it is included
+/// for export. Pure value so the plan is unit-testable with no app types.
 public struct CoupleRef: Sendable, Equatable {
     public var videoKey: String
     public var selectedAudioKey: String?
+    /// Included for export (PLAN-COMPACT-MODE D7; was approved ≡ queued). The field
+    /// and wire key keep the old name until Phase 6 (D12); only the meaning changed.
     public var approved: Bool
 
     public init(videoKey: String, selectedAudioKey: String?, approved: Bool) {
@@ -76,7 +80,7 @@ public struct MediaRemovalPlan: Sendable, Equatable {
     public var needsConfirmation: Bool
     /// Distinct couples whose video is removed OR whose selected audio is removed.
     public var affectedCouples: Int
-    /// How many of the affected couples were approved (queued for export).
+    /// How many of the affected couples were included for export (D7; name kept per D12).
     public var affectedApproved: Int
 
     public init(removableKeys: Set<String>, needsConfirmation: Bool,
@@ -96,6 +100,7 @@ public struct MediaRemovalPlan: Sendable, Equatable {
 public struct ClearSessionCounts: Sendable, Equatable {
     public var media: Int
     public var couples: Int
+    /// Couples included for export (D7; name kept per D12).
     public var approved: Int
 
     public init(media: Int, couples: Int, approved: Int) {
@@ -153,7 +158,7 @@ public enum MediaRemovalPolicy {
     }
 
     /// The Clear Session confirmation counts (TODO-001) — media files, couples, and
-    /// approved (queued-for-export) couples currently in the session.
+    /// included-for-export couples (D7) currently in the session.
     public static func clearCounts(mediaCount: Int, couples: [CoupleRef]) -> ClearSessionCounts {
         let req: [String: Any] = [
             "op": "clearCounts",
@@ -188,7 +193,8 @@ public enum MediaRemovalPolicy {
 }
 
 extension CoupleRef {
-    /// The core `CoupleRef` wire dict (`{"videoKey","selectedAudioKey":str|null,"approved"}`).
+    /// The core `CoupleRef` wire dict (`{"videoKey","selectedAudioKey":str|null,"approved"}`);
+    /// `approved` carries INCLUDED (D7) — the key name is kept until Phase 6 (D12).
     var wireDict: [String: Any] {
         ["videoKey": videoKey,
          "selectedAudioKey": selectedAudioKey as Any? ?? NSNull(),

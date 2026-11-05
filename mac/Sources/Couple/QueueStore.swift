@@ -3,9 +3,10 @@
 // autosave (SessionStore, unchanged: each couple keeps its own file keyed by
 // content keys). The queue file stores the media-pool file list, each couple's
 // resolution (selected source + pinned/forced + per-couple export overrides),
-// the approved flags, and the export destination/template — so reopening the app
-// restores the whole queue. Saved on the v1 triggers (approve / export / quit)
-// plus pairing changes.
+// the include-for-export state (the user's explicit toggle + `exportedAt`, D8),
+// and the export destination/template — so reopening the app restores the whole
+// queue. Saved on the v1 triggers (include toggle / export / quit) plus pairing
+// changes.
 
 import CoupleKit
 import Foundation
@@ -22,7 +23,6 @@ struct SavedQueue: Codable {
         var selectedAudioKey: String?
         var pinned: Bool
         var forced: Bool
-        var approved: Bool
         var stemOverride: String?
         // TODO-009: selection provenance + the manual pair's evidence verdict, so a
         // restored manual pick keeps both WHICH source it used and WHETHER that pair
@@ -33,6 +33,13 @@ struct SavedQueue: Codable {
         // mirroring how RowCandidate-era optionals were added).
         var selectionProvenance: SelectionProvenance?
         var manualMatchConfident: Bool?
+        // PLAN-COMPACT-MODE D8: the include-for-export inputs, both OPTIONAL with the
+        // same back-compat idiom (schema stays `couple-queue/1`). A file saved under
+        // the approve model has neither (its `approved` key is simply not read), so it
+        // decodes to nil/nil ⇒ the policy default: every good couple included, no
+        // export history (SPEC-CHANGE 2026-11-05 [D1] loading note).
+        var explicit: Bool?
+        var exportedAt: Date?
     }
 
     struct Export: Codable {
@@ -68,10 +75,11 @@ enum QueueStore {
         }
         let couples = model.couples.map {
             SavedQueue.Couple(videoKey: $0.id, selectedAudioKey: $0.selectedAudioKey,
-                              pinned: $0.pinned, forced: $0.forced, approved: $0.approved,
+                              pinned: $0.pinned, forced: $0.forced,
                               stemOverride: $0.stemOverride,
                               selectionProvenance: $0.selectionProvenance,
-                              manualMatchConfident: $0.manualMatchConfident)
+                              manualMatchConfident: $0.manualMatchConfident,
+                              explicit: $0.explicit, exportedAt: $0.exportedAt)
         }
         let saved = SavedQueue(
             schema: schema,
@@ -82,6 +90,7 @@ enum QueueStore {
                           keepCameraAudio: model.globalKeepCameraAudio))
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        enc.dateEncodingStrategy = .iso8601 // `exportedAt` reads like `savedAt`
         if let data = try? enc.encode(saved) {
             try? data.write(to: url(), options: .atomic)
         }
@@ -98,8 +107,10 @@ enum QueueStore {
 
     /// The saved queue, if one exists whose files are all still on disk.
     static func load() -> SavedQueue? {
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: url()),
-              let saved = try? JSONDecoder().decode(SavedQueue.self, from: data),
+              let saved = try? dec.decode(SavedQueue.self, from: data),
               saved.schema == schema, !saved.files.isEmpty else { return nil }
         // Only offer restore if every file still exists (paths are stable).
         guard saved.files.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else { return nil }

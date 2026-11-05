@@ -185,7 +185,7 @@ final class ActivityStrip {
         // Batch export: BatchExport phase + the running row's per-row fraction.
         switch model.batch.phase {
         case .preflight:
-            s.exporting = ActivitySignals.Exporting(index: 0, total: model.queued.count,
+            s.exporting = ActivitySignals.Exporting(index: 0, total: model.includedCount,
                                                     rowFraction: 0, preflight: true)
         case .running(let done, let total):
             let idx = model.batch.exportRowIndex
