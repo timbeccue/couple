@@ -30,6 +30,25 @@ struct VideoHero: View {
                 .background(Color.black)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
+            // The transport's seek surface (PLAN-COMPACT-MODE Phase 3): the two-lane
+            // PairStrip between the playhead time and the clip length, like the mock.
+            if let couple = model.selectedCouple {
+                HStack(spacing: 8) {
+                    Text(timecode(audition.playheadT))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(audition.isPlaying ? Theme.textPrimary : Theme.textTertiary)
+                        .frame(minWidth: 52, alignment: .leading)
+                    PairStrip(couple: couple,
+                              candidate: model.candidateAudition?.coupleID == couple.id
+                                  ? model.candidateAudition : nil)
+                        .frame(height: 38)
+                    Text(timecode(couple.video.durationS))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(Theme.textTertiary)
+                        .frame(minWidth: 52, alignment: .trailing)
+                }
+            }
+
             HStack(spacing: 8) {
                 Button {
                     audition.toggle() // shared transport: starts/resumes at the playhead (TODO-004)
@@ -41,10 +60,12 @@ struct VideoHero: View {
                         .background(Theme.chipBg, in: RoundedRectangle(cornerRadius: 4))
                 }
                 .buttonStyle(.plain)
-                .disabled(pair.session == nil)
-                Text(timecode(audition.playheadT))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(audition.isPlaying ? Theme.textPrimary : Theme.textTertiary)
+                .disabled(!audition.isAttached)
+                if model.selectedCouple == nil {
+                    Text(timecode(audition.playheadT))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(Theme.textTertiary)
+                }
                 if audition.audioUnavailable {
                     Text("audio output unavailable")
                         .font(.system(size: 9))
@@ -66,21 +87,8 @@ struct VideoHero: View {
                     .help("Play from anchor \(i + 1) (−0.8 s)")
                 }
                 // Monitor modes live in the HUD beside the timecode (§V2.6).
-                // Camera · Pan L/R · Overlay · External: the ends are the A/B
-                // solos (UX-DECISIONS 2026-11-03); `a` flips, `b` restores both.
-                Picker("", selection: Binding(
-                    get: { audition.monitorMode },
-                    set: { audition.selectMonitor($0) }
-                )) {
-                    ForEach(MonitorMode.allCases, id: \.self) { m in
-                        Text(m.label).tag(m)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .controlSize(.mini)
-                .frame(width: 236)
-                .disabled(pair.session == nil)
-                .help("Camera / External: hear one track only (a flips, b = both) · Pan L/R: camera left, external right · Overlay: both mixed")
+                MonitorPicker()
+                    .disabled(!audition.isAttached)
                 Button {
                     VideoFullscreen.shared.toggle(player: audition.player)
                 } label: {
@@ -100,6 +108,69 @@ struct VideoHero: View {
     private func timecode(_ t: Double) -> String {
         let s = max(0, t)
         return String(format: "%d:%05.2f", Int(s) / 60, s.truncatingRemainder(dividingBy: 60))
+    }
+}
+
+// MARK: - Monitor picker (UX-DECISIONS 2026-11-03; compact variant §V2.11 / D10)
+
+/// The monitor picker. Full (default): Camera · Pan L/R · Overlay · External — the
+/// ends are the A/B solos; `a` flips, `b` restores both. `compact` (PLAN-COMPACT-MODE
+/// D10; used by the compact arrangement from Phase 4): Camera · Synced · External,
+/// where Synced selects Overlay and a remembered Pan L/R both-mode is SHOWN as
+/// Synced. Presentation only — every selection still goes through
+/// `AuditionController.selectMonitor` (core `policy::monitor` decides next mode and
+/// memory); MonitorPolicy is untouched, and the `a`/`b` keys are unchanged.
+struct MonitorPicker: View {
+    @Environment(AppModel.self) private var model
+    var compact = false
+
+    /// The segments the compact variant offers (Synced ≡ Overlay).
+    static let compactCases: [MonitorMode] = [.camera, .overlay, .external]
+
+    /// Which compact segment a (possibly Pan) mode is shown as.
+    static func compactSegment(for mode: MonitorMode) -> MonitorMode {
+        switch mode {
+        case .camera, .external: return mode
+        default: return .overlay // pan / overlay (and the oracle-only null) read as Synced
+        }
+    }
+
+    static func compactLabel(_ mode: MonitorMode) -> String {
+        mode == .overlay ? "Synced" : mode.label
+    }
+
+    var body: some View {
+        let audition = model.audition
+        if compact {
+            Picker("", selection: Binding(
+                get: { Self.compactSegment(for: audition.monitorMode) },
+                set: { picked in
+                    // Re-picking Synced while a remembered Pan is playing keeps it.
+                    guard picked != Self.compactSegment(for: audition.monitorMode) else { return }
+                    audition.selectMonitor(picked)
+                }
+            )) {
+                ForEach(Self.compactCases, id: \.self) { m in
+                    Text(Self.compactLabel(m)).tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.small)
+            .help("Camera / External: hear one track only (a flips, b = both) · Synced: both, mixed")
+        } else {
+            Picker("", selection: Binding(
+                get: { audition.monitorMode },
+                set: { audition.selectMonitor($0) }
+            )) {
+                ForEach(MonitorMode.allCases, id: \.self) { m in
+                    Text(m.label).tag(m)
+                }
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.mini)
+            .frame(width: 236)
+            .help("Camera / External: hear one track only (a flips, b = both) · Pan L/R: camera left, external right · Overlay: both mixed")
+        }
     }
 }
 

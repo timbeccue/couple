@@ -252,6 +252,7 @@ final class AppModel {
     // MARK: - Selection + audition (§5.3)
 
     func select(_ id: CoupleRow.ID?) {
+        endCandidateAudition() // choosing another row tears the scratch session down
         selectedID = id
         loupeRects = [:]
         overviewRect = .zero
@@ -265,6 +266,7 @@ final class AppModel {
     /// Detach/attach/swap (§5.3): exactly one audition handle open at a time. A
     /// couple with no session attaches video-only (camera-audio poster).
     func attachAudition(_ couple: CoupleRow) {
+        endCandidateAudition()
         guard let cam = couple.video.handle ?? couple.pair.camera.track else {
             audition.teardown()
             return
@@ -366,6 +368,10 @@ final class AppModel {
             return
         }
         registerRepairUndo(couple, restoring: RepairSnapshot(of: couple)) // redo
+        endCandidateAudition()
+        // Back to an unpinned row ⇒ the "Audio chosen by you · Undo" line has nothing
+        // left to undo; a redo back onto a pick restores nothing here (Undo hides).
+        if !snapshot.pinned { prePickSnapshots[couple.id] = nil }
         couple.selectedAudioKey = snapshot.selectedAudioKey
         couple.pinned = snapshot.pinned
         couple.forced = snapshot.forced
@@ -399,7 +405,13 @@ final class AppModel {
     func repair(_ couple: CoupleRow, audioKey: String, undoSnapshot: RepairSnapshot? = nil) {
         guard let audioEntry = pool.entry(key: audioKey), let audioHandle = audioEntry.handle,
               let cam = couple.video.handle else { return }
-        registerRepairUndo(couple, restoring: undoSnapshot ?? RepairSnapshot(of: couple))
+        let before = undoSnapshot ?? RepairSnapshot(of: couple)
+        registerRepairUndo(couple, restoring: before)
+        // The first manual pick of an unpinned row remembers the pre-pick state so the
+        // preview's "Audio chosen by you · Undo" can return the couple to To fix
+        // (PLAN-COMPACT-MODE Phase 3 step 3); a later re-pick keeps that origin.
+        if !before.pinned { prePickSnapshots[couple.id] = before }
+        endCandidateAudition() // "use" ends any audition of this couple's candidates
         couple.pinned = true
         couple.explicit = nil     // D1/D8: a new pairing starts from the default rule
         couple.exportedAt = nil   // the previous export (if any) is of the OLD pairing
@@ -454,6 +466,102 @@ final class AppModel {
             saveQueue()
         }
         saveQueue()
+    }
+
+    // MARK: - Manual-pick Undo (PLAN-COMPACT-MODE Phase 3 step 3)
+
+    /// Per couple, the row as it stood before its first manual pick (see `repair`).
+    /// Drives the preview's "Audio chosen by you · **Undo**" link.
+    /// Observed, so the link appears/disappears with it.
+    private var prePickSnapshots: [CoupleRow.ID: RepairSnapshot] = [:]
+
+    /// True when the "Undo" link has a pre-pick state to return to (a pick made in
+    /// this run; a pin restored from a saved session has no in-memory origin).
+    func canUndoManualPick(_ couple: CoupleRow) -> Bool {
+        couple.pinned && prePickSnapshots[couple.id] != nil
+    }
+
+    /// The preview's Undo link: the SAME inverse ⌘Z applies to a repair
+    /// (`applyRepairSnapshot`, which registers its own redo), restoring the row to
+    /// its pre-pick state — unpinned, the couple back in To fix.
+    func undoManualPick(_ couple: CoupleRow) {
+        guard let snap = prePickSnapshots[couple.id] else { return }
+        prePickSnapshots[couple.id] = nil
+        applyRepairSnapshot(snap, to: couple)
+        undoManager?.setActionName("Change Audio")
+    }
+
+    // MARK: - Candidate audition (PLAN-COMPACT-MODE Phase 3 step 2; UX §V2.11)
+
+    /// A candidate being auditioned at its best-fit lag in a SCRATCH core session
+    /// (row camera + that candidate's audio, offset = the candidate's lag). Nothing
+    /// is pinned or re-synced; the couple's own session is untouched. Core reads the
+    /// session offset on every audition fill, so no core change is needed.
+    struct CandidateAudition {
+        let coupleID: CoupleRow.ID
+        let candidate: RowCandidate
+        let track: TrackHandle
+        let session: SessionHandle
+        /// What to put back when the audition ends.
+        let previousMode: MonitorMode
+        let previousPlayhead: Double
+    }
+
+    private(set) var candidateAudition: CandidateAudition?
+
+    /// ▶ on a candidate: open the scratch session, swap the shared audition onto it
+    /// (video and playhead stay), monitor Overlay, and play from the playhead. Pressing
+    /// ▶ on another candidate swaps scratch sessions; ■ is `stopCandidateAudition`.
+    func auditionCandidate(_ couple: CoupleRow, _ cand: RowCandidate) {
+        guard couple.id == selectedID,
+              let cam = couple.video.handle,
+              let audio = pool.entry(key: cand.audioKey)?.handle else { return }
+        let previous = candidateAudition
+        let scratch: SessionHandle
+        do {
+            scratch = try engine.sessionNew(camera: cam, external: audio)
+        } catch {
+            toasts.show(Toast(style: .warning, title: "Can't play this candidate",
+                              detail: (error as? CoreError)?.message ?? error.localizedDescription))
+            return
+        }
+        scratch.setOffsetMs(cand.lagMs)
+        // Swapping closes the open stream (the previous scratch's, if any) first.
+        audition.attach(session: scratch)
+        previous?.session.free()
+        candidateAudition = CandidateAudition(
+            coupleID: couple.id, candidate: cand, track: audio, session: scratch,
+            previousMode: previous?.previousMode ?? audition.monitorMode,
+            previousPlayhead: previous?.previousPlayhead ?? audition.playheadT)
+        // A temporary override, not a user choice: set directly so the A/B memory
+        // in `policy::monitor` is left exactly as the user had it.
+        audition.monitorMode = .overlay
+        audition.play(from: audition.playheadT)
+    }
+
+    /// ■ / "use" / closing the banner / another row: end the audition and put the
+    /// couple's own session, monitor mode and playhead back.
+    func stopCandidateAudition() {
+        guard let a = candidateAudition else { return }
+        candidateAudition = nil
+        if let couple = couples.first(where: { $0.id == a.coupleID }), couple.id == selectedID {
+            audition.attach(session: couple.pair.session) // closes the scratch stream
+            audition.monitorMode = a.previousMode
+            audition.seek(to: a.previousPlayhead)
+        } else {
+            audition.attach(session: nil)
+        }
+        a.session.free()
+    }
+
+    /// End without restoring (the caller is about to re-attach or tear down the
+    /// audition itself): close the scratch stream, free the scratch session.
+    func endCandidateAudition() {
+        guard let a = candidateAudition else { return }
+        candidateAudition = nil
+        audition.attach(session: nil)
+        audition.monitorMode = a.previousMode
+        a.session.free()
     }
 
     /// Set (or clear) a couple's in-place export-name override (§V2.8), undoably.

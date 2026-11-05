@@ -288,7 +288,10 @@ final class IngestController {
         // Close the shared audition's stream before freeing this couple's old
         // core session (the stream was opened from it — Phase-6 audio-graph
         // ordering, which v1's teardown enforced before audition moved out).
-        if couple.id == model.selectedID { model.audition.teardown() }
+        if couple.id == model.selectedID {
+            model.endCandidateAudition()
+            model.audition.teardown()
+        }
         guard let key = couple.selectedAudioKey,
               let cam = couple.video.handle,
               let audio = model.pool.entry(key: key)?.handle else {

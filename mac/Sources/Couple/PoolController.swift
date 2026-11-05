@@ -191,6 +191,7 @@ final class PoolController {
         // dropped entirely; a removed-audio couple is reset to a clean unresolved row
         // (stale candidate data, selection, pin/forced, approval, provenance, and pair
         // session all discarded) so the re-resolve treats it as never-paired.
+        model.endCandidateAudition() // a scratch session may reference a leaving track
         var survivingCouples: [CoupleRow] = []
         for couple in model.couples {
             if keys.contains(couple.id) {
@@ -268,6 +269,7 @@ final class PoolController {
         // Stop active work: pool preview, the selected couple's audition stream, and
         // every couple's core session + sync.
         model.preview.stop()
+        model.endCandidateAudition()
         model.audition.teardown()
         for couple in model.couples { couple.pair.teardown() }
         // Clear queue + selection + export state.

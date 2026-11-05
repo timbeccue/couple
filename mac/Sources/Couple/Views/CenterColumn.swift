@@ -41,6 +41,11 @@ struct CenterColumn: View {
     /// scoped to the selected couple — no couple ⇒ no target).
     @State private var dropTargeted = false
 
+    /// The couple whose candidate list is reopened inline under the player by
+    /// "Compare others" / "Change…" after a manual pick (PLAN-COMPACT-MODE §6.3).
+    /// Selecting another row closes it.
+    @State private var compareFor: CoupleRow.ID?
+
     var body: some View {
         content
             .padding(.horizontal, 14)
@@ -64,6 +69,13 @@ struct CenterColumn: View {
                 couple: model.selectedCouple,
                 isTargeted: $dropTargeted,
                 draggingName: model.poolDraggingName))
+            .onChange(of: model.selectedID) { _, _ in compareFor = nil }
+    }
+
+    /// A manual pick (📌 with an audio): the banner folds into the
+    /// "Audio chosen by you" line until Compare others / Change… reopens it.
+    private func isManualPick(_ couple: CoupleRow) -> Bool {
+        couple.pinned && couple.selectedAudioKey != nil
     }
 
     /// The center stack (extracted so the drop modifier + highlight overlay wrap the
@@ -85,9 +97,16 @@ struct CenterColumn: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity) // greedy
             }
 
-            if let couple = model.selectedCouple, couple.needsResolve {
-                ResolveBanner(couple: couple,
-                              candidateMaxHeight: CenterLayout.candidateScrollCap(containerHeight: containerHeight))
+            if let couple = model.selectedCouple {
+                PreviewStatusLine(couple: couple,
+                                  manualPick: isManualPick(couple) && compareFor != couple.id,
+                                  onCompare: { compareFor = couple.id })
+                let comparing = compareFor == couple.id && isManualPick(couple)
+                if comparing || (couple.needsResolve && !isManualPick(couple)) {
+                    ResolveBanner(couple: couple,
+                                  candidateMaxHeight: CenterLayout.candidateScrollCap(containerHeight: containerHeight),
+                                  onDone: comparing ? { compareFor = nil } : nil)
+                }
             }
 
             if model.selectedCouple?.pair.session != nil {
@@ -129,6 +148,14 @@ struct CenterColumn: View {
                     .background(Theme.verdictColor(couple.verdict).opacity(0.15), in: Capsule())
             }
             Spacer()
+            // After a manual pick: reopen the candidate list inline (§V2.11).
+            if isManualPick(couple) && compareFor != couple.id {
+                Button("Change…") { compareFor = couple.id }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.accent)
+                    .help("Compare this take's other audio candidates")
+            }
         }
         .lineLimit(1)
     }
@@ -331,6 +358,65 @@ private struct BottomBar: View {
 
 }
 
+// MARK: - Preview status line (PLAN-COMPACT-MODE Phase 3 steps 2–3)
+
+/// One tertiary line under the player: while a candidate is auditioned, the blue
+/// readout "▶ <file> at best fit · offset <lag> s · fit <rms>" (fit only when the
+/// candidate carries fine-verify telemetry) with ■; after a manual pick, "Audio
+/// chosen by you · Undo · Compare others". Otherwise nothing.
+private struct PreviewStatusLine: View {
+    @Environment(AppModel.self) private var model
+    let couple: CoupleRow
+    let manualPick: Bool
+    let onCompare: () -> Void
+
+    var body: some View {
+        if let a = model.candidateAudition, a.coupleID == couple.id {
+            HStack(spacing: 6) {
+                Text(Self.auditionReadout(a.candidate))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Theme.accent)
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer()
+                Button {
+                    model.stopCandidateAudition()
+                } label: {
+                    Image(systemName: "stop.fill").font(.system(size: 9))
+                        .foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(.plain)
+                .help("Stop auditioning — back to this couple's own audio")
+            }
+            .padding(.horizontal, 4)
+        } else if manualPick {
+            HStack(spacing: 10) {
+                Text("Audio chosen by you")
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                if model.canUndoManualPick(couple) {
+                    Button("Undo") { model.undoManualPick(couple) }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.accent)
+                        .help("Undo the pick — the couple goes back to To fix")
+                }
+                Button("Compare others", action: onCompare)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+                    .help("Reopen the candidate list to listen to the alternatives")
+            }
+            .font(.system(size: 10))
+            .padding(.horizontal, 4)
+        }
+    }
+
+    /// "▶ ZOOM0027.WAV at best fit · offset +0.38 s · fit 5.1 ms".
+    static func auditionReadout(_ c: RowCandidate) -> String {
+        var s = "▶ \(c.audioName) at best fit · offset " + String(format: "%+.2f s", c.lagMs / 1000)
+        if let fit = c.fitRmsMs { s += String(format: " · fit %.1f ms", fit) }
+        return s
+    }
+}
+
 // MARK: - Resolve banner (§V2.6): the manual-choice surface
 
 private struct ResolveBanner: View {
@@ -339,6 +425,9 @@ private struct ResolveBanner: View {
     /// Responsive cap for the candidate scroll region (TODO-006); the title and
     /// reason above it stay fixed and always visible.
     let candidateMaxHeight: CGFloat
+    /// Set when the banner is the reopened "Compare others" list after a manual
+    /// pick (PLAN-COMPACT-MODE §6.3): the header gains "Done", which closes it.
+    var onDone: (() -> Void)?
 
     /// Measured natural height of the candidate list, so a short list sizes to
     /// its content (no empty filler, no needless scrollbar) while a long list is
@@ -355,6 +444,13 @@ private struct ResolveBanner: View {
                 Text(couple.resolveTitle)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
+                Spacer()
+                if let onDone {
+                    Button("Done", action: onDone)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                }
             }
             Text(reason)
                 .font(.system(size: 10))
@@ -379,6 +475,11 @@ private struct ResolveBanner: View {
         .background(Theme.verdictColor(couple.verdict).opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8)
             .strokeBorder(Theme.verdictColor(couple.verdict).opacity(0.3)))
+        // Closing the banner (Done, a pick, another row) ends any audition of its
+        // candidates and restores the couple's own audio.
+        .onDisappear {
+            if model.candidateAudition?.coupleID == couple.id { model.stopCandidateAudition() }
+        }
     }
 
     /// The candidate picker (TODO-006): a height-bounded internal scroll region
@@ -489,41 +590,65 @@ private struct ResolveBanner: View {
         }
     }
 
-    /// Candidate row (§V2.6): a relative strength bar + coverage on the right —
-    /// never the raw z number (bimodal; z lives in the tooltip).
+    /// Candidate row (§V2.6 + PLAN-COMPACT-MODE Phase 3): ▶ audition at best fit
+    /// (■ while this candidate plays; nothing is pinned), the name, a relative
+    /// strength bar + coverage — never the raw z number (bimodal; z lives in the
+    /// tooltip) — and "use" (manual pin + re-sync, undoable) or "✓ current".
     private func candidateRow(_ cand: RowCandidate) -> some View {
         let selected = couple.selectedAudioKey == cand.audioKey
-        return Button {
-            model.repair(couple, audioKey: cand.audioKey)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 11))
-                    .foregroundStyle(selected ? Theme.accent : Theme.textTertiary)
-                Text(cand.audioName)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 8)
-                // Relative strength bar (verdict colors), the one place strength helps.
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Theme.chipBg)
-                        Capsule().fill(Theme.verdictGood.opacity(0.8))
-                            .frame(width: max(6, geo.size.width * CGFloat(cand.z / maxZ)))
-                    }
-                }
-                .frame(width: 54, height: 5)
-                Text("\(Int((cand.coverage.fraction * 100).rounded()))%")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(Theme.textTertiary)
-                    .frame(width: 34, alignment: .trailing)
+        let playing = model.candidateAudition?.coupleID == couple.id
+            && model.candidateAudition?.candidate.audioKey == cand.audioKey
+        let playable = model.selectedID == couple.id && couple.video.handle != nil
+            && model.pool.entry(key: cand.audioKey)?.handle != nil
+        return HStack(spacing: 8) {
+            Button {
+                if playing { model.stopCandidateAudition() } else { model.auditionCandidate(couple, cand) }
+            } label: {
+                Image(systemName: playing ? "stop.fill" : "play.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(playing ? Theme.accent : Theme.textSecondary)
+                    .frame(width: 20, height: 16)
+                    .background(playing ? Theme.accent.opacity(0.18) : Theme.chipBg,
+                                in: RoundedRectangle(cornerRadius: 4))
             }
-            .padding(.vertical, 4).padding(.horizontal, 6)
-            .background(selected ? Theme.accent.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 5))
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(!playable)
+            .help(playing ? "Stop" : "Play the video with this audio at its best-fit offset (nothing is changed)")
+            Text(cand.audioName)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 8)
+            // Relative strength bar (verdict colors), the one place strength helps.
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.chipBg)
+                    Capsule().fill(Theme.verdictGood.opacity(0.8))
+                        .frame(width: max(6, geo.size.width * CGFloat(cand.z / maxZ)))
+                }
+            }
+            .frame(width: 54, height: 5)
+            Text("\(Int((cand.coverage.fraction * 100).rounded()))%")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Theme.textTertiary)
+                .frame(width: 34, alignment: .trailing)
+            if selected {
+                Text("✓ current")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 58, alignment: .trailing)
+            } else {
+                Button("use") { model.repair(couple, audioKey: cand.audioKey) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 58, alignment: .trailing)
+                    .help("Use this audio for the take (pins it and re-syncs; ⌘Z undoes)")
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 4).padding(.horizontal, 6)
+        .background(playing ? Theme.accent.opacity(0.12) : (selected ? Theme.accent.opacity(0.06) : .clear),
+                    in: RoundedRectangle(cornerRadius: 5))
         .help(String(format: "z %.1f · lag %.0f ms%@%@", cand.z, cand.lagMs,
                      cand.fitRmsMs.map { String(format: " · fit %.1f ms (%d win)", $0, cand.fitWindows ?? 0) } ?? "",
                      // §4.5 fine-verify telemetry (read-only): lock fraction + drift ppm.

@@ -81,7 +81,8 @@ final class DebugDrive {
             || env["COUPLE_QUALITY_TEST"] != nil || env["COUPLE_REPAIRDROP_TEST"] != nil
             || env["COUPLE_REMOVE_TEST"] != nil || env["COUPLE_ANCHOR_TEST"] != nil
             || env["COUPLE_ACTIVITY_TEST"] != nil || env["COUPLE_OVERVIEW_TEST"] != nil
-            || env["COUPLE_MONITOR_TEST"] != nil || env["COUPLE_INCLUDE_TEST"] != nil else { return }
+            || env["COUPLE_MONITOR_TEST"] != nil || env["COUPLE_INCLUDE_TEST"] != nil
+            || env["COUPLE_CAND_AUDITION_TEST"] != nil else { return }
         Task { await run(env: env) }
     }
 
@@ -178,10 +179,100 @@ final class DebugDrive {
         if env["COUPLE_MONITOR_TEST"] == "1" {
             await monitorTest(shotDir: env["COUPLE_SHOT_DIR"])
         }
+        if env["COUPLE_CAND_AUDITION_TEST"] == "1" {
+            await candidateAuditionTest(shotDir: env["COUPLE_SHOT_DIR"])
+        }
         if env["COUPLE_AUTOQUIT"] == "1" {
             print("DEBUG-DRIVE: done, quitting")
             NSApp.terminate(nil)
         }
+    }
+
+    // MARK: - Candidate audition (PLAN-COMPACT-MODE Phase 3 step 5)
+
+    /// COUPLE_CAND_AUDITION_TEST=1 with COUPLE_PAIR_DIR: select a couple with an
+    /// alternate candidate, audition that alternate at its best-fit lag in a scratch
+    /// session, and assert: the scratch session's core offset == the candidate lag;
+    /// the shared audition streams from the scratch session; the couple's own pair
+    /// session (id, offset, selection, pin, inclusion inputs) is untouched; ■ tears the
+    /// scratch down and re-attaches the couple's session with monitor + playhead
+    /// restored. Captures `cand-audition.png` mid-audition when COUPLE_SHOT_DIR is set.
+    private func candidateAuditionTest(shotDir: String?) async {
+        guard let model else { return }
+        var pass = 0, fail = 0
+        func check(_ name: String, _ ok: Bool) {
+            if ok { pass += 1 } else { fail += 1 }
+            print("CAND-AUDITION-TEST \(ok ? "PASS" : "FAIL") \(name)")
+        }
+        for _ in 0..<3000 { // let resolve + the queued syncs settle
+            let pending = model.couples.contains { $0.pair.session != nil && $0.pair.isSyncRunning }
+            if !model.resolving && !pending { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        // Prefer a couple with a selected candidate PLUS an alternate (audition the
+        // alternate); else any couple with ≥ 2 candidates (audition the second).
+        let withAlt = model.couples.first { $0.selectedAudioKey != nil && !$0.alternates.isEmpty }
+            ?? model.couples.first { $0.candidates.count >= 2 }
+        guard let couple = withAlt else {
+            print("CAND-AUDITION-TEST: SKIPPED (no couple with an alternate candidate)")
+            print("CAND-AUDITION-TEST summary: 0 passed, 0 failed")
+            return
+        }
+        guard let cand = couple.selectedAudioKey != nil ? couple.alternates.first : couple.candidates.dropFirst().first
+        else { return }
+        model.select(couple.id)
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        print(String(format: "CAND-AUDITION-TEST: couple %@ (%@) · auditioning %@ lag %.1f ms · coverage %.2f–%.2f s",
+                     couple.video.name, String(describing: couple.state), cand.audioName, cand.lagMs,
+                     cand.coverage.t0, cand.coverage.t1))
+
+        // Main pair session BEFORE.
+        let pairSessionID = couple.pair.session?.id
+        let pairOffset = couple.pair.offsetMs
+        let coreOffset = (try? couple.pair.session?.state())?.offsetMs
+        let selKey = couple.selectedAudioKey, pinned = couple.pinned
+        let explicit = couple.explicit, included = couple.included
+        let modeBefore = model.audition.monitorMode
+        model.audition.seek(to: min(5, couple.video.durationS / 3))
+        let playheadBefore = model.audition.playheadT
+
+        model.auditionCandidate(couple, cand)
+        guard let a = model.candidateAudition else {
+            check("scratch audition opened", false)
+            print("CAND-AUDITION-TEST summary: \(pass) passed, \(fail) failed")
+            return
+        }
+        check("scratch audition opened for the candidate", a.candidate.audioKey == cand.audioKey)
+        let scratchOffset = (try? a.session.state())?.offsetMs
+        check(String(format: "scratch offset == candidate lag (%.3f vs %.3f ms)", scratchOffset ?? .nan, cand.lagMs),
+              scratchOffset.map { abs($0 - cand.lagMs) < 1e-6 } ?? false)
+        check("scratch session is not the pair session", a.session.id != pairSessionID)
+        check("audition streams from the scratch session", model.audition.attachedSessionID == a.session.id)
+        check("monitor is Overlay while auditioning", model.audition.monitorMode == .overlay)
+        try? await Task.sleep(nanoseconds: 1_500_000_000) // let it play + render the strip
+        if let dir = shotDir {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            capture(to: "\(dir)/cand-audition.png")
+            print("CAND-AUDITION-TEST: screenshot \(dir)/cand-audition.png")
+        }
+        check("pair session untouched (id, offset, core offset)",
+              couple.pair.session?.id == pairSessionID && couple.pair.offsetMs == pairOffset
+                  && (try? couple.pair.session?.state())?.offsetMs == coreOffset)
+        check("selection / pin / inclusion untouched",
+              couple.selectedAudioKey == selKey && couple.pinned == pinned
+                  && couple.explicit == explicit && couple.included == included)
+
+        model.stopCandidateAudition()
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        check("teardown: no candidate audition", model.candidateAudition == nil)
+        check("teardown: audition back on the pair session", model.audition.attachedSessionID == pairSessionID)
+        check("teardown: monitor mode restored", model.audition.monitorMode == modeBefore)
+        check("teardown: playhead restored", abs(model.audition.playheadT - playheadBefore) < 1e-6)
+        check("teardown: not playing", !model.audition.isPlaying)
+        check("pair session still untouched after stop",
+              couple.pair.session?.id == pairSessionID && couple.pair.offsetMs == pairOffset
+                  && couple.selectedAudioKey == selKey && couple.pinned == pinned)
+        print("CAND-AUDITION-TEST summary: \(pass) passed, \(fail) failed")
     }
 
     // MARK: - A/B monitor (UX-DECISIONS 2026-11-03): the 4-way picker + a/b keys

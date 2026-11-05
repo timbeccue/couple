@@ -95,7 +95,9 @@ final class AuditionController {
     /// `playheadT` from the render thread so the bar tracks the pointer.
     var isScrubbing = false
 
-    @ObservationIgnored private var session: SessionHandle?
+    @ObservationIgnored private var session: SessionHandle? {
+        didSet { if attachedSessionID != session?.id { attachedSessionID = session?.id } }
+    }
     @ObservationIgnored private var stream: AuditionHandle?
     @ObservationIgnored private var audioEngine: AVAudioEngine?
     @ObservationIgnored private var sourceNode: AVAudioSourceNode?
@@ -104,7 +106,7 @@ final class AuditionController {
     @ObservationIgnored private var ticksSinceSkewCheck = 0
     @ObservationIgnored private var videoDuration: Double = 0
 
-    var isAttached: Bool { session != nil }
+    var isAttached: Bool { attachedSessionID != nil }
 
     /// Attach to a couple (§5.3 detach/attach/swap): teardown closes any open
     /// audition handle (exactly one open at a time), swaps the AVPlayer item, and
@@ -126,6 +128,31 @@ final class AuditionController {
         // the visible playhead is the authoritative start for the first play.
         playheadT = 0
         player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .positiveInfinity)
+    }
+
+    /// The core session the audition streams from (nil = video-only / detached) —
+    /// an OBSERVED mirror of `session` so transport controls enable with it, and the
+    /// identity the candidate-audition harness asserts (PLAN-COMPACT-MODE Phase 3).
+    private(set) var attachedSessionID: UInt64?
+
+    /// Swap ONLY the audio session (PLAN-COMPACT-MODE Phase 3 candidate audition):
+    /// closes the open stream + audio engine and points the controller at `newSession`,
+    /// keeping the AVPlayer item, the playhead and the lane gains — the video does not
+    /// reload, so auditioning a candidate (scratch session over the same camera) and
+    /// returning to the couple's own session are seamless. Playback stops; the caller
+    /// decides whether to resume. Exactly one stream stays open at a time (§5.3).
+    func attach(session newSession: SessionHandle?) {
+        let t = playheadT
+        pause()
+        if let engine = audioEngine { engine.stop() }
+        audioEngine = nil
+        sourceNode = nil
+        stream?.close()
+        stream = nil
+        session = newSession
+        focusedAnchor = nil
+        playheadT = t
+        mailbox.store(t)
     }
 
     func teardown() {

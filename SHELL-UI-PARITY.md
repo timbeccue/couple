@@ -99,9 +99,37 @@ is the file the plan creates it in.
   heard last, camera first); `b` restores the both-mode used last. The
   decision + memory come from core `policy::monitor` (CoupleKit
   MonitorPolicy / kit Policies.monitorPlan); shells store and present.
-  [AuditionController.swift, EditorComponents.swift, InputRouter.swift]
-- Resolve banner when unresolved/alternates: candidate list with evidence (z),
-  re-pick = manual pin via forced-verdict policy. [CenterColumn.swift §V2.6]
+  [AuditionController.swift, EditorComponents.swift MonitorPicker, InputRouter.swift]
+- Monitor picker `compact` presentation variant (D10; mac-only until Phase 6,
+  wired into the compact arrangement in Phase 4): Camera · Synced · External,
+  Synced = Overlay, a remembered Pan L/R shows as Synced; selections still go
+  through `selectMonitor` (core policy::monitor), `a`/`b` unchanged.
+  [EditorComponents.swift MonitorPicker(compact:)]
+- Two-lane WAVEFORM SEEK STRIP under the video, between the playhead time and
+  the clip length (mac-only until Phase 6): camera lane (teal) over the clip,
+  external lane (amber) placed in video time by the pair's mapping (or the
+  selected candidate's lag) and drawn only inside its coverage, faint baseline
+  elsewhere; playhead; click/drag seeks (scrub, never snap); bands from
+  `TrackHandle.band` at ~2 px/column. [PairStrip.swift, EditorComponents.swift
+  VideoHero]
+- Resolve banner when unresolved/alternates: candidate list with evidence (z);
+  per candidate "▶" = AUDITION AT BEST FIT (scratch core session: row camera +
+  that audio, offset = the candidate lag, monitor Overlay; nothing pinned or
+  re-synced; the strip's amber lane redraws with that candidate's coverage;
+  readout "▶ <file> at best fit · offset <s> · fit <ms>" under the player),
+  "■" / another row / "use" / closing the banner ends it and restores the
+  couple's own audio, monitor and playhead; "use" = manual pin + re-sync via
+  forced-verdict policy (⌘Z undoes); the current source reads "✓ current".
+  [CenterColumn.swift ResolveBanner + PreviewStatusLine, AppModel.swift
+  auditionCandidate/stopCandidateAudition, AuditionController.swift
+  attach(session:); mac-only until Phase 6]
+- After a manual pick (📌 with an audio): "Change…" in the title line and
+  "Audio chosen by you · Undo · Compare others" under the player — Undo =
+  the repair's ⌘Z inverse (RepairSnapshot; couple returns to To fix), shown
+  for picks made this run; Compare others / Change… reopen the resolve banner
+  INLINE under the player with the current candidate marked and "Done" to
+  close (no popover). [CenterColumn.swift titleBar + PreviewStatusLine,
+  AppModel.swift undoManualPick; mac-only until Phase 6]
 - Waveform: ONE zoomable dual-lane strip (no separate minimap) owning anchor
   pins + playhead; Fit restores union; overlap chip; + anchor / lock-zoom /
   loupe-layout toolbar. [WaveformStage.swift OverviewStrip]
