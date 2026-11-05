@@ -1,0 +1,786 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Couple — compact mode prototypes</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --window:#131417; --panel:#1b1c20; --canvas:#0f1012; --stroke:rgba(255,255,255,.07);
+  --chip:rgba(255,255,255,.06); --chip2:rgba(255,255,255,.10);
+  --camera:#4fd9c4; --external:#f0b35e;
+  --t1:rgba(255,255,255,.92); --t2:rgba(255,255,255,.55); --t3:rgba(255,255,255,.32);
+  --accent:#5c9efa; --good:#47cc94; --quest:#f76669; --none:rgba(255,255,255,.28);
+  --warn:#f2b840;
+  --mono:"SF Mono",ui-monospace,Menlo,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:#08090b;color:var(--t1);font:13px/1.35 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent)}
+.page{padding:28px 32px 60px;max-width:1460px;margin:0 auto}
+.page h1{font-size:15px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;margin:0 0 6px}
+.page .lede{color:var(--t2);max-width:820px;margin:0 0 22px}
+.page .lede b{color:var(--t1);font-weight:600}
+.protos{display:flex;gap:40px;align-items:flex-start;flex-wrap:wrap}
+.proto{display:flex;flex-direction:column;gap:12px}
+.proto h2{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--t2);margin:0;font-weight:600}
+.proto h2 span{color:var(--t3);letter-spacing:0;text-transform:none;font-weight:400;margin-left:8px}
+.proto p.note{color:var(--t2);max-width:360px;margin:0;font-size:12px}
+.states{display:flex;gap:4px;flex-wrap:wrap}
+.states button{background:var(--chip);border:1px solid var(--stroke);color:var(--t2);font:11px var(--sans);padding:4px 9px;border-radius:5px;cursor:pointer}
+.states button.on{background:var(--chip2);color:var(--t1);border-color:rgba(255,255,255,.14)}
+
+/* ---- mac window chrome ---- */
+.win{background:var(--window);border:1px solid rgba(255,255,255,.09);border-radius:11px;box-shadow:0 30px 70px rgba(0,0,0,.6),0 0 0 .5px rgba(0,0,0,.8);overflow:hidden;display:flex;flex-direction:column;position:relative}
+.titlebar{height:36px;display:flex;align-items:center;padding:0 12px;gap:8px;flex:none;-webkit-user-select:none;user-select:none}
+.lights{display:flex;gap:7px;margin-right:6px}
+.lights i{width:11px;height:11px;border-radius:50%;background:#3a3b40;border:.5px solid rgba(0,0,0,.4)}
+.lights i:nth-child(1){background:#fe5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+.titlebar .mark{font-weight:700;letter-spacing:.2em;font-size:11px;color:var(--t2)}
+.titlebar .mark b{color:var(--t1)}
+.titlebar .grow{flex:1}
+.iconbtn{background:transparent;border:0;color:var(--t2);font:12px var(--sans);padding:3px 6px;border-radius:5px;cursor:pointer}
+.iconbtn:hover{background:var(--chip);color:var(--t1)}
+.iconbtn.lab{font-size:11px}
+.body{flex:1;display:flex;flex-direction:column;min-height:0}
+.scroll{flex:1;overflow:auto;min-height:0}
+.scroll::-webkit-scrollbar{width:8px}.scroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:4px}
+
+/* ---- shared bits ---- */
+.sec{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--t3);font-weight:600;display:flex;align-items:center;gap:6px}
+.sec .n{color:var(--t3);letter-spacing:0;font-family:var(--mono);font-weight:400}
+.sec hr{flex:1;border:0;border-top:1px solid var(--stroke);margin:0}
+.sec.dim{opacity:.55}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;display:inline-block}
+.dot.good{background:var(--good)}.dot.questionable{background:var(--quest)}.dot.none{border:1.5px solid var(--none);background:transparent;width:7px;height:7px}
+.src{width:6px;height:6px;border-radius:50%;flex:none;display:inline-block;margin-right:5px}
+.src.cam{background:var(--camera)}.src.ext{background:var(--external)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.t2{color:var(--t2)}.t3{color:var(--t3)}
+.cb{width:14px;height:14px;border-radius:4px;border:1px solid rgba(255,255,255,.22);background:transparent;flex:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.cb.on{background:var(--accent);border-color:var(--accent)}
+.cb.on::after{content:"";width:4px;height:7px;border:solid #fff;border-width:0 2px 2px 0;transform:translateY(-1px) rotate(45deg)}
+.cb.dis{opacity:.3;cursor:default}
+.btn{background:var(--chip);border:1px solid var(--stroke);color:var(--t1);font:12px var(--sans);padding:5px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--chip2)}
+.btn.primary{background:var(--accent);border-color:transparent;color:#fff;font-weight:600}
+.btn.primary:disabled{background:rgba(92,158,250,.28);color:rgba(255,255,255,.45);cursor:default}
+.btn.big{padding:9px 12px;font-size:13px;width:100%;border-radius:8px}
+.btn.quiet{background:transparent;border-color:transparent;color:var(--t2)}
+.btn.quiet:hover{color:var(--t1);background:var(--chip)}
+.seg{display:inline-flex;background:var(--canvas);border:1px solid var(--stroke);border-radius:6px;padding:2px;gap:1px}
+.seg span{padding:2px 8px;border-radius:4px;font-size:11px;color:var(--t2);cursor:pointer}
+.seg span.on{background:var(--chip2);color:var(--t1)}
+.seg.mini span{padding:1px 7px;font-size:10.5px}
+.thumb{background:#000;border-radius:3px;overflow:hidden;flex:none;position:relative}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.thumb.empty{background:repeating-linear-gradient(135deg,#1a1b1f 0 4px,#121316 4px 8px)}
+.cover{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(0,0,0,.5)}
+.cover i{position:absolute;top:0;bottom:0;background:var(--external)}
+.activity{height:22px;border-top:1px solid var(--stroke);display:flex;align-items:center;gap:8px;padding:0 12px;font-size:10.5px;color:var(--t2);flex:none;background:var(--panel)}
+.activity .bar{flex:1;height:3px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden}
+.activity .bar i{display:block;height:100%;background:var(--accent);width:40%;border-radius:2px}
+.activity .bar.indet i{width:30%;animation:slide 1.2s linear infinite}
+@keyframes slide{from{transform:translateX(-120%)}to{transform:translateX(400%)}}
+.activity.hidden{display:none}
+.word{font-size:10px;padding:1px 6px;border-radius:9px;background:rgba(247,102,105,.14);color:var(--quest);font-weight:600;letter-spacing:.02em}
+.word.none{background:rgba(255,255,255,.07);color:var(--t2)}
+.pin{color:var(--t3);font-size:10px}
+.hint{font-size:11px;color:var(--t3)}
+.hint kbd{font-family:var(--mono);color:var(--t2);background:var(--chip);padding:0 4px;border-radius:3px;font-size:10px}
+.drop{margin:12px;flex:1;border:1.5px dashed rgba(255,255,255,.14);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--t2);text-align:center;padding:20px}
+.drop .big{font-size:14px;color:var(--t1);font-weight:500}
+.drop .sub{font-size:11.5px;max-width:230px;color:var(--t3)}
+.drop .glyph{width:40px;height:40px;border-radius:12px;background:var(--chip);display:flex;align-items:center;justify-content:center;color:var(--t2);font-size:18px;margin-bottom:4px}
+
+/* ---- player (shared, used in A & B) ---- */
+.player{background:var(--canvas);border-radius:6px;overflow:hidden}
+.player .frame{aspect-ratio:16/9;background:#000;position:relative}
+.player .frame img{width:100%;height:100%;object-fit:cover;display:block;opacity:.92}
+.player .play{position:absolute;inset:0;margin:auto;width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.2);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;cursor:pointer}
+.player .transport{display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:11px}
+.player .seek{flex:1;height:3px;background:rgba(255,255,255,.1);border-radius:2px;position:relative}
+.player .seek i{position:absolute;left:0;top:0;bottom:0;width:22%;background:var(--t2);border-radius:2px}
+.player .seek b{position:absolute;left:22%;top:-4px;width:1px;height:11px;background:#fff}
+.ab{display:flex;gap:4px;padding:0 8px 8px}
+.ab span{flex:1;text-align:center;font-size:10.5px;padding:3px 0;border-radius:5px;background:var(--chip);color:var(--t2);cursor:pointer}
+.ab span.on{background:var(--chip2);color:var(--t1)}
+.ab span.cam.on{color:var(--camera)}.ab span.ext.on{color:var(--external)}
+.readout{display:flex;justify-content:space-between;gap:8px;padding:0 10px 8px;font-size:10.5px;color:var(--t3);white-space:nowrap}
+.readout span{overflow:hidden;text-overflow:ellipsis}
+
+/* ---- candidate picker ---- */
+.pick{background:rgba(247,102,105,.06);border:1px solid rgba(247,102,105,.25);border-radius:7px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.pick .ttl{font-size:11.5px;font-weight:600}
+.pick .sub{font-size:10.5px;color:var(--t2);margin-top:-3px}
+.cand{display:flex;align-items:center;gap:8px;padding:5px 6px 5px 2px;border-radius:5px;cursor:pointer;font-size:11.5px}
+.cand:hover{background:var(--chip)}
+.cand .name{flex:1;display:flex;align-items:center;min-width:0}
+.cand .name span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cand .bar{width:44px;height:4px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden}
+.cand .bar i{display:block;height:100%;background:var(--good)}
+.cand.weak .bar i{background:var(--t3)}
+.cand .listen{font-size:10px;color:var(--t3);border:1px solid var(--stroke);border-radius:4px;padding:1px 5px}
+.cand .listen:hover{color:var(--t1)}
+.cand .use{font-size:10.5px;color:var(--accent)}
+
+/* =========================================================
+   A — LIST  (320 wide)
+   ========================================================= */
+.A{width:320px;height:600px}
+.A .head{padding:4px 14px 10px;display:flex;flex-direction:column;gap:2px;flex:none}
+.A .head .sess{font-weight:600;font-size:13px}
+.A .head .meta{font-size:11px;color:var(--t2);display:flex;gap:6px;align-items:center}
+.A .head .meta .add{margin-left:auto}
+.A .list{padding:2px 8px 8px}
+.A .sec{padding:10px 6px 4px}
+.A .row{display:grid;grid-template-columns:44px 1fr auto;gap:0 9px;align-items:center;padding:6px 6px;border-radius:7px;cursor:pointer;position:relative}
+.A .row:hover{background:var(--chip)}
+.A .row.sel{background:rgba(92,158,250,.1);outline:1px solid rgba(92,158,250,.35)}
+.A .row .thumb{width:44px;height:26px}
+.A .row .names{min-width:0;display:flex;flex-direction:column;gap:1px}
+.A .row .v{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.A .row .a{font-size:11px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:4px}
+.A .row .right{display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+.A .row .dur{font-size:10px;color:var(--t3)}
+.A .expand{margin:4px 6px 8px;display:flex;flex-direction:column;gap:8px}
+.A .export{border-top:1px solid var(--stroke);padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px;flex:none;background:var(--panel)}
+.A .export .line{display:flex;align-items:center;gap:8px;font-size:11px}
+.A .export .line .k{color:var(--t3);width:34px;flex:none;font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+.A .export .line .path{flex:1;font-family:var(--mono);font-size:10.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.A .export .line .chg{font-size:10.5px;color:var(--accent);cursor:pointer}
+.A .export .line label{display:flex;align-items:center;gap:6px;color:var(--t2);font-size:11px}
+
+/* =========================================================
+   B — CARDS  (360 wide)
+   ========================================================= */
+.B{width:360px;height:600px}
+.B .head{padding:0 14px 8px;display:flex;align-items:center;gap:8px;flex:none;font-size:11.5px;color:var(--t2)}
+.B .head b{color:var(--t1);font-weight:600}
+.B .cards{padding:6px 12px 12px;display:flex;flex-direction:column;gap:10px}
+.B .card{background:var(--panel);border:1px solid var(--stroke);border-radius:9px;overflow:hidden}
+.B .card.sel{border-color:rgba(92,158,250,.5)}
+.B .card .top{display:flex;gap:10px;padding:9px 10px;align-items:center;cursor:pointer}
+.B .card .thumb{width:64px;height:38px;border-radius:4px}
+.B .card .names{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.B .card .v{font-size:12.5px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.B .card .a{font-size:11px;color:var(--t2);display:flex;align-items:center;gap:4px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.B .card .state{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--t3)}
+.B .card .actions{display:flex;gap:6px;padding:0 10px 10px;align-items:center}
+.B .card .actions .sp{flex:1}
+.B .card .approve{font-size:11.5px}
+.B .card .approve.on{color:var(--good);border-color:rgba(71,204,148,.4);background:rgba(71,204,148,.08)}
+.B .card .player{margin:0 10px 10px}
+.B .card .pick{margin:0 10px 10px}
+.B .foot{border-top:1px solid var(--stroke);padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px;background:var(--panel);flex:none}
+.B .foot .opts{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--t2)}
+.B .foot .opts .path{font-family:var(--mono);font-size:10.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.B .foot .sum{display:flex;justify-content:space-between;font-size:11px;color:var(--t2)}
+
+/* =========================================================
+   C — DROP & GO  (300 wide)
+   ========================================================= */
+.C{width:300px;height:470px}
+.C .summary{padding:8px 16px 12px;display:flex;flex-direction:column;gap:10px;flex:none}
+.C .summary .big{font-size:22px;font-weight:600;letter-spacing:-.01em;line-height:1.1}
+.C .summary .big small{font-size:12px;font-weight:400;color:var(--t2);display:block;margin-top:3px;letter-spacing:0}
+.C .counts{display:flex;gap:14px;font-size:11.5px}
+.C .counts span{display:flex;align-items:center;gap:5px;color:var(--t2)}
+.C .counts b{color:var(--t1);font-weight:600;font-family:var(--mono)}
+.C .pick{margin:0 14px 10px}
+.C .disc{padding:0 14px;display:flex;flex-direction:column}
+.C .disc .tog{font-size:11px;color:var(--t2);display:flex;align-items:center;gap:6px;cursor:pointer;padding:4px 2px}
+.C .disc .tog i{display:inline-block;width:0;height:0;border:4px solid transparent;border-left:5px solid var(--t3);border-right:0;transition:transform .15s}
+.C .disc.open .tog i{transform:rotate(90deg)}
+.C .mini{display:none;flex-direction:column;gap:2px;padding:2px 0 8px}
+.C .disc.open .mini{display:flex}
+.C .mini .r{display:flex;align-items:center;gap:8px;font-size:11px;padding:4px 4px;border-radius:5px}
+.C .mini .r:hover{background:var(--chip)}
+.C .mini .r .v{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.C .mini .r .a{color:var(--t2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.C .mini .r .l{font-size:10px;color:var(--t3);border:1px solid var(--stroke);border-radius:4px;padding:0 5px;cursor:pointer}
+.C .foot{margin-top:auto;padding:10px 14px 12px;display:flex;flex-direction:column;gap:8px;flex:none;border-top:1px solid var(--stroke);background:var(--panel)}
+.C .foot .opts{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--t2)}
+.C .foot .opts .path{font-family:var(--mono);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px}
+.C .done{padding:30px 16px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center}
+.C .done .ok{width:44px;height:44px;border-radius:50%;background:rgba(71,204,148,.14);color:var(--good);display:flex;align-items:center;justify-content:center;font-size:20px}
+.C .done .big{font-size:16px;font-weight:600}
+.C .done .sub{font-size:11.5px;color:var(--t2)}
+.C .done .links{display:flex;gap:8px}
+
+/* B rework: implicit approval */
+.B .cards .sec{padding:4px 2px 0}
+.B .card.skipped{opacity:.45}
+.B .card .skip{opacity:0;transition:opacity .12s}
+.B .card:hover .skip{opacity:1}
+.B .card .exported{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--good)}
+.B .card .exported .when{color:var(--t3)}
+.B .card .again{font-size:11px;color:var(--t3);cursor:pointer}
+.B .card .again:hover{color:var(--t1)}
+.B .foot .excl{font-size:11px;color:var(--t2);display:flex;gap:7px;align-items:center;white-space:nowrap;overflow:hidden}
+.B .foot .excl>span{display:inline-flex;gap:5px;align-items:center}
+.B .foot .excl .dot{width:7px;height:7px}
+.B .foot .row2{display:flex;gap:8px;align-items:center}
+.B .foot .row2 .btn.big{flex:1}
+/* F: full-window queue rail under the same rule */
+.F{width:304px;height:600px}
+.F .row .right{gap:0}
+.F .exp{font-size:10px;color:var(--good)}
+.F .skipped{opacity:.45}
+.F .skipword{font-size:10px;color:var(--t3)}
+.F .foot{border-top:1px solid var(--stroke);padding:8px 12px;font-size:10.5px;color:var(--t3);background:var(--panel);flex:none}
+
+.pick.compact{padding:6px 10px;gap:3px}
+.pick.compact .cand{padding:3px 6px 3px 2px}
+/* =========================================================
+   D — FIXED PREVIEW + LIST  (360 wide)
+   ========================================================= */
+.D{width:360px;height:700px}
+.D .preview{flex:none;padding:0 12px 10px;display:flex;flex-direction:column;gap:8px}
+.D .preview .player{border:1px solid var(--stroke)}
+.D .preview .ptitle{display:flex;align-items:baseline;gap:8px;font-size:12px;min-width:0}
+.D .preview .ptitle .v{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.D .preview .ptitle .a{color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.D .preview .ptitle .word{margin-left:2px}
+.D .preview .empty{aspect-ratio:16/9;border:1.5px dashed rgba(255,255,255,.14);border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--t2);text-align:center;padding:16px}
+.D .preview .empty .big{color:var(--t1);font-weight:500;font-size:13px}
+.D .preview .empty .sub{font-size:11px;color:var(--t3);max-width:240px}
+.D .preview .nomatch{padding:8px 10px;background:var(--canvas);border-radius:6px;font-size:11.5px;color:var(--t2);display:flex;align-items:center;gap:8px}
+.D .preview .nomatch .sp{flex:1}
+.D .pick{background:var(--canvas);border-color:var(--stroke)}
+.D .pick .ttl{color:var(--t1)}
+.D .list{padding:0 8px 8px}
+.D .sec{padding:8px 6px 4px}
+.D .row{display:grid;grid-template-columns:52px 1fr auto;gap:0 10px;align-items:center;padding:7px 8px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.D .row:hover{background:var(--chip)}
+.D .row.sel{background:rgba(92,158,250,.1);border-color:rgba(92,158,250,.4)}
+.D .row .thumb{width:52px;height:30px;border-radius:4px}
+.D .row .names{min-width:0;display:flex;flex-direction:column;gap:2px}
+.D .row .v{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.D .row .v .dur{font-weight:400;color:var(--t3);font-size:10.5px;margin-left:4px}
+.D .row .a{font-size:11px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.D .row .right{display:flex;align-items:center;gap:8px}
+.D .row .exp{font-size:10px;color:var(--good)}
+.D .export{border-top:1px solid var(--stroke);padding:10px 12px 12px;display:flex;flex-direction:column;gap:7px;flex:none;background:var(--panel)}
+.D .export .line{display:flex;align-items:center;gap:8px;font-size:11px}
+.D .export .line .k{color:var(--t3);width:30px;flex:none;font-size:10px;letter-spacing:.08em;text-transform:uppercase}
+.D .export .line .path{flex:1;font-family:var(--mono);font-size:10.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.D .export .line .chg{font-size:10.5px;color:var(--accent);cursor:pointer}
+.D .export .line label{display:flex;align-items:center;gap:6px;color:var(--t2);font-size:11px;cursor:pointer}
+.D .export .btns{display:flex;gap:8px;margin-top:2px}
+.D .export .btns .btn{flex:1;padding:8px 10px;border-radius:8px;font-size:12.5px}
+.D .export .btns .btn.primary{flex:1.4}
+
+/* D round 4 */
+.D .cover{display:none}
+.D .preview.grow{flex:1;display:flex}
+.D .preview.grow .empty{flex:1;aspect-ratio:auto}
+.D .wave{flex:1;height:38px;display:block}
+.D .transport{padding:6px 8px 4px}
+.D .ptitle .chg{font-size:10.5px;color:var(--accent);cursor:pointer;margin-left:auto;white-space:nowrap}
+.D .picked{display:flex;align-items:center;gap:8px;padding:0 10px 8px;font-size:10.5px;color:var(--t2)}
+.D .picked a{color:var(--accent);cursor:pointer}
+.D .picked .sp{flex:1}
+.D .pickD{background:var(--canvas);border:1px solid var(--stroke);border-radius:7px;padding:6px 8px;display:flex;flex-direction:column;gap:2px}
+.D .pickD .ttl{font-size:11.5px;font-weight:600;padding:0 2px 3px}
+.D .pickD .cand{padding:4px 4px}
+.D .pickD .cand.playing{background:rgba(92,158,250,.1)}
+.D .pickD .cand .listen{width:20px;text-align:center;padding:1px 0}
+.D .pickD .cand.playing .listen{color:var(--accent);border-color:rgba(92,158,250,.5)}
+.D .pickD .cand .cur{font-size:10px;color:var(--good)}
+.D .readout .aud{color:var(--accent)}
+
+/* D round 5: full layout + animated toggle */
+.D{transition:none}
+.D.full{width:1180px}
+.D .panel{flex:none}
+.D .panel.ls{flex:1;min-height:0;display:flex;flex-direction:column}
+.D .panel.ls .scroll{flex:1}
+.D .panel.hd{padding:0 14px 8px;display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--t2)}
+.D .panel.hd b{color:var(--t1)}
+.D .body.full{flex-direction:row;align-items:stretch}
+.D .body.full .col{display:flex;flex-direction:column;min-height:0;min-width:0}
+.D .body.full .col.left{width:320px;flex:none;border-right:1px solid var(--stroke)}
+.D .body.full .col.center{flex:1;background:var(--canvas)}
+.D .body.full .col.right{width:280px;flex:none;border-left:1px solid var(--stroke)}
+.D .body.full .panel.pv{padding:10px 16px 8px}
+.D .body.full .panel.pv .player{background:var(--window)}
+.D .body.full .panel.ex{border-top:0;background:transparent;padding-top:6px}
+.D .body.full .panel.hd{padding-top:4px}
+.D .extra{opacity:1;transition:opacity .3s ease .1s}
+.D.animating .extra{opacity:0;transition:none}
+.D .center-extra{flex:1;min-height:0;display:flex;flex-direction:column;padding:0 16px 12px;gap:8px}
+.D .center-extra .ov{flex:1;min-height:60px;background:var(--window);border:1px solid var(--stroke);border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.D .center-extra .ov .lab{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--t3)}
+.D .center-extra .ov .wave{flex:1;height:auto!important}
+.D .center-extra .bar{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--t3)}
+.D .center-extra .bar .sp{flex:1}
+.D .right-extra{padding:4px 12px;display:flex;flex-direction:column;gap:2px}
+.D .right-extra .sec{padding:4px 2px 6px}
+.D .right-extra .file{display:flex;align-items:center;gap:6px;font-size:11px;padding:3px 4px;border-radius:4px;color:var(--t2)}
+.D .right-extra .file .mono{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t1);font-size:10.5px}
+.D .right-extra .file .r{color:var(--t3);font-size:10px}
+.D.animating{transition:width .5s cubic-bezier(.2,.75,.2,1)}
+.D.animating .panel{position:absolute;overflow:hidden;z-index:2;transition:left .5s cubic-bezier(.2,.75,.2,1), top .5s cubic-bezier(.2,.75,.2,1), width .5s cubic-bezier(.2,.75,.2,1), height .5s cubic-bezier(.2,.75,.2,1)}
+.D.animating .panel.pv{background:var(--window)}
+.D.animating .body.full .col{opacity:0}
+.D .body.full .col{transition:opacity .3s}
+.D .activity{position:relative;z-index:3}
+
+.legend{margin-top:34px;border-top:1px solid var(--stroke);padding-top:16px;color:var(--t2);font-size:12px;max-width:900px}
+.legend h3{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--t3);margin:0 0 8px}
+.legend ul{margin:0;padding-left:18px}
+.legend li{margin:3px 0}
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Couple · compact mode prototypes</h1>
+  <p class="lede">Three directions for a window about the width of one sidebar. Same engine, same rows
+    (the bach session from <code>mockups-v2</code>: three good couples, one that needs a pick, one with no match).
+    Each one keeps <b>import → auto-sync → review → export</b> and drops the loupes, waveform stage and nudge tools;
+    those stay one click away in the full window. Use the state buttons under each to step through the session.</p>
+
+  <div class="protos" id="protos"></div>
+
+  <div class="legend">
+    <h3>What differs between the three</h3>
+    <ul>
+      <li><b>D · Fixed preview + list (round 3)</b> — the selected couple's player (or its audio picker) sits in a fixed block at the top; the list below only scrolls rows. No status dots anywhere: good rows are just a name and a checkbox, flagged rows say “pick one” or “no audio”. Export is the A panel (into / as / keep camera audio) with “This one” and “Export N files” side by side; the checkbox is what counts toward N.</li>
+      <li><b>A · List</b> — the queue rail on its own. Good couples are <i>pre-checked</i> for export; selecting a row opens a small player inline so you can listen before exporting, but nothing requires it. Closest to the current app; least to learn.</li>
+      <li><b>B · Cards (reworked 2026-11-04)</b> — implicit approval. A green verdict is the gate: the couple is in “Export all” unless skipped. Each card has Listen, Export (this one) and a hover Skip; exported couples carry a ✓ and time, and “Export all” counts only what is left. Flagged couples (pick one / no audio) are excluded and the footer says so.</li>
+      <li><b>Full window · queue rail</b> — the same rule applied to the existing window: Ready / To fix, no QUEUED FOR EXPORT section, no checkboxes, no Approve button or <kbd>v</kbd> key.</li>
+      <li><b>C · Drop &amp; go</b> — a drop target that turns into a one-line summary and an Export button. The list is behind a disclosure; the only thing that interrupts you is a couple that needs a pick. Smallest window, fewest decisions.</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+// ---------- data (from design/mockups-v2/session-data.json, bach session) ----------
+const ASSETS = '../mockups-v2/assets/';
+const ROWS = [
+  {id:'169', video:'bach 169.mov', dur:'2:10', audio:'Gigue Recording.WAV', verdict:'good', thumb:'169', cov:[0.015,0.985], offset:'−1.96 s', fit:'fit 5.0 ms'},
+  {id:'171', video:'bach 171.mov', dur:'4:38', audio:'Prelude Recording.WAV', verdict:'good', thumb:'171', cov:[0,1], offset:'+1.28 s', fit:'fit 4.6 ms'},
+  {id:'172', video:'bach 172.mov', dur:'4:15', audio:'ZOOM0033.WAV', verdict:'good', thumb:'172', cov:[0,1], offset:'+1.16 s', fit:'fit 4.9 ms'},
+  {id:'170', video:'bach 170.mov', dur:'1:57', audio:null, verdict:'questionable', word:'pick one', thumb:'170',
+    candidates:[
+      {name:'ZOOM0031.WAV', s:1.0, cov:[0,1], offset:'+0.41 s', fit:'fit 4.8 ms'},
+      {name:'ZOOM0027.WAV', s:0.78, cov:[0.31,1], offset:'+0.38 s', fit:'fit 5.1 ms'},
+      {name:'Gigue Recording.WAV', s:0.42, cov:[0,0.58], offset:'−12.6 s', fit:'fit 41 ms', weak:true},
+    ]},
+  {id:'nm', video:'bach 173.mov', dur:'0:48', audio:null, verdict:'none', word:'no audio', thumb:null},
+];
+const EXPORT_PATH = '~/Movies/bach session';
+const ROW170_ORIG = JSON.parse(JSON.stringify(ROWS[3]));
+
+function thumb(r, cls){
+  const inner = r.thumb ? `<img src="${ASSETS}thumb-bach-${r.thumb}.jpg" alt="">` : '';
+  const cov = r.cov ? `<div class="cover"><i style="left:${r.cov[0]*100}%;width:${(r.cov[1]-r.cov[0])*100}%"></i></div>` : '';
+  return `<div class="thumb ${cls||''} ${r.thumb?'':'empty'}">${inner}${cov}</div>`;
+}
+function player(r, mode){
+  const img = r.thumb ? `<img src="${ASSETS}hero-bach-${r.thumb}.jpg" alt="">` : '';
+  return `<div class="player">
+    <div class="frame">${img}<div class="play">▶</div></div>
+    <div class="transport"><span class="mono">0:28</span><div class="seek"><i></i><b></b></div><span class="mono t3">${r.dur}</span></div>
+    <div class="ab"><span class="cam ${mode==='cam'?'on':''}">Camera</span><span class="${mode==='sync'||!mode?'on':''}">Synced</span><span class="ext ${mode==='ext'?'on':''}">External</span></div>
+    ${r.offset?`<div class="readout"><span>offset ${r.offset}</span><span>${r.fit}</span></div>`:''}
+  </div>`;
+}
+function picker(r, title, compact){
+  return `<div class="pick ${compact?'compact':''}">
+    <div class="ttl">${title||'Choose the audio for this take'}</div>
+    ${compact?'':'<div class="sub">Two recordings match. Listen, then pick one.</div>'}
+    ${r.candidates.map(c=>`<div class="cand ${c.weak?'weak':''}">
+       <div class="name"><span>${c.name}</span></div>
+       <div class="bar"><i style="width:${c.s*100}%"></i></div>
+       <span class="listen">▶</span><span class="use">use</span></div>`).join('')}
+    ${compact?'':'<div class="hint" style="margin-top:2px">Or drag any file from the pool onto this couple.</div>'}
+  </div>`;
+}
+function titlebar(extra){
+  return `<div class="titlebar"><div class="lights"><i></i><i></i><i></i></div>
+    <span class="mark"><b>CO</b>UPLE</span><span class="grow"></span>${extra||''}
+    <button class="iconbtn lab" title="Full window (loupes, waveforms, sync tools)">⤢ Full</button></div>`;
+}
+function activity(state){
+  if(state==='syncing') return `<div class="activity"><span>Syncing bach 172 · 3 of 5</span><div class="bar"><i style="width:58%"></i></div></div>`;
+  if(state==='exporting') return `<div class="activity"><span>Exporting 2 of 3 · bach 171_synced.mov</span><div class="bar"><i style="width:64%"></i></div></div>`;
+  return `<div class="activity hidden"></div>`;
+}
+const STATES = ['empty','syncing','done','pick','exporting','partial','exported'];
+const LABEL = {empty:'Empty', syncing:'Syncing', done:'Synced', pick:'Needs a pick', exporting:'Exporting', partial:'Partly exported', exported:'Exported'};
+
+// ---------- A: LIST ----------
+function renderA(state, sel){
+  const rows = state==='empty' ? [] : ROWS;
+  const good = rows.filter(r=>r.verdict==='good');
+  const fix  = rows.filter(r=>r.verdict!=='good');
+  const pickRow = ROWS[3];
+  const selected = state==='pick' ? pickRow.id : (sel||'169');
+  const checked = state==='exported' ? 0 : good.length;
+  const row = r => {
+    const isSel = r.id===selected && (state==='done'||state==='pick'||state==='exporting');
+    const right = r.verdict==='good'
+      ? `<span class="cb ${state==='exporting'||state==='done'||state==='pick'?'on':''}"></span>`
+      : `<span class="cb dis"></span>`;
+    const a = r.audio ? `<span class="src ext"></span><span>${r.audio}</span>` : `<span class="word ${r.verdict}">${r.word}</span>`;
+    const exp = isSel ? `<div class="expand">${r.verdict==='questionable' ? picker(r) : (r.verdict==='none' ? '' : player(r,'sync'))}</div>` : '';
+    return `<div class="row ${isSel?'sel':''}" data-id="${r.id}">
+      ${thumb(r)}<div class="names"><div class="v">${r.video}</div><div class="a">${a}</div></div>
+      <div class="right"><span class="dot ${r.verdict}"></span>${right}</div>
+    </div>${exp}`;
+  };
+  const body = state==='empty'
+    ? `<div class="drop"><div class="glyph">⤓</div><div class="big">Drop a recording session</div><div class="sub">Video and audio files, or the folder they're in. Matching pairs appear here.</div><button class="btn" style="margin-top:6px">Choose files…</button></div>`
+    : `<div class="head">
+         <div class="sess">bach session</div>
+         <div class="meta"><span>4 video · 7 audio</span><span class="t3">·</span><span>${state==='syncing'?'syncing…':checked+' of '+rows.length+' ready'}</span><button class="btn quiet add">+ Add</button></div>
+       </div>
+       <div class="scroll"><div class="list">
+         <div class="sec">Ready <span class="n">${state==='syncing'?'…':good.length}</span><hr></div>
+         ${good.map(row).join('')}
+         <div class="sec ${fix.length?'':'dim'}">To fix <span class="n">${fix.length}</span><hr></div>
+         ${fix.map(row).join('')}
+       </div></div>`;
+  const exportBtn = state==='exporting' ? `<button class="btn primary big" disabled>Exporting 2 of 3…</button>`
+    : state==='exported' ? `<button class="btn big">Reveal in Finder</button>`
+    : `<button class="btn primary big" ${state==='empty'||state==='syncing'?'disabled':''}>Export ${state==='empty'||state==='syncing'?'':checked+' files'}</button>`;
+  return `${titlebar()}<div class="body">${body}
+    <div class="export">
+      <div class="line"><span class="k">into</span><span class="path">${EXPORT_PATH}</span><span class="chg">Change…</span></div>
+      <div class="line"><span class="k">as</span><div class="seg mini"><span class="on">Auto</span><span>MOV</span><span>MP4</span><span>WAV</span></div></div>
+      <div class="line"><span class="k"></span><label><span class="cb" style="width:12px;height:12px"></span>keep camera audio as a muted track</label></div>
+      ${exportBtn}
+    </div>
+    ${activity(state)}</div>`;
+}
+
+// ---------- B: CARDS (implicit approval) ----------
+// Per-window runtime state: which couples are exported / skipped.
+const Bstore = {exported:new Map(), skipped:new Set()};
+function renderB(state, sel){
+  const rows = state==='empty' ? [] : ROWS;
+  const ex = Bstore.exported, sk = Bstore.skipped;
+  if(state==='exported'){ ['169','171','172'].forEach(id=>ex.has(id)||ex.set(id,'23:14')); }
+  if(state==='partial'){ ex.clear(); ex.set('169','22:51'); }
+  if(state==='done'||state==='pick'||state==='syncing'||state==='empty'){ if(!Bstore.touched) ex.clear(); }
+  const good = rows.filter(r=>r.verdict==='good');
+  const fix  = rows.filter(r=>r.verdict!=='good');
+  const toExport = good.filter(r=>!sk.has(r.id) && !ex.has(r.id));
+  const selected = state==='pick' ? '170' : (sel||'171');
+  const card = r => {
+    const isSel = r.id===selected && state!=='syncing';
+    const skipped = sk.has(r.id);
+    const a = r.audio ? `<span class="src ext"></span>${r.audio}` : `<span class="word ${r.verdict}">${r.word}</span>`;
+    const stateLine = state==='syncing'
+      ? `<span class="t3">${r.id==='172'?'syncing…':r.id==='170'||r.id==='nm'?'waiting':'synced'}</span>`
+      : `<span class="dot ${r.verdict}"></span><span>${r.verdict==='good'?(r.cov&&r.cov[0]>0?'synced · audio covers 0:02–2:08':'synced'):r.verdict==='questionable'?'two recordings match':'no matching audio'}</span>`;
+    let actions = '';
+    if(state!=='syncing'){
+      if(r.verdict==='good'){
+        if(skipped) actions = `<div class="actions"><span class="t3" style="font-size:11px">skipped — not in Export all</span><span class="sp"></span><button class="btn quiet include" data-id="${r.id}">Include</button></div>`;
+        else if(state==='exporting' && r.id==='171') actions = `<div class="actions"><button class="btn quiet">▶ Listen</button><span class="sp"></span><span class="t2" style="font-size:11px">exporting…</span></div>`;
+        else if(ex.has(r.id)) actions = `<div class="actions"><button class="btn quiet">▶ Listen</button><span class="sp"></span><span class="exported">✓ Exported <span class="when">${ex.get(r.id)}</span></span><span class="again export1" data-id="${r.id}" title="Export this couple again">↻</span></div>`;
+        else actions = `<div class="actions"><button class="btn quiet">▶ Listen</button><button class="btn quiet skip" data-id="${r.id}">Skip</button><span class="sp"></span><button class="btn export1" data-id="${r.id}">Export</button></div>`;
+      }
+      else if(r.verdict==='questionable') actions = isSel ? '' : `<div class="actions"><span class="t3" style="font-size:11px">not in Export all until you pick</span><span class="sp"></span><button class="btn">Pick audio…</button></div>`;
+      else actions = `<div class="actions"><span class="t3" style="font-size:11px">Drag an audio file here to pair it.</span><span class="sp"></span></div>`;
+    }
+    const detail = isSel && !skipped ? (r.verdict==='questionable' ? picker(r) : (r.verdict==='good' ? player(r,'sync') : '')) : '';
+    return `<div class="card ${isSel?'sel':''} ${skipped?'skipped':''}" data-id="${r.id}">
+      <div class="top">${thumb(r)}<div class="names"><div class="v">${r.video} <span class="t3 mono" style="font-weight:400;font-size:10.5px">${r.dur}</span></div><div class="a">${a}</div><div class="state">${stateLine}</div></div></div>
+      ${detail}${actions}</div>`;
+  };
+  const secFix = fix.length ? `<div class="sec">To fix <span class="n">${fix.length}</span><hr></div>` : '';
+  const secReady = `<div class="sec">Ready <span class="n">${good.length}</span><hr></div>`;
+  const body = state==='empty'
+    ? `<div class="drop"><div class="glyph">⤓</div><div class="big">Drop a recording session</div><div class="sub">Each video gets a card once its audio is found.</div><button class="btn" style="margin-top:6px">Choose files…</button></div>`
+    : `<div class="head"><b>bach session</b><span>·</span><span>${state==='syncing'?'syncing 3 of 5':'4 video · 7 audio'}</span><span class="grow" style="flex:1"></span><button class="btn quiet">+ Add</button></div>
+       <div class="scroll"><div class="cards">${state==='syncing'?rows.map(card).join(''):secFix+fix.map(card).join('')+secReady+good.map(card).join('')}</div></div>`;
+  const nPick = fix.filter(r=>r.verdict==='questionable').length, nNone = fix.filter(r=>r.verdict==='none').length, nSkip = good.filter(r=>sk.has(r.id)).length, nDone = good.filter(r=>ex.has(r.id)&&!sk.has(r.id)).length;
+  const parts = [];
+  if(nPick) parts.push(`<span><span class="dot questionable"></span>${nPick} to pick</span>`);
+  if(nNone) parts.push(`<span><span class="dot none"></span>${nNone} no audio</span>`);
+  if(nSkip) parts.push(`<span>${nSkip} skipped</span>`);
+  if(nDone) parts.push(`<span class="t3">${nDone} exported</span>`);
+  const excl = state==='empty'||state==='syncing'||!parts.length ? '' : `<div class="excl">${parts.join('<span class="t3">·</span>')}</div>`;
+  let exportBtn;
+  if(state==='exporting') exportBtn = `<button class="btn primary big" disabled>Exporting 2 of 3…</button>`;
+  else if(state==='empty'||state==='syncing') exportBtn = `<button class="btn primary big" disabled>Export all</button>`;
+  else if(!toExport.length) exportBtn = `<div class="row2"><button class="btn big" disabled style="opacity:.5">Nothing left to export</button><button class="btn big" style="flex:0 0 auto">Reveal in Finder</button></div>`;
+  else exportBtn = `<button class="btn primary big exportall">Export all · ${toExport.length} ${toExport.length===1?'file':'files'}</button>`;
+  return `${titlebar()}<div class="body">${body}
+    <div class="foot">
+      <div class="opts"><span class="path">${EXPORT_PATH}</span><span class="t3">·</span><span>Auto</span><button class="btn quiet" style="padding:2px 6px">Options…</button></div>
+      ${excl}
+      ${exportBtn}
+    </div>${activity(state)}</div>`;
+}
+
+// ---------- F: full-window queue rail, same rule ----------
+function renderF(state, sel){
+  const ex = Bstore.exported, sk = Bstore.skipped;
+  const good = ROWS.filter(r=>r.verdict==='good'), fix = ROWS.filter(r=>r.verdict!=='good');
+  const selected = state==='pick' ? '170' : (sel||'171');
+  const row = r => {
+    const a = r.audio ? `<span class="src ext"></span><span>${r.audio}</span>` : `<span class="word ${r.verdict}">${r.word}</span>`;
+    const right = sk.has(r.id) ? `<span class="skipword">skipped</span>` : ex.has(r.id) ? `<span class="exp">✓ ${ex.get(r.id)}</span>` : `<span class="dur">${r.dur}</span>`;
+    return `<div class="row ${r.id===selected?'sel':''} ${sk.has(r.id)?'skipped':''}" data-id="${r.id}">
+      ${thumb(r)}<div class="names"><div class="v">${r.video}</div><div class="a">${a}</div></div>
+      <div class="right"><span class="dot ${r.verdict}"></span>${right}</div></div>`;
+  };
+  const toExport = good.filter(r=>!sk.has(r.id)&&!ex.has(r.id)).length;
+  return `<div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><span class="mark"><b>CO</b>UPLE</span><span class="grow"></span><button class="iconbtn lab">Clear Session…</button></div>
+  <div class="body"><div class="head"><div class="sess">bach session</div><div class="meta"><span>4 video · 7 audio</span><span class="t3">·</span><span>${toExport} to export</span></div></div>
+  <div class="scroll"><div class="list">
+    <div class="sec">To fix <span class="n">${fix.length}</span><hr></div>${fix.map(row).join('')}
+    <div class="sec">Ready <span class="n">${good.length}</span><hr></div>${good.map(row).join('')}
+  </div></div>
+  <div class="foot">No approve step: green rows are in “Export all”. Right-click a row → Skip / Export this one. Pick and no-audio rows stay out until fixed.</div>
+  ${activity(state)}</div>`;
+}
+
+// ---------- C: DROP & GO ----------
+function renderC(state, open){
+  const good = ROWS.filter(r=>r.verdict==='good');
+  let body;
+  if(state==='empty'){
+    body = `<div class="drop" style="margin:8px 14px 14px"><div class="glyph">⤓</div><div class="big">Drop a recording session</div><div class="sub">Camera files and recorder files together. They pair and sync on their own.</div><button class="btn" style="margin-top:6px">Choose files…</button></div>`;
+  } else if(state==='syncing'){
+    body = `<div class="summary"><div class="big">Syncing…<small>3 of 5 couples · bach 172.mov</small></div>
+      <div class="counts"><span><b>2</b> synced</span><span><b>3</b> waiting</span></div></div>
+      <div class="disc"><div class="tog"><i></i>Show couples</div></div>`;
+  } else if(state==='exported'){
+    body = `<div class="done"><div class="ok">✓</div><div class="big">3 files exported</div><div class="sub">bach 169, 171, 172 · ${EXPORT_PATH}</div>
+      <div class="links"><button class="btn">Reveal in Finder</button><button class="btn quiet">New session</button></div></div>`;
+  } else {
+    const needPick = state==='pick';
+    body = `<div class="summary">
+      <div class="big">${needPick?'1 couple needs a pick':'3 couples ready'}<small>${needPick?'bach 170.mov matches two recordings':'bach session · 4 video · 7 audio'}</small></div>
+      <div class="counts"><span><span class="dot good"></span><b>3</b> ready</span><span><span class="dot questionable"></span><b>1</b> to pick</span><span><span class="dot none"></span><b>1</b> no audio</span></div>
+    </div>
+    ${needPick?picker(ROWS[3],'bach 170.mov — choose the audio'):''}
+    <div class="disc ${open?'open':''}"><div class="tog"><i></i>Show couples</div>
+      <div class="mini">${ROWS.map(r=>`<div class="r"><span class="dot ${r.verdict}"></span><span class="v">${r.video}</span><span class="a">${r.audio||'<span class="word '+r.verdict+'">'+r.word+'</span>'}</span>${r.verdict==='good'?'<span class="l">▶</span>':''}</div>`).join('')}
+      <div class="hint" style="padding:4px 2px 0">Click ▶ to hear a couple. For nudges and loupes, open the full window (⤢).</div>
+      </div></div>`;
+  }
+  const exportBtn = state==='exporting' ? `<button class="btn primary big" disabled>Exporting 2 of 3…</button>`
+    : state==='exported' ? ''
+    : `<button class="btn primary big" ${state==='empty'||state==='syncing'?'disabled':''}>Export ${state==='empty'||state==='syncing'?'':(state==='pick'?'3 files (skip 1)':'3 files')}</button>`;
+  return `${titlebar()}<div class="body">${body}
+    ${state==='exported'?'':`<div class="foot"><div class="opts"><span class="path">${EXPORT_PATH}</span><span>Auto <span class="t3">▾</span></span></div>${exportBtn}</div>`}
+    ${activity(state)}</div>`;
+}
+
+
+// ---------- D: FIXED PREVIEW + LIST (round 4) ----------
+const Dstore = {checked:new Set(['169','171','172']), exported:new Map(), mode:'sync', audition:null, compare:false, picked:null, full:false};
+// Deterministic procedural waveform: two lanes (camera teal on top, external amber below),
+// the amber lane drawn only where the audio covers the video.
+function wave(seed, cov, playhead, H=38, N=110){
+  let x = 1234567 + seed*7919; const rnd=()=>{ x = (x*1103515245+12345) & 0x7fffffff; return x/0x7fffffff; };
+  const W=300, mid=H/2, bw=W/N, k=H/38;
+  let cam='', ext='';
+  for(let i=0;i<N;i++){
+    const env = 0.25 + 0.75*Math.abs(Math.sin(i*0.09+seed)) * (0.6+0.4*rnd());
+    const hc = Math.max(1, env*14*k*(0.7+0.3*rnd()));
+    cam += `<rect x="${(i*bw).toFixed(1)}" y="${(mid-1-hc).toFixed(1)}" width="${(bw-0.6).toFixed(1)}" height="${hc.toFixed(1)}" />`;
+    const t=i/N;
+    if(t>=cov[0] && t<cov[1]){
+      const he = Math.max(1, env*13*k*(0.7+0.3*rnd()));
+      ext += `<rect x="${(i*bw).toFixed(1)}" y="${(mid+1).toFixed(1)}" width="${(bw-0.6).toFixed(1)}" height="${he.toFixed(1)}" />`;
+    }
+  }
+  const gap = (cov[0]>0?`<rect x="0" y="${mid+1}" width="${(cov[0]*W).toFixed(1)}" height="1" fill="rgba(255,255,255,.12)"/>`:'') + (cov[1]<1?`<rect x="${(cov[1]*W).toFixed(1)}" y="${mid+1}" width="${((1-cov[1])*W).toFixed(1)}" height="1" fill="rgba(255,255,255,.12)"/>`:'');
+  return `<svg class="wave" style="height:${H}px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    <g fill="var(--camera)" opacity=".85">${cam}</g><g fill="var(--external)" opacity=".9">${ext}</g>${gap}
+    <rect x="${(playhead*W).toFixed(1)}" y="0" width="1.2" height="${H}" fill="#fff"/></svg>`;
+}
+function renderD(state, sel){
+  const rows = state==='empty' ? [] : ROWS;
+  const good = rows.filter(r=>r.verdict==='good'), fix = rows.filter(r=>r.verdict!=='good');
+  const selected = state==='pick' ? '170' : (sel||'171');
+  const cur = rows.find(r=>r.id===selected);
+  if(state==='exported'){ ['169','171','172'].forEach(id=>Dstore.exported.set(id,'23:14')); Dstore.checked.clear(); }
+  const ex = Dstore.exported, ck = Dstore.checked;
+
+  // --- preview block (fixed) ---
+  let preview, grow=false;
+  if(state==='empty'){
+    grow=true;
+    preview = `<div class="empty"><div class="glyph">⤓</div><div class="big">Drop a recording session</div><div class="sub">Video and audio files, or the folder they're in. Couples appear below.</div><button class="btn" style="margin-top:4px">Choose files…</button></div>`;
+  } else if(state==='syncing'){
+    preview = `<div class="empty" style="border-style:solid"><div class="big">Syncing…</div><div class="sub">bach 172.mov · 3 of 5. You can start listening to finished couples.</div></div>`;
+  } else if(!cur){
+    preview = `<div class="empty" style="border-style:solid"><div class="sub">Select a couple below</div></div>`;
+  } else {
+    const isPick = cur.verdict==='questionable';
+    const showPicker = isPick || (Dstore.compare && Dstore.picked && Dstore.picked.id===cur.id);
+    const aud = showPicker && Dstore.audition ? cur.candidates.find(c=>c.name===Dstore.audition) : null;
+    // what the preview is currently playing against
+    const cov = aud ? aud.cov : (cur.cov || [0,0]);
+    const img = cur.thumb ? `<img src="${ASSETS}hero-bach-${cur.thumb}.jpg" alt="">` : '';
+    const wasPicked = Dstore.picked && Dstore.picked.id===cur.id && cur.verdict==='good';
+    const title = `<div class="ptitle"><span class="v">${cur.video}</span>${cur.audio?`<span class="a">+ ${cur.audio}</span>`:`<span class="word ${cur.verdict}">${cur.word}</span>`}${wasPicked&&!showPicker?`<span class="chg compare">Change…</span>`:''}</div>`;
+    const frame = `<div class="frame">${img}<div class="play">▶</div></div>
+      <div class="transport"><span class="mono">0:28</span>${cur.verdict==='none'&&!aud?`<div class="seek"><i></i><b></b></div>`:wave(parseInt(cur.id)||7, cov, 0.22)}<span class="mono t3">${cur.dur}</span></div>`;
+    let under='';
+    if(cur.verdict==='good' && !showPicker) under = `<div class="ab"><span class="cam ${Dstore.mode==='cam'?'on':''}">Camera</span><span class="${Dstore.mode==='sync'?'on':''}">Synced</span><span class="ext ${Dstore.mode==='ext'?'on':''}">External</span></div><div class="readout"><span>offset ${cur.offset}</span><span>${cur.fit}</span></div>`;
+    else if(showPicker) under = aud
+      ? `<div class="readout"><span class="aud">▶ ${aud.name} at best fit</span><span>offset ${aud.offset} · ${aud.fit}</span></div>`
+      : `<div class="readout"><span>${cur.audio?'using '+cur.audio:'camera audio only'}</span><span class="t3">▶ a candidate to hear it in sync</span></div>`;
+    if(wasPicked && !showPicker) under += `<div class="picked"><span>Audio chosen by you</span><span class="sp"></span><a class="undopick">Undo</a><a class="compare">Compare others</a></div>`;
+    let below='';
+    if(showPicker){
+      below = `<div class="pickD"><div class="ttl">${isPick?'Two recordings match — listen, then pick one':'Other recordings that match'}</div>
+        ${cur.candidates.map(c=>`<div class="cand ${c.weak?'weak':''} ${Dstore.audition===c.name?'playing':''}">
+          <div class="name"><span>${c.name}</span></div><div class="bar"><i style="width:${c.s*100}%"></i></div>
+          <span class="listen audition" data-name="${c.name}">${Dstore.audition===c.name?'■':'▶'}</span>
+          ${cur.audio===c.name?`<span class="cur">✓ current</span>`:`<span class="use useD" data-name="${c.name}">use</span>`}</div>`).join('')}
+        ${isPick?'':`<div class="hint" style="padding:4px 2px 0"><a class="compare" style="color:var(--accent);cursor:pointer">Done</a></div>`}</div>`;
+    } else if(cur.verdict==='none'){
+      below = `<div class="nomatch">No matching audio in this session.<span class="sp"></span><button class="btn" style="padding:3px 8px">Choose file…</button></div>`;
+    }
+    preview = `${title}<div class="player">${frame}${under}</div>${below}`;
+  }
+
+  // --- list ---
+  const row = r => {
+    const a = r.audio ? r.audio : `<span class="word ${r.verdict}">${r.word}</span>`;
+    const right = r.verdict==='good'
+      ? (ex.has(r.id) ? `<span class="exp">✓ ${ex.get(r.id)}</span>` : '') + `<span class="cb ${ck.has(r.id)?'on':''}" data-ck="${r.id}"></span>`
+      : '';
+    return `<div class="row ${r.id===selected&&state!=='syncing'?'sel':''}" data-id="${r.id}">
+      ${thumb(r)}<div class="names"><div class="v">${r.video}<span class="dur mono">${r.dur}</span></div><div class="a">${state==='syncing'&&r.id==='172'?'<span class="t3">syncing…</span>':state==='syncing'&&(r.id==='170'||r.id==='nm')?'<span class="t3">waiting</span>':a}</div></div>
+      <div class="right">${state==='syncing'?'':right}</div></div>`;
+  };
+  const list = state==='empty' ? '' : `<div class="scroll"><div class="list">
+      ${fix.length?`<div class="sec">To fix <span class="n">${fix.length}</span><hr></div>${fix.map(row).join('')}`:''}
+      <div class="sec">Ready <span class="n">${state==='syncing'?'…':good.length}</span><hr></div>${good.map(row).join('')}
+    </div></div>`;
+
+  // --- export panel ---
+  const n = good.filter(r=>ck.has(r.id)).length;
+  let btn;
+  if(state==='exporting') btn = `<button class="btn primary big" disabled>Exporting 2 of 3…</button>`;
+  else if(state==='exported' && !n) btn = `<button class="btn big">Reveal in Finder</button>`;
+  else btn = `<button class="btn primary big exportck" ${n&&state!=='empty'&&state!=='syncing'?'':'disabled'}>Export${n?' '+n+(n===1?' file':' files'):''}</button>`;
+  const panel = `<div class="export">
+      <div class="line"><span class="k">into</span><span class="path">${EXPORT_PATH}</span><span class="chg">Change…</span></div>
+      <div class="line"><span class="k">as</span><div class="seg mini"><span class="on">Auto</span><span>MOV</span><span>MP4</span><span>WAV</span></div></div>
+      <div class="line"><span class="k"></span><label><span class="cb" style="width:12px;height:12px"></span>keep camera audio as a muted track</label></div>
+      ${btn}
+    </div>`;
+
+  const head = state==='empty' ? '' : `<b>bach session</b><span>·</span><span>4 video · 7 audio</span><span style="flex:1"></span><button class="btn quiet" style="padding:2px 6px">+ Add</button>`;
+  const hd = head ? `<div class="panel hd">${head}</div>` : '';
+  const pv = `<div class="panel pv preview ${grow?'grow':''}">${preview}</div>`;
+  const ls = list ? `<div class="panel ls">${list}</div>` : '';
+  const exP = `<div class="panel ex export">${panel.replace('<div class="export">','').replace(/<\/div>$/,'')}</div>`;
+  const tb = `<div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><span class="mark"><b>CO</b>UPLE</span><span class="grow"></span><button class="iconbtn lab togglefull" title="${Dstore.full?'Back to the compact window':'Full window (overview, loupes, sync tools)'}">${Dstore.full?'⤡ Compact':'⤢ Full'}</button></div>`;
+  if(!Dstore.full){
+    return `${tb}<div class="body">${hd}${pv}${ls}${exP}</div>${activity(state)}`;
+  }
+  // full window: three columns, same four panels + the surfaces compact mode leaves out
+  const ovCov = cur ? (cur.cov||[0,0]) : [0,0];
+  const centerExtra = state==='empty' ? '' : `<div class="extra center-extra">
+      <div class="ov"><div class="lab">overview · ${cur?cur.video:''}</div>${cur?wave(parseInt(cur.id)||7, ovCov, 0.22, 90, 220):''}</div>
+      <div class="bar"><button class="btn quiet">⚙ sync tools</button><button class="btn quiet">◫ loupes</button><span class="sp"></span><span>offset and drift nudges, anchors, loupes — unchanged from today</span></div>
+    </div>`;
+  const files = good.filter(r=>ck.has(r.id));
+  const rightExtra = state==='empty' ? '' : `<div class="extra right-extra">
+      <div class="sec">Files <span class="n">${files.length}</span><hr></div>
+      ${files.map(r=>`<div class="file"><span class="mono">${r.video.replace(/\.mov$/,'')}_synced.mov</span><span class="r">↺</span></div>`).join('')}
+      ${files.length?'':'<div class="hint">Check a couple to add its file.</div>'}
+    </div>`;
+  return `${tb}<div class="body full">
+      <div class="col left">${hd}${ls}</div>
+      <div class="col center">${pv}${centerExtra}</div>
+      <div class="col right">${exP}${rightExtra}</div>
+    </div>${activity(state)}`;
+}
+
+
+// FLIP-style toggle for D: measure the four panels, re-render in the other mode,
+// then animate each panel's box (and the window width) from the old rect to the new one.
+function toggleFullD(win, draw){
+  if(win.classList.contains('animating')) return;
+  const keys = ['hd','pv','ls','ex'];
+  const rel = (el, base) => { const r = el.getBoundingClientRect(); return {left:r.left-base.left, top:r.top-base.top, width:r.width, height:r.height}; };
+  const base0 = win.getBoundingClientRect();
+  const first = {}; keys.forEach(k=>{ const el=win.querySelector('.panel.'+k); if(el) first[k]=rel(el, base0); });
+  Dstore.full = !Dstore.full;
+  win.classList.toggle('full', Dstore.full);
+  draw();
+  const w0 = base0.width, w1 = Dstore.full ? 1180 : 360;
+  win.style.transition='none'; win.style.width = w1+'px';
+  void win.offsetWidth;
+  const base1 = win.getBoundingClientRect();
+  const last = {}; keys.forEach(k=>{ const el=win.querySelector('.panel.'+k); if(el) last[k]=rel(el, base1); });
+  // pin every panel at its old box, window at its old width
+  win.classList.add('animating');
+  keys.forEach(k=>{ const el=win.querySelector('.panel.'+k); if(!el) return; const f = first[k]||last[k]; el.style.transition='none'; Object.assign(el.style,{left:f.left+'px',top:f.top+'px',width:f.width+'px',height:f.height+'px'}); });
+  win.style.width = w0+'px';
+  void win.offsetWidth;
+  // release: let the transitions carry everything to the new boxes
+  requestAnimationFrame(()=>{
+    win.style.transition='';
+    keys.forEach(k=>{ const el=win.querySelector('.panel.'+k); if(!el) return; const l=last[k]; el.style.transition=''; Object.assign(el.style,{left:l.left+'px',top:l.top+'px',width:l.width+'px',height:l.height+'px'}); });
+    win.style.width = w1+'px';
+    setTimeout(()=>{
+      win.classList.remove('animating');
+      keys.forEach(k=>{ const el=win.querySelector('.panel.'+k); if(el) el.removeAttribute('style'); });
+      win.style.width='';
+    }, 540);
+  });
+}
+
+// ---------- mount ----------
+const PROTOS = [
+  {key:'D', title:'D · Fixed preview + list', sub:'360 × 700 ⇄ 1180 × 700 — round 5: ⤢ Full animates into the three-column window', render:renderD, note:'Round 5: press ⤢ Full in the title bar. The same four blocks (session line, preview, list, export) slide and resize into the three-column window — list into the left rail, preview into the center, export into the right rail — and the overview / loupes / files surfaces fade in after. ⤡ Compact reverses it. Round 4: fixed preview on top; the seek bar is a two-lane mini waveform (camera on top, external below) so where the audio covers the video is visible. In a “pick one” couple, ▶ on a candidate plays the video with that audio at its best fit; after “use”, Undo and Compare others stay available. One Export button, counted from the checkboxes. Selecting a row never moves the list.', states:['empty','syncing','done','pick','exporting','exported']},
+  {key:'A', title:'A · List (earlier, checkbox model)', sub:'320 × 600 — kept for comparison', render:renderA, note:'Rows are the v2 queue rows. Good couples arrive checked. Click a row to listen; the picker opens inline for a couple that needs one.'},
+  {key:'B', title:'B · Cards (round 2)', sub:'360 × 600 — kept for comparison', render:renderB, note:'No approve step. A green couple is in “Export all” unless you Skip it (hover). Each card can also Export on its own. Flagged couples stay out until fixed; the footer says what is excluded. Exported couples keep a mark.', states:['empty','syncing','done','pick','exporting','partial','exported']},
+  {key:'F', title:'Full window · queue rail', sub:'304 wide — the same rule in the existing three-column window', render:renderF, note:'What the current queue rail becomes: two sections instead of three, no checkboxes, no QUEUED FOR EXPORT. The export rail’s button becomes “Export all”; a row’s Export / Skip live in its context menu and in the editor’s bottom bar.', states:['done','pick','partial','exported']},
+  {key:'C', title:'C · Drop & go (earlier)', sub:'300 × 470 — kept for comparison', render:renderC, note:'A utility-style window. Nothing to read unless something needs you; the list is a disclosure.'},
+];
+const host = document.getElementById('protos');
+PROTOS.sort((a,b)=>['D','B','F','A','C'].indexOf(a.key)-['D','B','F','A','C'].indexOf(b.key));
+PROTOS.forEach(p=>{
+  const wrap = document.createElement('div'); wrap.className='proto';
+  wrap.innerHTML = `<h2>${p.title}<span>${p.sub}</span></h2><p class="note">${p.note}</p>
+    <div class="win ${p.key} ${p.key==='F'?'A':''}"></div><div class="states"></div>`;
+  host.appendChild(wrap);
+  const win = wrap.querySelector('.win'), states = wrap.querySelector('.states');
+  let cur = 'done', sel = null, open = p.key==='C';
+  const draw = ()=>{
+    const sc0 = win.querySelector('.scroll'); const st = sc0 ? sc0.scrollTop : 0;
+    win.innerHTML = p.render(cur, p.key==='C'?(open && cur!=='pick'):sel);
+    const sc1 = win.querySelector('.scroll'); if(sc1) sc1.scrollTop = st;
+    states.querySelectorAll('button').forEach(b=>b.classList.toggle('on', b.dataset.s===cur));
+    win.querySelectorAll('[data-id]').forEach(el=>el.addEventListener('click', e=>{ if(e.target.closest('.cb,.btn,.cand,.ab,.chg,.picked')) return; sel = el.dataset.id; Dstore.audition=null; Dstore.compare=false; if(cur==='pick') cur='done'; draw(); }));
+    win.querySelectorAll('.cb:not(.dis)').forEach(el=>el.addEventListener('click', ()=>el.classList.toggle('on')));
+    win.querySelectorAll('.ab span').forEach(el=>el.addEventListener('click', ()=>{ el.parentElement.querySelectorAll('span').forEach(s=>s.classList.remove('on')); el.classList.add('on'); }));
+    win.querySelectorAll('[data-ck]').forEach(el=>el.addEventListener('click', e=>{ e.stopPropagation(); const id=el.dataset.ck; Dstore.checked.has(id)?Dstore.checked.delete(id):Dstore.checked.add(id); draw(); }));
+    win.querySelectorAll('.exportck').forEach(el=>el.addEventListener('click', ()=>{ [...Dstore.checked].forEach(id=>Dstore.exported.set(id,'23:14')); Dstore.checked.clear(); draw(); }));
+    win.querySelectorAll('.togglefull').forEach(el=>el.addEventListener('click', ()=>toggleFullD(win, draw)));
+    win.querySelectorAll('.audition').forEach(el=>el.addEventListener('click', e=>{ e.stopPropagation(); Dstore.audition = Dstore.audition===el.dataset.name ? null : el.dataset.name; draw(); }));
+    win.querySelectorAll('.useD').forEach(el=>el.addEventListener('click', e=>{ e.stopPropagation(); const c = ROWS[3].candidates.find(c=>c.name===el.dataset.name); Object.assign(ROWS[3], {audio:c.name, verdict:'good', word:null, offset:c.offset, fit:c.fit, cov:c.cov}); Dstore.picked={id:'170'}; Dstore.audition=null; Dstore.compare=false; Dstore.checked.add('170'); if(cur==='pick') cur='done'; sel='170'; draw(); }));
+    win.querySelectorAll('.undopick').forEach(el=>el.addEventListener('click', e=>{ e.stopPropagation(); Object.assign(ROWS[3], JSON.parse(JSON.stringify(ROW170_ORIG))); Dstore.picked=null; Dstore.compare=false; Dstore.checked.delete('170'); sel='170'; draw(); }));
+    win.querySelectorAll('.compare').forEach(el=>el.addEventListener('click', e=>{ e.stopPropagation(); Dstore.compare=!Dstore.compare; Dstore.audition=null; draw(); }));
+    if(p.key==='D') win.querySelectorAll('.ab span').forEach(el=>el.addEventListener('click', ()=>{ Dstore.mode = el.classList.contains('cam')?'cam':el.classList.contains('ext')?'ext':'sync'; }));
+    win.querySelectorAll('.export1').forEach(el=>el.addEventListener('click', e=>{ e.stopPropagation(); Bstore.touched=true; Bstore.exported.set(el.dataset.id, '23:'+String(14+Bstore.exported.size).padStart(2,'0')); draw(); }));
+    win.querySelectorAll('.skip').forEach(el=>el.addEventListener('click', e=>{ e.stopPropagation(); Bstore.touched=true; Bstore.skipped.add(el.dataset.id); draw(); }));
+    win.querySelectorAll('.include').forEach(el=>el.addEventListener('click', e=>{ e.stopPropagation(); Bstore.skipped.delete(el.dataset.id); draw(); }));
+    win.querySelectorAll('.exportall').forEach(el=>el.addEventListener('click', ()=>{ Bstore.touched=true; ROWS.filter(r=>r.verdict==='good'&&!Bstore.skipped.has(r.id)).forEach(r=>Bstore.exported.has(r.id)||Bstore.exported.set(r.id,'23:14')); draw(); }));
+    win.querySelectorAll('.tog').forEach(el=>el.addEventListener('click', ()=>{ open=!open; draw(); }));
+    win.querySelectorAll('.cand .use').forEach(el=>el.addEventListener('click', ()=>{ ROWS[3].audio = el.parentElement.querySelector('.name span').textContent; ROWS[3].verdict='good'; ROWS[3].word=null; ROWS[3].offset='+0.41 s'; ROWS[3].fit='fit 4.8 ms'; ROWS[3].cov=[0,1]; Dstore.checked.add('170'); cur='done'; sel='170'; draw(); }));
+  };
+  (p.states||STATES.filter(x=>x!=='partial')).forEach(s=>{ const b=document.createElement('button'); b.dataset.s=s; b.textContent=LABEL[s]; b.addEventListener('click',()=>{cur=s; sel=null; Bstore.touched=false; if(s!=='partial'&&s!=='exported'){Bstore.exported.clear(); Dstore.exported.clear(); Dstore.checked=new Set(['169','171','172']);} Bstore.skipped.clear(); Object.assign(ROWS[3], JSON.parse(JSON.stringify(ROW170_ORIG))); Dstore.picked=null; Dstore.audition=null; Dstore.compare=false; draw();}); states.appendChild(b); });
+  draw();
+});
+</script>
+</body>
+</html>
