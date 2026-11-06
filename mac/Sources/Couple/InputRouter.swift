@@ -43,6 +43,7 @@ final class InputRouter {
         // sync, else collapse the bottom-bar tools / dismiss loupes.
         if event.keyCode == 53 {
             if isEditingText { return false }
+            if model.shortcutsShown { model.shortcutsShown = false; return true }
             if pair.isSyncRunning { pair.cancelSync(); return true }
             if model.loupesShown { model.loupesShown = false; return true }
             if model.syncToolsExpanded { model.syncToolsExpanded = false; return true }
@@ -128,6 +129,9 @@ final class InputRouter {
         }
 
         switch chars {
+        case "?": // the keyboard-shortcut reference (UX §V2.13); also Help ▸ ⌘/
+            model.shortcutsShown.toggle()
+            return true
         case "[", "]":
             guard pair.inputsEnabled else { return true }
             let step = mods.contains(.option) ? 0.1 : 1.0

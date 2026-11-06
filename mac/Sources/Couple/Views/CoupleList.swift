@@ -1,6 +1,7 @@
 // Couple list (UX §V2.11 / §V2.12; PLAN-COMPACT-MODE Phase 4.1): the two workflow
-// sections — TO FIX (hidden when empty, D11) above READY (always shown) — and the
-// couple rows. One view for BOTH arrangements: the full window's left rail and the
+// sections — TO FIX (hidden when empty, D11) above READY (always shown once the
+// session has media; an EMPTY session shows no sections at all, UX §V2.13) — and
+// the couple rows. One view for BOTH arrangements: the full window's left rail and the
 // compact arrangement's flexible middle block. Only the rows scroll; selecting a
 // row previews it and never moves the list (stable identities keep the scroll
 // offset across redraws). Each row is a drag-to-repair drop target (§V2.6) and the
@@ -34,11 +35,15 @@ struct CoupleList: View {
     private var sections: some View {
         VStack(alignment: .leading, spacing: 14) {
             // D2/D11: To fix above Ready; an empty To fix is hidden, Ready
-            // always shows (dimmed "—" when empty).
-            if !model.toFix.isEmpty {
-                QueueSection(title: "TO FIX", couples: model.toFix)
+            // always shows (dimmed "—" when empty) — once there is media. With
+            // nothing imported yet neither section renders (UX §V2.13): the
+            // import surface is the only thing to look at.
+            if model.hasContent {
+                if !model.toFix.isEmpty {
+                    QueueSection(title: "TO FIX", couples: model.toFix)
+                }
+                QueueSection(title: "READY", couples: model.ready)
             }
-            QueueSection(title: "READY", couples: model.ready)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12)

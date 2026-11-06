@@ -67,7 +67,7 @@ function windowIcon(): string | undefined {
  * native about box, and Acknowledgements listed under Help as well. */
 function installMenu(): void {
   // View ▸ Compact Window / Full Window (⌘⇧C / Ctrl+Shift+C) — the same action as
-  // the window-corner arrangement toggle (ArrangementToggle.tsx; UX §V2.13); the renderer runs the
+  // the window-corner arrangement toggle (ArrangementToggle.tsx; UX §V2.14); the renderer runs the
   // switch (window move + the blocks' FLIP).
   const layoutItem: MenuItemConstructorOptions = {
     label: layout.mode === 'compact' ? 'Full Window' : 'Compact Window',
@@ -102,6 +102,13 @@ function installMenu(): void {
     label: 'Acknowledgements',
     click: send('couple:show-acknowledgements'),
   };
+  // Help ▸ Keyboard Shortcuts (⌘/ / Ctrl+/) — the same reference the footer
+  // button and the `?` key open (UX §V2.13; CoupleApp.swift HelpCommands).
+  const shortcuts: MenuItemConstructorOptions = {
+    label: 'Keyboard Shortcuts',
+    accelerator: 'CmdOrCtrl+/',
+    click: send('couple:show-shortcuts'),
+  };
   const mac = process.platform === 'darwin';
   const template: MenuItemConstructorOptions[] = [
     ...(mac
@@ -126,7 +133,10 @@ function installMenu(): void {
     { role: 'editMenu' },
     viewMenu,
     { role: 'windowMenu' },
-    { role: 'help', submenu: mac ? [acknowledgements] : [acknowledgements, about] },
+    {
+      role: 'help',
+      submenu: mac ? [shortcuts, acknowledgements] : [shortcuts, acknowledgements, about],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }

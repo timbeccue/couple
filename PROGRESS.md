@@ -1628,12 +1628,44 @@ added in the same amendment.
   up to date, `swift test` 134 passed, Electron typecheck/vitest 76/parity/
   smoke green (Phase 6).
 
-## 2026-11-05 — Arrangement toggle moved to the window corner (UX §V2.13)
+## 2026-11-05 — Empty-state cleanup, drop-zone copy, shortcut reference (draft)
+
+Drafted from the owner's annotated screenshot of the empty full window; recorded
+as UX-DECISIONS §V2.13 (DECIDED after the owner's live look the same day). Both shells.
+
+- **Wordmark 22 pt** in the rail header (was 15). `SessionLine.swift` /
+  `SessionLine.tsx`; SHELL-UI-PARITY updated.
+- **Quiet empty session**: counts, "N to export", Clear Session… (full header),
+  the compact line's counts, the Ready section and the pool's empty list +
+  placeholder player are all gated on `hasContent` / a non-empty pool. The
+  pool header ("MEDIA POOL · 0", "+ import") stays as the rail's bottom line.
+  `SessionLine`, `CoupleList`, `QueueRail` (MediaPoolSection) in both shells.
+  The compact empty state still mounts the (now empty) list block so the
+  arrangement FLIP has its frame.
+- **Drop zone**: "Drop audio and video files"; the rails-orientation paragraph
+  removed. `LoadSurface.swift` lost its `compact` parameter (nothing differed
+  any more); `LoadSurface.tsx` keeps the prop (it drives the margin class).
+- **Shortcut reference** replaces the footer cheat strip — and the footer
+  row itself (owner, same day: no window height for it): `ShortcutsButton`
+  sits at the bottom-right of the export rail with the reference as its
+  popover (`KeyboardShortcutsView.swift`, new; `FooterBar` removed from
+  RootView); `AppModel.shortcutsShown`; `?` toggles and Esc closes it
+  (`InputRouter`); Help ▸ Keyboard Shortcuts ⌘/ (`CoupleApp.swift`
+  HelpCommands, replacing AcknowledgementsCommands); compact presents it as a
+  sheet (RootView) with the compact-only rows. Electron: `ShortcutsView.tsx`
+  (modal overlay, `useModalKeys`), footer button, `?` key, Help menu item
+  `CmdOrCtrl+/` → `couple:show-shortcuts`; the rail button
+  (`ShortcutsButton` in ShortcutsView.tsx, placed by CompactLayout.tsx) raises
+  a DOM event App.tsx listens for. The `.footer-bar` CSS is gone.
+- Not a SPEC-CHANGE: §2.1 / §12 never specified the empty rail's contents or
+  the footer; the keys themselves are unchanged.
+
+## 2026-11-05 — Arrangement toggle moved to the window corner (UX §V2.14)
 
 Owner, after using the first compact-mode build: the ⤢ Full / ⤡ Compact text
 label was "not very obvious, small and hard to click", and asked whether the
 old iTunes green-button mini-player idiom should come back. Decision recorded as
-UX-DECISIONS §V2.13 (green button rejected — the idiom died with iTunes 11 and
+UX-DECISIONS §V2.14 (green button rejected — the idiom died with iTunes 11 and
 the button means zoom/full screen now; snap-on-resize and title double-click
 rejected too).
 
@@ -1660,6 +1692,6 @@ rejected too).
 - View ▸ Compact Window / Full Window (⌘⇧C) unchanged; the harness cases
   (`COUPLE_LAYOUT_TOGGLE_TEST`, `COUPLE_COMPACT_TEST`) drive the model, not the
   button, and are unchanged.
-- Docs: UX-DECISIONS §V2.11 REVISED markers + §V2.13; SHELL-UI-PARITY.md
+- Docs: UX-DECISIONS §V2.11 REVISED markers + §V2.14; SHELL-UI-PARITY.md
   arrangement-toggle and session-line rows; CLAUDE.md flags line.
 

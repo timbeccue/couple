@@ -81,6 +81,11 @@
   flex-direction: column;
 }
 
+.arrangement.full .col-export {
+  display: flex;
+  flex-direction: column;
+}
+
 /* ---------- compact: four blocks top to bottom ---------- */
 
 .arrangement.compact {
@@ -175,11 +180,7 @@
   flex: 1 1 auto;
 }
 
-.rail-header-top .clear-session {
-  margin-right: 8px;
-}
-
-/* The arrangement toggle (ArrangementToggle.tsx; UX §V2.13): window chrome pinned
+/* The arrangement toggle (ArrangementToggle.tsx; UX §V2.14): window chrome pinned
    to the root's top-right corner in BOTH arrangements — a small text button
    ("⤢ Full" / "⤡ Compact") in the title-bar strip, hover chip like a toolbar button.
    Above the drag strip. */
@@ -730,9 +731,9 @@
   padding: 0 16px 12px;
 }
 
-.footer-bar > span {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
+.arrangement.full .shortcuts-slot {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
 }

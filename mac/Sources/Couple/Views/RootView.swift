@@ -29,6 +29,11 @@ struct RootView: View {
             switch model.layoutMode {
             case .compact:
                 CompactLayout()
+                    // Compact has no export rail button to anchor the shortcuts popover
+                    // on, so Help ▸ Keyboard Shortcuts (⌘/) and `?` present it as a sheet.
+                    .sheet(isPresented: $model.shortcutsShown) {
+                        KeyboardShortcutsView(showsClose: true)
+                    }
             case .full:
                 VStack(spacing: 0) {
                     HSplitView {
@@ -41,13 +46,12 @@ struct RootView: View {
                             .frame(minWidth: 224, idealWidth: 280, maxWidth: 400)
                     }
                     // Unified long-running activity strip (TODO-005), pinned full window
-                    // WIDTH at the bottom just above the footer (relocated here from the
-                    // export rail 2026-07-11 to match the Electron shell, where the strip
-                    // spans the whole window under the columns). It renders nothing when
-                    // idle, so the footer sits directly below the columns until work starts.
+                    // WIDTH at the bottom (relocated here from the export rail 2026-07-11
+                    // to match the Electron shell, where the strip spans the whole window
+                    // under the columns). It renders nothing when idle, so the columns
+                    // reach the window's bottom edge until work starts (the footer row
+                    // went with the cheat strip, UX §V2.13).
                     ActivityStripView()
-                    FooterBar()
-                        .layoutExtra()
                 }
             }
         }
@@ -63,7 +67,7 @@ struct RootView: View {
                minHeight: rootMinSize.height,
                maxHeight: model.layoutAnimating ? .infinity : nil,
                alignment: .topLeading)
-        // The arrangement toggle is window chrome (UX §V2.13): the top-right corner
+        // The arrangement toggle is window chrome (UX §V2.14): the top-right corner
         // in BOTH arrangements, level with the traffic lights — i.e. INSIDE the
         // hidden title bar's strip, which is the window's top safe area (the full
         // arrangement lays out below it; compact ignores it and keeps its own
@@ -240,21 +244,5 @@ struct ActivityStripView: View {
             }
             .transition(.opacity)
         }
-    }
-}
-
-// MARK: - Footer cheat line (v2 keys)
-
-struct FooterBar: View {
-    var body: some View {
-        HStack(spacing: 6) {
-            Text("j/k move · ⏎ sync tools · l loupes · a camera/external · b both · esc collapse     ←/→ offset 1 ms · ⇧ 10 · ⌥ 0.1 · [ ] drift · drag loupe = offset · ⇧-drag = pivot")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(Theme.textTertiary)
-                .lineLimit(1)
-            Spacer()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
     }
 }

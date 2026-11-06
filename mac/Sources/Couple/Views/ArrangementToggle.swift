@@ -1,4 +1,4 @@
-// Arrangement toggle (UX §V2.13; revises §V2.11): the ONE control that switches the
+// Arrangement toggle (UX §V2.14; revises §V2.11): the ONE control that switches the
 // window between its compact and full arrangements. It is window chrome, not a block:
 // RootView overlays it at the window's top-right corner in BOTH arrangements, level
 // with the traffic lights, so it sits where macOS keeps its window-shape controls

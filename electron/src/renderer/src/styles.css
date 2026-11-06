@@ -90,17 +90,36 @@ body {
 
 /* The arrangement columns (compact / full) live in views/layout.css. */
 
-.footer-bar {
-  height: 26px;
-  border-top: 1px solid var(--border);
-  display: flex;
+/* The export rail's bottom-right control (ShortcutsButton in ShortcutsView.tsx,
+   placed by CompactLayout.tsx; the mac ShortcutsButton twin, UX §V2.13): opens the
+   keyboard-shortcut reference. Replaces the footer's mono cheat line. */
+.shortcuts-button {
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
   align-items: center;
-  padding: 0 12px;
-  gap: 16px;
-  color: var(--none);
-  font-size: 10px;
+  gap: 6px;
+}
+
+.shortcuts-button:hover {
+  background: none;
+  color: var(--text);
+}
+
+.key-cap {
+  display: inline-block;
+  min-width: 14px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
   font-family: ui-monospace, monospace;
-  flex: none;
+  font-size: 10px;
+  text-align: center;
+  line-height: 15px;
 }
 
 .footer-add {
@@ -148,12 +167,6 @@ body {
 .import-surface .import-sub {
   font-size: 11px;
   max-width: 420px;
-}
-
-.import-surface .import-hint {
-  font-size: 10px;
-  max-width: 380px;
-  color: var(--none);
 }
 
 .import-surface .import-busy {

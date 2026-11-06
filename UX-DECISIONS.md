@@ -783,7 +783,7 @@ the overview; the three-column window is more than that run needs.
 - **One window, two arrangements of the same session.** **Compact** (about
   360 × 700) and **full** (today's three columns). **⤢ Full** / **⤡ Compact**
   at the right of the session line (also a menu item, ⌘⇧C) switches
-  (**REVISED (owner 2026-11-05) — see §V2.13:** the toggle is now a real
+  (**REVISED (owner 2026-11-05) — see §V2.14:** the toggle is now a real
   button — "Full" / "Compact" — in the window's top-right corner, not a bare
   text label in the session line); the
   window frame animates and the four blocks move to their new places (list
@@ -801,7 +801,7 @@ the overview; the three-column window is more than that run needs.
   1. **Session line** — the session's identity and counts and **+ Add** (the
      only media-pool affordance in compact; the pool list, its player and the
      unused-file info are full-arrangement surfaces). (**REVISED 2026-11-05,
-     §V2.13:** the toggle left the session line for the window corner.)
+     §V2.14:** the toggle left the session line for the window corner.)
   2. **Preview block, fixed at the top.** Shows the selected couple: the
      video, a **two-lane waveform seek strip** (camera teal above, external
      amber below, the amber lane drawn only where that audio covers the
@@ -898,9 +898,48 @@ couples, deal with what is flagged, export.
   single-couple export button beside Export N (round 3 open question, dropped
   in round 4); no per-couple format or naming in compact.
 
-## V2.13 Arrangement toggle is a window-corner button (DECIDED, owner 2026-11-05)
+## V2.13 Quiet empty state, drop-zone copy, shortcut reference (DECIDED, owner 2026-11-05)
 
-Revises §V2.11's "⤢ Full / ⤡ Compact at the right of the session line". Owner
+From the owner's annotated screenshot of the empty full window (2026-11-05);
+decided after the owner's live look the same day (the shortcuts button moved
+from a footer row into the export rail during that review). Revises §V2.12
+"Ready always shows" and the 2026-07-11 empty session entry for the
+EMPTY-SESSION case only; nothing changes once media is imported.
+
+- **Logo larger.** The wordmark in the rail header is 22 pt (was 15).
+- **An empty session shows no zeros.** With nothing imported the left rail is
+  the wordmark and the arrangement toggle, then the media pool's header line
+  ("MEDIA POOL · 0", "+ import") at the bottom. Hidden until there is media:
+  the "N video · N audio" and "N to export" lines, Clear Session… (nothing to
+  clear — the import surface is already the start screen), the Ready section
+  (§V2.12's "Ready always shows" now reads "always shows once the session has
+  media"), the pool's empty list and its placeholder player. The compact
+  session line drops its counts the same way and keeps "+ Add".
+- **Drop zone copy.** Title "Drop audio and video files" (was "Drop a
+  recording session"); the explanatory line and "Choose files…" stay; the
+  orientation paragraph about the rails ("Matched pairs appear in the list on
+  the left…") is gone — it added noise, and the rails are now quiet instead.
+- **Keyboard shortcuts are a reference, not a strip.** The footer's one-line
+  mono cheat strip was too small to read. A single "Keyboard shortcuts"
+  button at the **bottom-right of the export rail** opens a readable list
+  grouped Session / Monitor / Sync tools / Media pool, each row a key and a
+  plain-language action. The footer row itself is gone (owner, same day: the
+  button must not cost a row of window height — it lives in the export
+  rail's grey box instead); the activity strip still appears along the
+  bottom while work runs. The same list opens from **Help ▸ Keyboard
+  Shortcuts (⌘/)** and the **`?`** key; Esc closes it. In compact (no
+  button) the menu item and `?` open it as a sheet, listing only the keys
+  that apply there (§V2.11). Electron: a modal overlay in both arrangements.
+- **Not done (deliberately):** no change to what the keys do; no onboarding
+  or first-run tour; the pool's "+ import" stays in the empty header (it is
+  the pool's own add affordance, and the compact line's "+ Add" has the
+  same role).
+
+## V2.14 Arrangement toggle is a window-corner button (DECIDED, owner 2026-11-05)
+
+Revises §V2.11's "⤢ Full / ⤡ Compact at the right of the session line" and
+§V2.13's "the left rail is the wordmark and the arrangement toggle" (the empty
+rail is now the wordmark alone; the toggle is window chrome). Owner
 report after using the first build: the toggle was "not very obvious, small and
 hard to click" — a 10.5 pt text label in the secondary text color, hit area the
 size of its glyphs, sitting in a row of text. Asked whether the old iTunes idiom

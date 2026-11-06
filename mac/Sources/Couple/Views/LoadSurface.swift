@@ -3,7 +3,10 @@
 // layout behind a splash screen. Accepts any number of files and/or folders;
 // everything is probed and classified into the media pool (video stream ⇒ video
 // role, audio-only ⇒ audio); non-media is skipped silently and surfaced once.
-// Drop anywhere in the window, or choose files.
+// Drop anywhere in the window, or choose files. Copy (owner 2026-11-05, UX
+// §V2.13): title "Drop audio and video files", one explanatory line, the button —
+// no orientation paragraph about the rails (it read as noise). Identical in
+// both arrangements.
 
 import CoupleKit
 import SwiftUI
@@ -11,9 +14,6 @@ import UniformTypeIdentifiers
 
 struct LoadSurface: View {
     @Environment(AppModel.self) private var model
-    /// Compact arrangement (UX §V2.11): the drop target fills the preview block;
-    /// only the orientation line's directions differ.
-    var compact = false
     @State private var importerShown = false
     @State private var dropHover = false
 
@@ -22,7 +22,7 @@ struct LoadSurface: View {
             Image(systemName: "tray.and.arrow.down")
                 .font(.system(size: 30))
                 .foregroundStyle(Theme.textTertiary)
-            Text("Drop a recording session")
+            Text("Drop audio and video files")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
             Text("Any number of videos and audio files, or a whole folder. Couple finds the matching pairs automatically.")
@@ -33,16 +33,6 @@ struct LoadSurface: View {
 
             Button("Choose files…") { importerShown = true }
                 .buttonStyle(.bordered)
-
-            // Orientation for first-time users (the rails around this surface are
-            // visible but empty): where results land and what happens after.
-            Text(compact
-                 ? "Matched pairs appear in the list below. Good matches are included in the export; untick any you don't want, then export."
-                 : "Matched pairs appear in the list on the left. Good matches are included in the export; untick any you don't want, then export from the right rail.")
-                .font(.system(size: 10))
-                .foregroundStyle(Theme.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 380)
 
             // A plain spinner (NO percentage bar) only while a drop is actively importing.
             // The full import→match→sync progress bar lives in the export rail, not here;

@@ -1,11 +1,13 @@
 // SessionLine.tsx — the session's identity and media counts and — per arrangement —
 // the session controls (UX §V2.11; port of SessionLine.swift). One view for BOTH
 // arrangements:
-//  - full (the left rail's header): the wordmark, Clear Session…, the media counts
-//    and "N to export";
+//  - full (the left rail's header): the wordmark, then the media counts with
+//    Clear Session… and "N to export". In an EMPTY session only the wordmark
+//    shows (sidebar cleanup, UX §V2.13): no zero counts, no Clear Session… —
+//    the import surface is already the start screen;
 //  - compact: an empty title-bar row (the window has a hidden title bar on macOS;
 //    the traffic lights sit at its left and the arrangement toggle — App.tsx's
-//    corner control, ArrangementToggle.tsx — at its right), then
+//    corner control, ArrangementToggle.tsx, UX §V2.14 — at its right), then
 //    "<session> · N video · N audio" with "+ Add" — the ONLY media-pool affordance
 //    in compact (§6.4). Clear Session… is in its context menu there.
 import React from 'react';
@@ -32,23 +34,36 @@ export function SessionLine({ compact }: { compact: boolean }): React.JSX.Elemen
     return (
       <div className="rail-header session-line">
         <div className="rail-header-top">
-          <CoupleWordmark height={15} />
+          {/* 22 px (was 15; owner 2026-11-05: larger). Alone on this row: Clear
+              Session… sits on the counts row, and the arrangement toggle is the
+              window-corner control (ArrangementToggle.tsx, UX §V2.14). */}
+          <CoupleWordmark height={22} />
           <span className="session-spacer" />
-          {/* Clear Session (TODO-001): returns to the import screen; confirms with
-              media/couple/included counts; disabled mid-export (the batch owns the files). */}
-          <button
-            className="clear-session"
-            disabled={clearDisabled}
-            title="Discard this session and start over (does not delete source or exported files)"
-            onClick={() => appModel.requestClearSession()}
-          >
-            Clear Session…
-          </button>
         </div>
-        <div className="rail-counts">
-          {model.pool.videos.length} video · {model.pool.audios.length} audio
-        </div>
-        <div className="rail-to-export">{model.includedCount} to export</div>
+        {/* Counts only once there is media (UX §V2.13): an empty rail reads as
+            quiet, not as a list of zeros. Clear Session (TODO-001) at the right of
+            the row: returns to the import screen; confirms with media/couple/
+            included counts; disabled mid-export (the batch owns the files); hidden
+            with the row while the session is empty (nothing to clear). */}
+        {model.hasContent && (
+          <>
+            <div className="rail-counts">
+              <span>
+                {model.pool.videos.length} video · {model.pool.audios.length} audio
+              </span>
+              <span className="session-spacer" />
+              <button
+                className="clear-session"
+                disabled={clearDisabled}
+                title="Discard this session and start over (does not delete source or exported files)"
+                onClick={() => appModel.requestClearSession()}
+              >
+                Clear Session…
+              </button>
+            </div>
+            <div className="rail-to-export">{model.includedCount} to export</div>
+          </>
+        )}
       </div>
     );
   }
@@ -77,9 +92,13 @@ export function SessionLine({ compact }: { compact: boolean }): React.JSX.Elemen
             <span className="session-dot">·</span>
           </>
         )}
-        <span className="session-counts">
-          {model.pool.videos.length} video · {model.pool.audios.length} audio
-        </span>
+        {/* Counts only once there is media (UX §V2.13); "+ Add" stays — the only
+            pool affordance in compact (§6.4). */}
+        {model.hasContent && (
+          <span className="session-counts">
+            {model.pool.videos.length} video · {model.pool.audios.length} audio
+          </span>
+        )}
         <span className="session-spacer" />
         <button
           className="session-add"

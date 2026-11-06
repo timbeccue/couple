@@ -1,5 +1,5 @@
 // ArrangementToggle.tsx — the ONE control that switches the window between its
-// compact and full arrangements (UX §V2.13; port of ArrangementToggle.swift). Window
+// compact and full arrangements (UX §V2.14; port of ArrangementToggle.swift). Window
 // chrome, not a block: App.tsx places it at the root's top-right corner in BOTH
 // arrangements, level with the traffic lights on macOS, so it sits where window-shape
 // controls live and never moves when the arrangement flips. A small text button —
