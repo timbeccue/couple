@@ -1,14 +1,16 @@
 // Session line (UX §V2.11; PLAN-COMPACT-MODE Phase 4.1): the session's identity and
-// media counts, the arrangement toggle and — per arrangement — the session controls.
-// One view for BOTH arrangements:
-//  - full (the left rail's header): the wordmark, Clear Session…, "⤡ Compact",
-//    the media counts and "N to export". In an EMPTY session only the wordmark
-//    and the toggle show (sidebar cleanup, UX §V2.13): no zero counts, no
-//    Clear Session… — the import surface is already the start screen;
-//  - compact: a title-bar row carrying "⤢ Full" at the right (the window is
-//    `.hiddenTitleBar`; the traffic lights sit at the left of that row), then
-//    "<session> · N video · N audio" with "+ Add" — the ONLY media-pool affordance
-//    in compact (§6.4). Clear Session… is in the session line's context menu there.
+// Session line (UX §V2.11; PLAN-COMPACT-MODE Phase 4.1): the session's identity and
+// media counts and — per arrangement — the session controls. One view for BOTH
+// arrangements:
+//  - full (the left rail's header): the wordmark, then the media counts with
+//    Clear Session… and "N to export". In an EMPTY session only the wordmark
+//    shows (sidebar cleanup, UX §V2.13): no zero counts, no Clear Session… —
+//    the import surface is already the start screen;
+//  - compact: an empty title-bar row (the window is `.hiddenTitleBar`; the traffic
+//    lights sit at its left and the arrangement toggle — RootView's corner overlay,
+//    ArrangementToggle.swift, UX §V2.14 — at its right), then "<session> · N video
+//    · N audio" with "+ Add" — the ONLY media-pool affordance in compact (§6.4).
+//    Clear Session… is in the session line's context menu there.
 
 import CoupleKit
 import SwiftUI
@@ -29,12 +31,11 @@ struct SessionLine: View {
             HStack(alignment: .firstTextBaseline) {
                 // Brand wordmark: the C and O are the interlocked mark, UPLE the
                 // outlined glyphs — one lockup identical to design/logo/couple-wordmark.svg.
-                // 22 pt (was 15; owner 2026-11-05: larger). At the rail's minimum
-                // width this leaves room for ONE control beside it, so Clear
-                // Session… moved down to the counts row (it wrapped here).
+                // 22 pt (was 15; owner 2026-11-05: larger). Alone on this row:
+                // Clear Session… sits on the counts row (it wrapped here), and the
+                // arrangement toggle is the window-corner control (UX §V2.14).
                 CoupleWordmark(height: 22)
                 Spacer(minLength: 8)
-                ArrangementToggle()
             }
             // Counts only once there is media (UX §V2.13): an empty rail reads as
             // quiet, not as a list of zeros. Clear Session… (TODO-001) sits at the
@@ -80,12 +81,9 @@ struct SessionLine: View {
 
     private var compactBody: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Title-bar row: traffic lights at the left (system), the toggle at the right.
-            HStack {
-                Spacer()
-                ArrangementToggle()
-            }
-            .frame(height: 28)
+            // Title-bar row: traffic lights at the left (system), the arrangement
+            // toggle at the right (RootView's corner overlay). Nothing of its own.
+            Color.clear.frame(height: 28)
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if let name = model.sessionName {
                     Text(name)
@@ -125,27 +123,5 @@ struct SessionLine: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
-    }
-}
-
-/// "⤢ Full" in compact / "⤡ Compact" in full (UX §V2.11). Same action as the View
-/// menu's Compact Window / Full Window item (⌘⇧C).
-struct ArrangementToggle: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let compact = model.layoutMode == .compact
-        Button {
-            model.toggleLayoutMode()
-        } label: {
-            Text(compact ? "⤢ Full" : "⤡ Compact")
-                .font(.system(size: 10.5))
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-                .fixedSize()
-        }
-        .buttonStyle(.plain)
-        .help(compact ? "Open the full window: overview, loupes, sync tools, media pool (⌘⇧C)"
-                      : "Switch to the compact window (⌘⇧C)")
     }
 }

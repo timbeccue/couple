@@ -67,6 +67,19 @@ struct RootView: View {
                minHeight: rootMinSize.height,
                maxHeight: model.layoutAnimating ? .infinity : nil,
                alignment: .topLeading)
+        // The arrangement toggle is window chrome (UX §V2.14): the top-right corner
+        // in BOTH arrangements, level with the traffic lights — i.e. INSIDE the
+        // hidden title bar's strip, which is the window's top safe area (the full
+        // arrangement lays out below it; compact ignores it and keeps its own
+        // 28-pt row), hence ignoresSafeArea. Attached to the (pinned) content
+        // frame, so during the animated switch it already sits at the incoming
+        // arrangement's corner and the moving window edge reveals it.
+        .overlay(alignment: .topTrailing) {
+            ArrangementToggle()
+                .padding(.top, 1)
+                .padding(.trailing, 8)
+                .ignoresSafeArea(.container, edges: .top)
+        }
         // Hands the hosting NSWindow to the model once (frame + clamps per arrangement).
         .background(WindowAccessor { model.attachWindow($0) })
         .background(Theme.windowBg)

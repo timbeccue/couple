@@ -13,6 +13,7 @@ import { runParityHarnesses } from '../app/harness';
 import { runLayoutHarnesses } from '../app/layoutHarness';
 import { WindowLayoutBridge } from '../app/WindowLayout';
 import { Arrangement } from './CompactLayout';
+import { ArrangementToggle } from './ArrangementToggle';
 import { installLayoutSwitcher } from './layoutFlip';
 import { ActivityStrip } from './ActivityStrip';
 import './layout.css';
@@ -223,6 +224,9 @@ export function App(): React.JSX.Element {
       onDrop={onDrop}
     >
       {platform === 'darwin' && <div className="titlebar-drag" />}
+      {/* Window chrome (UX §V2.14): the arrangement toggle at the root's top-right
+          corner in BOTH arrangements, level with the traffic lights on macOS. */}
+      <ArrangementToggle />
       <Arrangement />
       <ActivityStrip />
       <ToastStack />

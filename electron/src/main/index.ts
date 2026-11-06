@@ -67,7 +67,7 @@ function windowIcon(): string | undefined {
  * native about box, and Acknowledgements listed under Help as well. */
 function installMenu(): void {
   // View ▸ Compact Window / Full Window (⌘⇧C / Ctrl+Shift+C) — the same action as
-  // the session line's ⤢ Full / ⤡ Compact (UX §V2.11); the renderer runs the
+  // the window-corner arrangement toggle (ArrangementToggle.tsx; UX §V2.14); the renderer runs the
   // switch (window move + the blocks' FLIP).
   const layoutItem: MenuItemConstructorOptions = {
     label: layout.mode === 'compact' ? 'Full Window' : 'Compact Window',

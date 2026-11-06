@@ -1,5 +1,5 @@
 // Compact arrangement (UX §V2.11; PLAN-COMPACT-MODE Phase 4.3): four blocks top to
-// bottom — SessionLine (identity, counts, "+ Add", "⤢ Full"), PairPreview (fixed:
+// bottom — SessionLine (identity, counts, "+ Add"), PairPreview (fixed:
 // 16:9 player, PairStrip, Camera · Synced · External, offset · fit, or the inline
 // candidate picker / "No audio" line), CoupleList (flex; only the rows scroll) and
 // ExportPanel (pinned at the bottom), with the activity strip under it; no footer.
@@ -52,7 +52,8 @@ struct CompactLayout: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // The session line's first row IS the title-bar row (window is
-        // .hiddenTitleBar): "⤢ Full" sits level with the traffic lights.
+        // .hiddenTitleBar): the arrangement toggle (RootView's corner overlay) sits
+        // level with the traffic lights.
         .ignoresSafeArea(.container, edges: .top)
         .background(Theme.windowBg)
     }

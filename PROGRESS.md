@@ -1659,3 +1659,39 @@ as UX-DECISIONS §V2.13 (DECIDED after the owner's live look the same day). Both
   a DOM event App.tsx listens for. The `.footer-bar` CSS is gone.
 - Not a SPEC-CHANGE: §2.1 / §12 never specified the empty rail's contents or
   the footer; the keys themselves are unchanged.
+
+## 2026-11-05 — Arrangement toggle moved to the window corner (UX §V2.14)
+
+Owner, after using the first compact-mode build: the ⤢ Full / ⤡ Compact text
+label was "not very obvious, small and hard to click", and asked whether the
+old iTunes green-button mini-player idiom should come back. Decision recorded as
+UX-DECISIONS §V2.14 (green button rejected — the idiom died with iTunes 11 and
+the button means zoom/full screen now; snap-on-resize and title double-click
+rejected too).
+
+- **Both shells:** the toggle is now a 24 pt text button ("⤢ Full" while
+  compact, "⤡ Compact" while full — the arrangement it opens, with the
+  diagonal arrow for expand / contract) pinned to the
+  window's top-right corner in BOTH arrangements, level with the traffic
+  lights — hover chip, pressed state, tooltip with the shortcut. Mac:
+  `Views/ArrangementToggle.swift` as a `RootView` overlay on the pinned
+  content frame (so during the animated switch it already sits at the
+  incoming arrangement's corner). Electron: `views/ArrangementToggle.tsx` as
+  an absolutely-positioned child of the root above the drag strip
+  (`-webkit-app-region: no-drag`). The first cut was an icon (three columns /
+  a tall rectangle); the owner found it unclear in the side-by-side run and
+  chose text, then asked for the diagonal arrows back beside it. The session line lost the label in both
+  shells; its compact title-bar row stays as traffic-light clearance.
+- **Where it sits:** the hidden title bar's strip. Mac: the overlay ignores
+  the top safe area (the full arrangement lays out below it; compact ignores
+  it and keeps its own 28-pt row) — first cut respected it and landed on the
+  "+ Add" row, caught by the `COUPLE_COMPACT_TEST` shot. Electron: the 30 px
+  darwin drag strip; on Windows/Linux, where there is no traffic-light strip,
+  the full arrangement's export rail gets 30 px of top padding so the INTO
+  row stays clear.
+- View ▸ Compact Window / Full Window (⌘⇧C) unchanged; the harness cases
+  (`COUPLE_LAYOUT_TOGGLE_TEST`, `COUPLE_COMPACT_TEST`) drive the model, not the
+  button, and are unchanged.
+- Docs: UX-DECISIONS §V2.11 REVISED markers + §V2.14; SHELL-UI-PARITY.md
+  arrangement-toggle and session-line rows; CLAUDE.md flags line.
+
