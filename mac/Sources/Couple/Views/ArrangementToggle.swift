@@ -2,8 +2,9 @@
 // window between its compact and full arrangements. It is window chrome, not a block:
 // RootView overlays it at the window's top-right corner in BOTH arrangements, level
 // with the traffic lights, so it sits where macOS keeps its window-shape controls
-// and never moves when the arrangement flips. A small text button — "Full" while
-// compact, "Compact" while full (it names the arrangement it opens) — 24 pt tall
+// and never moves when the arrangement flips. A small text button — "⤢ Full" while
+// compact, "⤡ Compact" while full (it names the arrangement it opens; the diagonal
+// arrow says expand / contract) — 24 pt tall
 // with a hover background (the toolbar-button idiom); the owner found an icon
 // alone unclear. Same action as View ▸ Compact Window / Full Window (⌘⇧C).
 // Replaces the 2026-11-05 plain "⤢ Full / ⤡ Compact" label the session line carried.
@@ -22,7 +23,7 @@ struct ArrangementToggle: View {
         Button {
             model.toggleLayoutMode()
         } label: {
-            Text(compact ? "Full" : "Compact")
+            Text(compact ? "⤢ Full" : "⤡ Compact")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
                 .padding(.horizontal, 8)

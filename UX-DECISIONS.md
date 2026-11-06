@@ -921,9 +921,10 @@ size of its glyphs, sitting in a row of text. Asked whether the old iTunes idiom
   arrangement's corner and the moving window edge reveals it.
 - **A real button with a text label**, 24 pt tall, hover chip background and
   a brighter pressed state (the toolbar-button idiom). The label names the
-  arrangement it **opens**: **Full** while compact, **Compact** while full.
-  (First cut used an icon — three columns / a tall rectangle — which the owner
-  found unclear in the running apps; text won.) Tooltip names the mode and
+  arrangement it **opens**, with a diagonal arrow for expand / contract:
+  **⤢ Full** while compact, **⤡ Compact** while full. (First cut used an
+  icon — three columns / a tall rectangle — which the owner found unclear in
+  the running apps; text won, then the owner asked for the arrows back.) Tooltip names the mode and
   the shortcut. View ▸ Compact Window / Full Window (⌘⇧C) unchanged.
 - **It lives in the hidden title bar's strip** (the window's top safe
   area): the full arrangement already lays out below that strip, and compact

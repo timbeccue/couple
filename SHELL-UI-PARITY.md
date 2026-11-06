@@ -224,8 +224,8 @@ windows.
   window's top-right corner in BOTH arrangements, level with the traffic
   lights (mac: a RootView overlay; Electron: an absolutely-positioned child of
   the root above the drag strip) — hover chip background, pressed state, the
-  label of the arrangement it opens ("Full" while compact, "Compact" while
-  full), tooltip with the shortcut, accessibility label "Full Window" /
+  label of the arrangement it opens with a diagonal arrow ("⤢ Full" while
+  compact, "⤡ Compact" while full), tooltip with the shortcut, accessibility label "Full Window" /
   "Compact Window". Not a block: it does not travel in the
   FLIP; it sits in the title-bar strip (mac: the top safe area, ignored by
   the overlay; Electron: the 30 px darwin strip, and on Windows/Linux, where

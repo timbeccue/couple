@@ -181,7 +181,7 @@
 
 /* The arrangement toggle (ArrangementToggle.tsx; UX §V2.13): window chrome pinned
    to the root's top-right corner in BOTH arrangements — a small text button
-   ("Full" / "Compact") in the title-bar strip, hover chip like a toolbar button.
+   ("⤢ Full" / "⤡ Compact") in the title-bar strip, hover chip like a toolbar button.
    Above the drag strip. */
 .arrangement-toggle {
   position: absolute;

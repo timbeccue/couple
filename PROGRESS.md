@@ -1637,8 +1637,9 @@ UX-DECISIONS §V2.13 (green button rejected — the idiom died with iTunes 11 an
 the button means zoom/full screen now; snap-on-resize and title double-click
 rejected too).
 
-- **Both shells:** the toggle is now a 24 pt text button ("Full" while
-  compact, "Compact" while full — the arrangement it opens) pinned to the
+- **Both shells:** the toggle is now a 24 pt text button ("⤢ Full" while
+  compact, "⤡ Compact" while full — the arrangement it opens, with the
+  diagonal arrow for expand / contract) pinned to the
   window's top-right corner in BOTH arrangements, level with the traffic
   lights — hover chip, pressed state, tooltip with the shortcut. Mac:
   `Views/ArrangementToggle.swift` as a `RootView` overlay on the pinned
@@ -1647,7 +1648,7 @@ rejected too).
   an absolutely-positioned child of the root above the drag strip
   (`-webkit-app-region: no-drag`). The first cut was an icon (three columns /
   a tall rectangle); the owner found it unclear in the side-by-side run and
-  chose text. The session line lost the label in both
+  chose text, then asked for the diagonal arrows back beside it. The session line lost the label in both
   shells; its compact title-bar row stays as traffic-light clearance.
 - **Where it sits:** the hidden title bar's strip. Mac: the overlay ignores
   the top safe area (the full arrangement lays out below it; compact ignores
