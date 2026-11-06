@@ -783,9 +783,9 @@ the overview; the three-column window is more than that run needs.
 - **One window, two arrangements of the same session.** **Compact** (about
   360 × 700) and **full** (today's three columns). **⤢ Full** / **⤡ Compact**
   at the right of the session line (also a menu item, ⌘⇧C) switches
-  (**REVISED (owner 2026-11-05) — see §V2.13:** the toggle is now an icon
-  button in the window's top-right corner, not a text label in the session
-  line); the
+  (**REVISED (owner 2026-11-05) — see §V2.13:** the toggle is now a real
+  button — "Full" / "Compact" — in the window's top-right corner, not a bare
+  text label in the session line); the
   window frame animates and the four blocks move to their new places (list
   and session line into the left rail, preview into the center, export into
   the right rail); the surfaces only the full arrangement has (overview,
@@ -898,7 +898,7 @@ couples, deal with what is flagged, export.
   single-couple export button beside Export N (round 3 open question, dropped
   in round 4); no per-couple format or naming in compact.
 
-## V2.13 Arrangement toggle is a window-corner icon button (DECIDED, owner 2026-11-05)
+## V2.13 Arrangement toggle is a window-corner button (DECIDED, owner 2026-11-05)
 
 Revises §V2.11's "⤢ Full / ⤡ Compact at the right of the session line". Owner
 report after using the first build: the toggle was "not very obvious, small and
@@ -919,11 +919,12 @@ size of its glyphs, sitting in a row of text. Asked whether the old iTunes idiom
   re-aiming. It is not one of the four blocks — it does not travel in the
   FLIP; during the animated switch it already sits at the incoming
   arrangement's corner and the moving window edge reveals it.
-- **A real icon button**, 26 × 26 hit area, hover chip background and a
-  brighter pressed state (the toolbar-button idiom); no label. The icon names
-  the arrangement it **opens**: three columns (⇒ full) while compact, a tall
-  narrow rectangle (⇒ compact) while full. Tooltip names the mode and the
-  shortcut. View ▸ Compact Window / Full Window (⌘⇧C) unchanged.
+- **A real button with a text label**, 24 pt tall, hover chip background and
+  a brighter pressed state (the toolbar-button idiom). The label names the
+  arrangement it **opens**: **Full** while compact, **Compact** while full.
+  (First cut used an icon — three columns / a tall rectangle — which the owner
+  found unclear in the running apps; text won.) Tooltip names the mode and
+  the shortcut. View ▸ Compact Window / Full Window (⌘⇧C) unchanged.
 - **It lives in the hidden title bar's strip** (the window's top safe
   area): the full arrangement already lays out below that strip, and compact
   keeps its own empty 28 pt row there, so no block moves to make room.

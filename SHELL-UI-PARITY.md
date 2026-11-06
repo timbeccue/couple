@@ -220,13 +220,13 @@ four blocks are the same views the full arrangement's rails wrap (Phase 4.1
 extraction), so a port must build one layout with two arrangements, not two
 windows.
 
-- Arrangement toggle (UX §V2.13): one 26 × 26 icon button pinned to the
+- Arrangement toggle (UX §V2.13): one 24 px text button pinned to the
   window's top-right corner in BOTH arrangements, level with the traffic
   lights (mac: a RootView overlay; Electron: an absolutely-positioned child of
   the root above the drag strip) — hover chip background, pressed state, the
-  icon of the arrangement it opens (three columns while compact, a tall
-  rectangle while full), tooltip with the shortcut, accessibility label
-  "Full Window" / "Compact Window". Not a block: it does not travel in the
+  label of the arrangement it opens ("Full" while compact, "Compact" while
+  full), tooltip with the shortcut, accessibility label "Full Window" /
+  "Compact Window". Not a block: it does not travel in the
   FLIP; it sits in the title-bar strip (mac: the top safe area, ignored by
   the overlay; Electron: the 30 px darwin strip, and on Windows/Linux, where
   there is no traffic-light strip, the full arrangement's export rail gets
